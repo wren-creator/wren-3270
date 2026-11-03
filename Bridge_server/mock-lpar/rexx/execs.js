@@ -1,0 +1,82 @@
+/**
+ * mock-lpar/rexx/execs.js
+ * ─────────────────────────────────────────────────────────────────
+ * Single source of truth for the CMS "EXEC" content the mock z/VM
+ * daemon (mock-zvm.js) both displays in XEDIT and runs through
+ * ./interpreter.js. Keeping this in one place means a student who
+ * XEDITs DEMO REXX is looking at exactly the source that actually
+ * executes when they type DEMO at the CMS Ready prompt.
+ */
+
+'use strict';
+
+function buildExecs(sysname) {
+  return {
+    DEMO: [
+      '/* DEMO REXX EXEC */',
+      "say 'Hello from z/VM CMS!'",
+      `say 'Running on ${sysname}'`,
+      'do i = 1 to 5',
+      "  say 'Iteration' i",
+      'end',
+      'exit 0',
+    ],
+    GREET: [
+      '/* GREET EXEC -- pass a name: GREET MARIA */',
+      'parse arg name',
+      "if name = '' then name = 'STUDENT'",
+      "say 'Hello,' name",
+      'exit 0',
+    ],
+    MAXVAL: [
+      '/* MAXVAL EXEC -- pass up to three numbers: MAXVAL 42 17 99 */',
+      'parse arg a b c',
+      "if a = '' then a = 0",
+      "if b = '' then b = 0",
+      "if c = '' then c = 0",
+      "say 'Comparing' a || ',' b || ',' c",
+      'max = a',
+      'if b > max then max = b',
+      'if c > max then max = c',
+      "say 'Largest value is' max",
+      "say 'Counting down from the largest value:'",
+      'do n = max to 1 by -1',
+      "  if n <= 3 then say n || ' *** LOW ***' else say n",
+      'end',
+      "say 'Countdown complete.'",
+      'exit 0',
+    ],
+    // Mainframe 105 (Book 5) cross-platform token chain, hop 3 of 4:
+    // VERIFY checks the Resource Clearance Code carried over from the
+    // AS/400 mock's CHKBCN command, and on a match prints the System
+    // Authorization Value carried into the z/TPF mock's ZBOOK next.
+    // Both values are fixed, not derived from anything at runtime, so
+    // this mock can validate independently with no shared datastore
+    // between mocks -- see Bridge_server/ROADMAP.md's "Cross-Platform
+    // Token Chain" section.
+    VERIFY: [
+      '/* VERIFY EXEC -- pass the Resource Clearance Code: VERIFY RCC-4419 */',
+      'parse arg rcc',
+      "if rcc = 'RCC-4419' then say 'SYSTEM AUTHORIZATION VALUE: SAV-2081'",
+      "if rcc \\= 'RCC-4419' then say 'DMSVER002E Resource Clearance Code not recognized:' rcc",
+      'exit 0',
+    ],
+    // Mainframe 403 (400 series) privilege-escalation vector: an old
+    // operational-utility exec, the kind a sysprog writes once and leaves
+    // sitting in the shared CMS environment for years. Its own source is
+    // exactly what a student sees, plain, unremarkable REXX, nothing here
+    // looks privileged. The actual privileged behavior (forceUser(),
+    // called with no class check) lives in mock-zvm.js's exec-dispatch,
+    // not in this source -- the same "trust the caller, not the code"
+    // gap that makes a trusted-helper script dangerous on a real system.
+    OPUTIL: [
+      '/* OPUTIL EXEC -- operational utility, pass a userid: OPUTIL TCPIP */',
+      'parse arg target',
+      "if target = '' then say 'OPUTIL: no target specified'",
+      "if target \\= '' then say 'OPUTIL: forcing' target 'off (maintenance utility)'",
+      'exit 0',
+    ],
+  };
+}
+
+module.exports = { buildExecs };

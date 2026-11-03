@@ -1,0 +1,67 @@
+import './state.js';
+import './utils.js';
+import './geometry.js';
+import './rendering.js';
+import './keyboard.js';
+import './settings.js';
+import './tabs.js';
+import './profiles.js';
+import './macros.js';
+import './recorder.js';
+import './copilot.js';
+import './xfer.js';
+import './ssh.js';
+import './terminal.js';
+import './ui.js';
+import './probe.js';
+import './fuzz.js';
+import './db2.js';
+import './recon.js';
+import './transit.js';
+import './syscheck.js';
+import './sshaudit.js';
+import './httpadminaudit.js';
+import './ftpaudit.js';
+import './ibmirecon.js';
+import './cics.js';
+import './negotiate.js';
+import './pool-dashboard.js';
+import './esm-fingerprint.js';
+import './sdsf.js';
+import './as400sec.js';
+import './fielddisclosure.js';
+import './hiddenfields.js';
+import './bufferbleed.js';
+import './vmminidisk.js';
+import './zlinux.js';
+import './walkthrough.js';
+import './session-manager.js';
+import './panel-resize.js';
+import { initBarbieEgg } from './easteregg.js';
+
+function tick() {
+  document.getElementById('oiaTime').textContent =
+    new Date().toLocaleTimeString('en-US', { hour12: false });
+}
+setInterval(tick, 1000);
+tick();
+
+document.getElementById('terminal').innerHTML = '';
+document.getElementById('oiaMode').textContent         = 'NOT CONNECTED';
+document.getElementById('oiaMode').className           = 'oia-val';
+document.getElementById('connStatusText').textContent  = 'Not connected';
+document.getElementById('connStatusText').style.color  = 'var(--text-muted)';
+document.getElementById('mainConnDot').className       = 'conn-dot disconnected';
+
+window.loadProfiles?.();
+window.loadMacros?.();
+window.aiCfgInit?.();
+window.initConnectionSettingsUI?.();
+initBarbieEgg();
+
+const defaultPanel = document.getElementById('panelSettings');
+if (defaultPanel) {
+  defaultPanel.style.display       = 'block';
+  defaultPanel.style.flexDirection = '';
+  defaultPanel.style.padding       = '12px';
+}

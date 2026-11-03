@@ -1,0 +1,30 @@
+# ── Node ──────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# ── Environment & secrets ─────────────────────────────────────────
+.env
+lpars.txt
+
+# ── Build / backup artifacts ──────────────────────────────────────
+backup-files/
+*.bak
+*.bak.*
+public/*.bak
+public/*-good
+public/*-demo.html
+public/demo-*.html
+
+# ── macOS metadata ────────────────────────────────────────────────
+.DS_Store
+**/.DS_Store
+
+# ── Editor / IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── User-created macros (persisted locally, not overwritten by git pull) ──
+Bridge_server/macros/macros.json

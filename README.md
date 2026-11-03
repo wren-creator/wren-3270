@@ -1,0 +1,449 @@
+# WebTerm/3270
+
+A Node.js WebSocket bridge that connects a browser-based 3270 terminal emulator to mainframe LPARs over TN3270(E). No plugins, no Java — just a browser and a small Node server (or Docker container).
+
+```
+Browser (public/tn3270-client.html + public/js/*.js)
+    │  WebSocket JSON  ws://localhost:8081
+    ▼
+server.js  (HTTP + WebSocket on the same port)
+    ├── tn3270/session.js ──── TCP :23 / :992 ──► Mainframe LPAR
+    ├── macros/engine.js
+    └── copilot/copilot-handler.js ──────────────► AI provider
+```
+
+---
+
+## Features
+
+- Full TN3270(E) protocol — Telnet negotiation, LU binding, WSF QueryReply, EBCDIC ↔ ASCII
+- IND$FILE file transfer (z/VM upload + download) and TSO EDIT upload (z/OS)
+- Multi-session tabs, LPAR profile dropdown (with CRUD), PF1–PF12 / PA1–PA2 toolbar (plus Reset and a ⌂ Home key) with a 1-12 / 13-24 bank toggle, plus a full PF1–PF24 keypad in the Keys panel
+- Split-screen mode — two live sessions side by side for settings comparison (⊞ toggle)
+- Macro recorder/replayer (screen-synchronised, JSON-persisted)
+- Multi-provider AI Assist panel (Anthropic, OpenAI, Gemini, GitHub Models, Ollama) — live model list auto-loads on provider switch; manual refresh busts cache
+- NONDISPLAY field masking (password fields hidden; "Show passwords" toggle)
+- 5 colour themes, OIA status bar, zoom, CRT scanline effect
+- Modular browser client (no build step, no npm in the browser)
+
+### Security Tools (🔒 toolbar)
+
+- **Field Map Overlay (FMO)** — visualises every field attribute byte on screen with hover tooltips showing decoded FA flags (protected, intensity, MDT, numeric)
+- **Attribute Byte Inspector (ABI)** — click any cell for a full bit-level breakdown of the FA byte governing that field; includes live **FA Mutation** controls to toggle PROTECTED/UNPROTECTED, NUMERIC/ALPHA, REVEAL/HIDE nondisplay fields, and SET/CLEAR MDT — writes directly to the bridge session buffer so changes survive the next screen interaction
+- **FUNC KEY Inject** — send any 3270 AID key from the toolbar dropdown (PF1–PF24, PA1–PA3, CLEAR, ENTER, SYSREQ); shows `✓ injected PF13` confirmation flash; essential for reaching PF13–24 unreachable on standard keyboards
+- **Session Viewer** — floating popup table of every AID key sent and screen received during the session; direction/session filter, click-to-expand full screen text, CSV export
+- **Proxy Viewer** — live SSE stream of the bridge log; level filter (INFO/WARN/ERROR/DEBUG), HEX toggle, TAIL button with auto-scroll that pauses on scroll-up and resumes at bottom, CSV export
+- **Extended Color Rendering (SFE/SA)** — full ORDER_SFE and ORDER_SA parsing; renders 3270 extended color (`0xF1`–`0xF7`) and highlight (blink, reverse video, underscore, intensify) attributes exactly as real mainframe applications send them; mock LPAR sends realistic IBM color schemes on every screen
+- **MITM Live Traffic Modification** — intercept outbound AID records before they reach the host; inspect field values (nondisplay/password fields shown in plain text), edit any field, then release (original or modified), drop, or replay; keyboard locks during hold; demonstrates credential interception, substitution, command injection, and replay attacks at the protocol layer
+- **Traffic Recorder** — records the live datastream to a timestamped `.rec.json` file for offline analysis
+- **Replay Viewer** — plays back recorded sessions frame by frame at `/replay`
+- **Anomaly Detector** — flags suspicious screen patterns (RACF lockouts, unexpected field changes, WCC anomalies); on/off toggle, ephemeral flash bar, scrollable session log, one-click clear
+- **RACF Auto-Probe** — iterates a credential wordlist against TSO, z/VM, or CICS logon screens; auto-detects the active subsystem; classifies each response as SUCCESS, FAILURE, or LOCKOUT; stops immediately on lockout or success; configurable delay between attempts; live results table + CSV export
+- **Macro Recorder** — click ● REC in the sidebar to record real terminal interactions as reusable JSON macros; floating step counter while recording; STOP prompts for name + description and saves to the macro library immediately; recorded steps use the same schema as hand-authored macros
+- **Protocol Fuzzer** — sends mutated 3270 AID records and classifies host responses; four modes: AID Sweep (iterate every AID byte 0x00–0xFF), Field Overflow (oversized field payload), Order Injection (inject 3270 order bytes — SF/SBA/IC/RA/IAC — into field data), SBA Mutation (crafted invalid screen-buffer addresses); configurable timeout + delay; live colour-coded result table; CSV export
+- **RoE Scope Guard** — with a `scope.json` present, the bridge refuses connections and active probes outside the engagement's hosts, guests, authorized activities and dates, and logs every decision to `scope-audit.log`; no file means off. See `DOCUMENTATION/scope-guard.md`
+- **Z/LINUX ON Z/VM** — how far a compromised Linux guest can reach into z/VM: CP privilege class check, guest console and `#CP` escape, VSWITCH/VMLAN isolation, a pasted-directory review (IUCV, `LOGONBY`, weak passwords), and a SMAPI exposure check. Mock guests included for practice. See `DOCUMENTATION/zlinux-zvm-audit.md`
+- **Security Macros** — pre-built macro store for common security workflows (RACF auth probing, LISTAPF, TSO READY checks)
+- All tools live behind the 🔒 button in the OIA bar — the Security tab is hidden until a password is entered; clicking 🔒 again re-locks and hides the Security tab (the right panel stays open, switching to Settings); every access attempt is logged server-side with LU name, IP, and timestamp
+- The right panel is resizable: drag its left edge (300px up to 70% of the window) to make the security tool forms and tables easier to read. The width is remembered between visits, and double-clicking the edge resets it to 360px
+
+---
+
+## Quick Start (Docker)
+
+WebTerm/3270 ships as a container. You don't need Node, npm, or WSL on your machine, just Docker Desktop (or Podman) and network access to your LPAR on port 23 or 992.
+
+### Option 1: Prebuilt images (fastest, no clone, no build)
+
+Prebuilt multi-arch images (Intel/AMD and Apple Silicon/ARM) are published to GitHub Container Registry on every release.
+
+```bash
+# Download one file, then start everything
+curl -LO https://raw.githubusercontent.com/wren-creator/web3270/main/Bridge_server/docker-compose.prebuilt.yml
+docker compose -f docker-compose.prebuilt.yml up -d
+
+# Open in browser
+#   http://localhost:8081
+```
+
+On Windows PowerShell, use `curl.exe -LO ...` (plain `curl` is an alias for something else).
+
+That pulls the bridge plus the four mock mainframes (z/OS, z/VM, z/TPF, AS/400) so you can click around before you point it at a real LPAR.
+
+**No internet on the Docker machine?** Download `web3270-images-<version>-<amd64|arm64>.tar.gz` and `docker-compose.prebuilt.yml` from the [Releases page](https://github.com/wren-creator/web3270/releases), then:
+
+```bash
+docker load < web3270-images-<version>-amd64.tar.gz     # PowerShell: docker load -i <file>
+docker compose -f docker-compose.prebuilt.yml up -d
+```
+
+**Just the bridge, from the Docker Desktop UI:** search for `ghcr.io/wren-creator/web3270-bridge`, pull it, click Run, and set the host port to 8081. You lose the mock mainframes (they need the shared network the compose file creates), but it's enough to reach a real LPAR.
+
+Pin a version instead of tracking `latest`, or change the port:
+
+```bash
+WEB3270_TAG=1.0.0 BRIDGE_HOST_PORT=9000 docker compose -f docker-compose.prebuilt.yml up -d
+```
+
+Upgrade: `docker compose -f docker-compose.prebuilt.yml pull && docker compose -f docker-compose.prebuilt.yml up -d`
+
+### Option 2: Build from source (contributors)
+
+```bash
+git clone https://github.com/wren-creator/web3270.git
+cd web3270/Bridge_server
+
+./start.sh          # Mac / Linux
+# start.ps1         # Windows PowerShell
+
+# Open in browser
+#   http://localhost:8081
+```
+
+`start.sh` handles everything on first run: prompts for the port (default 8081), seeds `lpars.txt` if it doesn't exist, migrates any existing macros, then builds and starts the containers. The scripts auto-detect the container runtime (Docker first, Podman as the fallback), and compose detection covers `docker compose`, `podman compose`, `podman-compose`, and legacy `docker-compose`.
+
+```bash
+./start.sh          # subsequent runs start immediately
+./start.sh --setup  # reconfigure port
+./start.sh --no-mocks  # bridge and client only, skip the mock environments
+./stop.sh           # stop
+```
+
+Click **⊕ Connect to LPAR**, select or add an LPAR, and connect. Step-by-step with screenshots-in-text and troubleshooting: [DOCUMENTATION/INSTALL.md](DOCUMENTATION/INSTALL.md).
+
+---
+
+## LPAR Configuration
+
+Two files control LPAR profiles — they are merged at startup, user entries take precedence:
+
+| File | Tracked in git | Purpose |
+|---|---|---|
+| `lpars.shipped.txt` | ✅ Yes | Built-in demo connections (MOCK-ZOS, MOCK-ZVM, MOCK-TPF). Ships with the repo. |
+| `lpars.txt` | ❌ No (gitignored) | Your private mainframe connections. Never committed. |
+
+LPARs can also be added, edited, and deleted from the UI — changes are written to `lpars.txt` immediately without a restart. Built-in entries from `lpars.shipped.txt` appear with a **built-in** badge in the UI and cannot be deleted (they're not your data).
+
+```
+# id, name, host/IP, port, tls, type, model, tn3270e
+prod01,  PROD01,   192.0.2.1,   992, true,  TSO, 3278-2, true
+dev01,   DEV01,    192.0.2.2,   23,  false, TSO, 3278-2, true
+zvm01,   ZVM01,    192.0.2.3,   23,  false, ZVM, 3278-2, true
+```
+
+Port guide:
+
+| Scenario | Port | TLS |
+|---|---|---|
+| Production mainframe (recommended) | 992 | ✅ yes |
+| Dev/test LPAR, internal network | 23 | ❌ no |
+| SSH tunnel / localhost relay | any | ❌ no |
+
+**tn3270e** — set `false` only if your mainframe does not support TN3270E extended protocol negotiation. Default is `true`. See `lpars.txt.example` for full column documentation.
+
+### SSH hosts
+
+SSH host profiles follow the same shipped/private split as LPARs and are merged at startup (user entries take precedence):
+
+| File | Tracked in git | Purpose |
+|---|---|---|
+| `ssh-hosts.shipped.txt` | ✅ Yes | Built-in demo SSH hosts. Ships with the repo. |
+| `ssh-hosts.txt` | ❌ No (gitignored) | Your private SSH hosts. Never committed. Bind-mounted into the container so saves survive rebuilds. |
+
+Hosts can be added, edited, and deleted from the SSH Connect modal — changes are written to `ssh-hosts.txt` immediately (no restart). Passwords are **never** stored; they are prompted at connect time.
+
+> **Fresh clone:** because `ssh-hosts.txt` is gitignored, a new checkout must create it before the first `docker compose up`, otherwise Docker creates a *directory* at the bind-mount path. Run `cp ssh-hosts.txt.example ssh-hosts.txt` once. (`start.sh` seeds this automatically.)
+
+---
+
+## Project Structure
+
+```
+Bridge_server/
+│
+├── server.js                  ← HTTP + WebSocket server; REST API (/api/profiles, /api/macros)
+├── config.js                  ← Runtime config: merges lpars.shipped.txt + lpars.txt + env vars
+├── logger.js                  ← Structured logger (LOG_LEVEL env var)
+├── package.json               ← Runtime dep: ws. Dev dep: nodemon.
+├── lpars.shipped.txt          ← Built-in demo LPAR profiles (tracked in git)
+├── lpars.txt                  ← Your private LPAR profiles (gitignored, never committed)
+├── lpars.txt.example          ← Full column documentation and examples
+├── ssh-hosts.shipped.txt      ← Built-in demo SSH hosts (tracked in git)
+├── ssh-hosts.txt              ← Your private SSH hosts (gitignored, bind-mounted)
+├── ssh-hosts.txt.example      ← Template for fresh clones
+├── Dockerfile
+├── docker-compose.yml
+├── start.sh / start.ps1       ← Start bridge (prompts for port on first run)
+├── stop.sh                    ← Graceful shutdown + stale container cleanup
+├── setup.sh                   ← Port configuration only (re-run anytime)
+├── collect-logs.sh            ← Mac/Linux: collect and sanitize diagnostic logs
+├── collect-logs.ps1           ← Windows: collect and sanitize diagnostic logs
+├── .env                       ← Port config written by setup.sh (gitignored)
+├── .env.example               ← Template showing available variables
+│
+├── tn3270/
+│   ├── session.js             ← Full TN3270(E) protocol engine
+│   │                              · Telnet negotiation, TN3270E sub-negotiation, LU binding
+│   │                              · WSF QueryReply handshake (z/VM)
+│   │                              · 3270 datastream parser (SF/SBA/IC/RA/EUA/SFE)
+│   │                              · 14-bit SBA address decode/encode
+│   │                              · IND$FILE WSF transfer (upload + download)
+│   │                              · NONDISPLAY field detection
+│   └── ebcdic.js              ← EBCDIC ↔ ASCII (CP037 full table)
+│
+├── macros/
+│   ├── engine.js              ← Record + replay state machine
+│   ├── handler.js             ← WebSocket router for macro.* messages
+│   └── store.js               ← Read/write macros.json
+│
+├── copilot/
+│   ├── router.js              ← Selects provider from COPILOT_PROVIDER env var
+│   ├── copilot-handler.js     ← WebSocket handler for copilot.chat messages
+│   ├── default/
+│   │   └── anthropic-default.js  ← Default provider (Anthropic Claude)
+│   └── auxiliary/
+│       ├── github-models.js   ← GitHub Models API (Claude via Copilot licence)
+│       ├── azure-openai.js    ← Azure OpenAI
+│       ├── openai.js          ← OpenAI direct
+│       ├── gemini.js          ← Google Gemini
+│       └── ollama.js          ← Local Ollama (zero external calls)
+│
+├── public/
+│   ├── tn3270-client.html     ← UI shell (~550 lines HTML; loads JS modules below)
+│   ├── css/
+│   │   └── terminal.css       ← All styles: layout, themes, CRT effects, OIA
+│   └── js/
+│       ├── state.js           ← Shared globals, AI provider constants, BRIDGE_URL
+│       ├── copilot.js         ← AI Assist panel: chat, provider config, model list
+│       ├── xfer.js            ← File transfer: IND$FILE (z/VM), TSO EDIT upload
+│       ├── macros.js          ← Macro CRUD UI, import/export JSON
+│       ├── profiles.js        ← LPAR profile CRUD, sidebar, connect modal
+│       ├── terminal.js        ← Screen rendering, keyboard handler, cursor
+│       ├── settings.js        ← Theme, zoom, scanlines, password masking
+│       ├── ui.js              ← Layout: sidebar, panel tabs, menus, modals
+│       └── main.js            ← App init, WebSocket lifecycle, session tabs
+│
+└── mock-lpar/
+    ├── mock-lpar.js           ← Mock z/OS TN3270 daemon (port 3270)
+    └── mock-zvm.js            ← Mock z/VM TN3270 daemon (port 3271)
+```
+
+### Key files explained
+
+**`server.js`** — Entry point. Single HTTP server handles both static file serving (`public/`) and WebSocket upgrades. Exposes REST endpoints for LPAR profile and macro CRUD (`/api/profiles`, `/api/macros`). Each browser WebSocket connection creates one `Tn3270Session`. Routes macro, copilot, and file transfer messages to their handlers.
+
+**`tn3270/session.js`** — The protocol engine. Full TN3270(E) lifecycle: raw TCP → Telnet negotiation → TN3270E sub-negotiation and LU binding → WSF QueryReply → 3270 datastream parsing → screen buffer management → JSON events to `server.js`. Most complex file in the project; only edit when adding protocol features.
+
+**`config.js`** — All runtime configuration in one place. Reads `lpars.txt` for LPAR profiles and honours environment variables. Hot-reloads `lpars.txt` in memory when profiles are saved via the API (no restart required).
+
+**`public/js/state.js`** — Must be the first JS module loaded. Declares all shared globals on `window` so the other modules can reference them without import/export.
+
+---
+
+## Environment Variables
+
+Set in `docker-compose.yml` (or `docker-compose.prebuilt.yml`) under the bridge service:
+
+| Variable | Default | Description |
+|---|---|---|
+| `BRIDGE_PORT` | `8081` | Port the HTTP + WebSocket server listens on |
+| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
+| `BRIDGE_VERIFY_TLS` | `true` | Set `false` to skip TLS cert verification for ALL outbound connections — a blunt fallback, prefer `NODE_EXTRA_CA_CERTS` below |
+| `NODE_EXTRA_CA_CERTS` | unset | Path to a PEM file (or bundle) trusting a self-signed/internal CA. Node ignores the OS trust store, this is the only way it picks up a cert that isn't in its bundled list. See Troubleshooting → TLS certificate errors |
+| `BRIDGE_SOCKET_TIMEOUT_MS` | `300000` | Idle session timeout (ms) |
+| `BRIDGE_MAX_SESSIONS` | `100` | Max concurrent sessions |
+| `BRIDGE_SCOPE_FILE` | `scope.json` next to `server.js` | Path to the RoE scope file. If the file is absent the scope guard is off |
+| `BRIDGE_SCOPE_AUDIT` | `scope-audit.log` next to `server.js` | Where the scope guard writes its decisions |
+| `DEFAULT_MODEL` | `3278-2` | Default 3270 terminal model |
+| `DEFAULT_CODEPAGE` | `37` | Default EBCDIC codepage (37 = US English) |
+| `COPILOT_PROVIDER` | `anthropic` | `anthropic` / `azure` / `github` / `openai` / `gemini` / `ollama` |
+| `TN3270_HEXDUMP` | `0` | Set `1` to dump raw TN3270 bytes to logs (noisy — for protocol debugging) |
+| `SECURITY_TOOLS_PASSWORD` | `2970` | Password required to unlock the Security Tools panel; access attempts are logged with LU name, IP, and timestamp |
+
+---
+
+## AI Assist Provider
+
+One line in `.env`, restart the bridge:
+
+```bash
+COPILOT_PROVIDER=anthropic   # default — requires ANTHROPIC_API_KEY
+COPILOT_PROVIDER=azure       # Azure OpenAI — requires AZURE_OPENAI_ENDPOINT + KEY + DEPLOYMENT
+COPILOT_PROVIDER=github      # GitHub Models — requires GITHUB_TOKEN (models:read scope)
+COPILOT_PROVIDER=openai      # OpenAI direct — requires OPENAI_API_KEY
+COPILOT_PROVIDER=gemini      # Google Gemini — requires GEMINI_API_KEY
+COPILOT_PROVIDER=ollama      # Local Ollama — zero external calls
+```
+
+See `AI-notes.md` for corporate policy guidance and per-provider setup details.
+
+---
+
+## MCP Server (drive the bridge from an AI assistant)
+
+`Bridge_server/mcp/` is an MCP server that lets Claude Code, Cursor, or VS Code +
+Copilot drive the bridge, connect to an LPAR, read the screen and its field
+attributes, send keys and AID keys, run macros, and read the analysis routes
+(negotiation report, wire decode, passive ESM fingerprint).
+
+```bash
+cd Bridge_server/mcp && npm install
+```
+
+`.mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor) already declare the
+server; start the bridge and it connects over stdio. Full tool list, the rules
+of engagement, and the security note are in `DOCUMENTATION/webterm-mcp.md`.
+
+---
+
+## Connecting to GIBSON
+
+If you are using [GIBSON](https://github.com/wren-creator/GIBSON) as your TN3270 target, both repos share a Docker network (`gibson-net`) so the bridge reaches GIBSON directly by container name — no IP address needed. This works on Linux, Windows, and macOS.
+
+**Startup order — GIBSON must start first (it creates the shared network):**
+
+```bash
+# 1 · Start GIBSON
+cd /path/to/GIBSON/gibson-mainframe
+docker compose up -d
+
+# 2 · Start the bridge — it joins gibson-net automatically
+cd /path/to/web3270/Bridge_server
+docker compose up -d
+```
+
+**LPAR entry** — add this to `lpars.txt` or via the UI:
+
+```
+gibson, GIBSON, gibson-mainframe, 3270, false, TSO, 3278-2
+```
+
+`gibson-mainframe` is the GIBSON container name. Docker resolves it directly over the shared network — no IP hunting required across platforms.
+
+---
+
+## Troubleshooting
+
+### Docker command reference
+
+```bash
+# Start the bridge (detached / background)
+docker compose up -d
+
+# Stop the bridge
+docker compose down
+
+# View live logs (Ctrl+C to stop)
+docker compose logs -f
+
+# Rebuild after editing server.js, session.js, or any Bridge_server/ source file
+# (lpars.txt and macros.json are bind-mounted — no rebuild needed for those)
+docker compose build --no-cache && docker compose up -d
+
+# Restart after editing docker-compose.yml env vars only
+docker compose up -d
+
+# Confirm which code version is actually running inside the container
+docker compose exec tn3270-bridge grep -c "some-unique-string" /app/server.js
+
+# Open a shell inside the running container (for debugging)
+docker compose exec tn3270-bridge sh
+
+# Enable TN3270 protocol hex dump (set in docker-compose.yml environment)
+# TN3270_HEXDUMP: "1"   then: docker compose up -d  (no rebuild needed)
+```
+
+### Common errors
+
+**`./start.sh` says "daemon is not running or the socket is not reachable"**
+→ Docker Desktop (or Podman) isn't running. Start Docker Desktop and wait for it to finish initialising, then run `./start.sh` again. The script detects the condition cleanly and will not produce socket error spam.
+
+**`docker: command not found`**
+→ Docker Desktop isn't installed or PATH isn't configured. Restart your terminal after installing.
+
+**`error during connect: ... pipe/docker_engine`**
+→ Docker Desktop isn't running. Open it from the Start menu and wait for it to fully start.
+
+**Container starts then immediately exits**
+→ `docker compose logs` to see the error. Usually a bad environment variable or missing file.
+
+**`EADDRINUSE: address already in use :8081`**
+→ Something else is on port 8081. Change `BRIDGE_PORT` in `docker-compose.yml` and update `BRIDGE_URL` in `public/js/state.js` to match.
+
+**Browser can't reach `http://localhost:8081`**
+→ Confirm the container is up: `docker compose ps`. If the port column shows the mapping but the browser can't connect, check Windows Firewall isn't blocking the port.
+
+**Bridge can't reach the mainframe (from Docker)**
+→ Docker Desktop runs in a VM — many corporate VPNs don't route into it. Test from inside the container:
+```bash
+docker compose exec tn3270-bridge sh -c "nc -zv 10.x.x.x 23"
+```
+If that fails but the same test works from your host, see **VPN users** below.
+
+**TLS certificate errors**
+→ Two different errors, two different fixes:
+- `self-signed certificate in certificate chain` means Node doesn't trust the issuer. Get the CA cert from your mainframe team and set `NODE_EXTRA_CA_CERTS` to its path (Node ignores the OS trust store, so copying the cert into the container's `ca-certificates` and running `update-ca-certificates` does nothing on its own). `BRIDGE_VERIFY_TLS=false` "fixes" this too, but it disables verification for every outbound connection, not just the one host, use it only to confirm the cert is the actual problem, then switch to `NODE_EXTRA_CA_CERTS`.
+- `Hostname/IP does not match certificate's altnames` means the host in `lpars.txt` (often an IP) doesn't match the DNS name the cert was issued to. Set the `tlsServername` column (col 10) in `lpars.txt` to that DNS name, see `lpars.txt.example` and `scripts/lpars-tls-servernames.sh`, which pulls it from each host's cert automatically.
+
+**Stale code still running after rebuild**
+→ `docker compose down` first, then rebuild. If still wrong, do a full Docker Desktop restart.
+
+**Docker build fails on `apk add ... krb5-dev` (or any `apk add` step)**
+→ Some corporate networks block outbound access to Alpine's package mirror (`dl-cdn.alpinelinux.org`), often through an SSL-inspecting proxy, so the build hangs or fails partway through the `apk add` line even though everything else about your setup is fine. Confirm it's this and not something else in your repo state:
+```bash
+docker run --rm node:20-alpine apk add --no-cache python3 make g++ krb5-dev
+```
+If that fails the same way outside the build context too, switch to a Debian-based image instead of fighting the proxy. **Both** `FROM node:20-alpine` lines in `Bridge_server/Dockerfile` need to change together (native modules built in one stage won't run in the other if the C library differs, glibc vs musl), plus a few Alpine-specific lines:
+- `FROM node:20-alpine AS deps` → `FROM node:20-bookworm AS deps`
+- `FROM node:20-alpine AS runtime` → `FROM node:20-bookworm-slim AS runtime`
+- `apk add --no-cache python3 make g++ krb5-dev` → `apt-get update && apt-get install -y --no-install-recommends python3 make g++ libkrb5-dev && rm -rf /var/lib/apt/lists/*`
+- `addgroup -S tn3270 && adduser -S tn3270 -G tn3270` → `groupadd -r tn3270 && useradd -r -g tn3270 tn3270`
+- The `HEALTHCHECK` uses `wget`/`nc`, which ship with Alpine by default but not `bookworm-slim`. Swap it for a Node-based check instead of adding another package: `CMD node -e "require('http').get('http://127.0.0.1:8081/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"`
+
+This is a local workaround for restrictive networks, not the project default (Alpine keeps the image small for everyone else), so keep it as an uncommitted change on affected machines rather than editing the Dockerfile in a PR.
+
+**VPN users**
+→ Docker Desktop runs inside a VM, and some VPN clients (AnyConnect, GlobalProtect, Pulse) don't route that VM's traffic through the tunnel. Things to try, in order: confirm the host itself reaches the LPAR (`Test-NetConnection host -Port 23` on Windows, `nc -zv host 23` on Mac), then ask your network team to allow the Docker subnet in the VPN's split-tunnel rules (often `172.17.0.0/16`), or run the container on a machine or server that has a direct route to the LPAR and browse to it from your desktop.
+
+**Login screen goes blank on the first keystroke**
+→ Confirm GIBSON's dedicated TN3270 listener (port 3270) is actually running — check its logs for `IST001I TN3270 LISTENER ACTIVE ON PORT 3270`. Older GIBSON builds disabled this listener by default; update to a GIBSON build where it's on by default, or start it with `--with-tn3270`.
+
+**Logs flooded with repeating `Telnet DONT TN3270E` / `Falling back to classic TN3270` lines**
+→ A telnet negotiation ping-pong between the bridge and older GIBSON builds — both sides kept re-acknowledging the same `WONT`/`DONT` for TN3270E forever. Fixed in `tn3270/session.js` (bridge) and `tn3270_server.py` (GIBSON) — rebuild the bridge (`docker compose build --no-cache && docker compose up -d`) and update GIBSON to `main`.
+
+---
+
+## Collecting diagnostic logs
+
+If something goes wrong and you need help diagnosing it, run the log collector from the `Bridge_server/` directory:
+
+```bash
+# Mac / Linux
+./collect-logs.sh
+
+# Windows (PowerShell)
+.\collect-logs.ps1
+```
+
+The script collects Docker container logs and system info, then **automatically scrubs** all sensitive data before packaging:
+
+- Known hosts and IPs from your `lpars.txt` → replaced with `[HOST-1]`, `[HOST-2]`, etc.
+- All IPv4 / IPv6 addresses → `[REDACTED-IP]`
+- Macro field data values (which may contain userids) → `[REDACTED]`
+- Any token following `userid`, `user:`, or `logon` → `[REDACTED-USER]`
+
+Output is a `webterm-diag-TIMESTAMP.zip` safe to share. A local `redaction-map-TIMESTAMP.txt` stays on your machine so you can cross-reference placeholders — **do not send this file**.
+
+Send the zip via Slack DM at **britleydev.slack.com** or email **britleyhoff@gmail.com**.
+
+---
+
+## Auto-start
+
+**Docker Desktop:** Settings → General → enable *"Start Docker Desktop when you log in"*. Both compose files already set `restart: unless-stopped`, so the containers come back on their own after a reboot.
+
+---
+
+## License
+
+WebTerm/3270 is licensed under the **GNU General Public License v3.0** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full text.

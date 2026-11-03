@@ -1,0 +1,516 @@
+/**
+ * tn3270/wire-decode.js
+ * ─────────────────────────────────────────────────────────────────
+ * Stateless-replay decoder for the Wire Inspector. Takes the raw byte
+ * frames already captured by features/pcap.js — {ts, dir, data} in
+ * chronological order, every byte that ever crossed the wire in either
+ * direction (see Tn3270Session._onData / _send, which emit('raw', …)
+ * before any telnet/3270 parsing happens) — and turns them into a list
+ * of decoded, human-readable records for display.
+ *
+ * This deliberately does NOT reuse Tn3270Session directly: that class
+ * renders a live *screen*, mutating a stateful buffer as a side effect
+ * of parsing. Here we only need to reconstruct enough state to label
+ * each record correctly — primarily a map of "which buffer address has
+ * which field attribute" so outbound field writes can be flagged as
+ * touching a nondisplay (password) field. Two genuinely non-trivial
+ * pieces of session.js ARE reused directly to avoid drift: the 12/14-bit
+ * buffer address decoder and the TN3270E sub-negotiation describer.
+ */
+
+import * as Ebcdic from './ebcdic.js';
+import { decode3270Address, AIDS, _decodeTn3270eSubneg as decodeTn3270eSubneg, modelDimensions } from './session.js';
+
+// ── Telnet framing ───────────────────────────────────────────────────
+const IAC = 0xFF, DONT = 0xFE, DO = 0xFD, WONT = 0xFC, WILL = 0xFB;
+const SB = 0xFA, SE = 0xF0, EOR = 0xEF, NOP = 0xF1;
+
+const CMD_NAMES = { [DO]: 'DO', [DONT]: "DON'T", [WILL]: 'WILL', [WONT]: "WON'T" };
+const OPT_NAMES = { 0x00: 'BINARY', 0x18: 'TTYPE', 0x19: 'EOR', 0x28: 'TN3270E' };
+
+// ── 3270 orders (same values as session.js — re-declared here so this
+// module stays a self-contained decoder, matching the convention the
+// mock daemons already use for their own protocol constants) ─────────
+const ORDER_SF = 0x1D, ORDER_SFE = 0x29, ORDER_SBA = 0x11, ORDER_SA = 0x28;
+const ORDER_MF = 0x2C, ORDER_IC = 0x13, ORDER_PT = 0x05, ORDER_RA = 0x3C;
+const ORDER_EUA = 0x12, ORDER_GE = 0x08;
+const ORDER_BYTES = new Set([ORDER_SF, ORDER_SFE, ORDER_SBA, ORDER_SA, ORDER_MF, ORDER_IC, ORDER_PT, ORDER_RA, ORDER_EUA, ORDER_GE]);
+
+const WCC_RESET = 0x40;
+const FA_PROTECTED = 0x20, FA_NUMERIC = 0x10, FA_MDT = 0x01, FA_INTENSITY = 0x0C, FA_NONDISPLAY = 0x0C;
+const isNonDisplayFa = fa => (fa & FA_INTENSITY) === FA_NONDISPLAY;
+
+// Command bytes — CCW and SNA encodings both appear in the wild (see
+// Tn3270Session._handle3270Record, which accepts both).
+const CMD_INFO = {
+  0x01: { name: 'Write',                      kind: 'write', erase: false },
+  0xF1: { name: 'Write',                      kind: 'write', erase: false },
+  0x05: { name: 'Erase/Write',                kind: 'write', erase: true, alt: false },
+  0xF5: { name: 'Erase/Write',                kind: 'write', erase: true, alt: false },
+  0x0D: { name: 'Erase/Write Alternate',      kind: 'write', erase: true, alt: true  },
+  0x7E: { name: 'Erase/Write Alternate',      kind: 'write', erase: true, alt: true  },
+  0x0F: { name: 'Erase All Unprotected',      kind: 'eau'   },
+  0x6F: { name: 'Erase All Unprotected',      kind: 'eau'   },
+  0x02: { name: 'Read Buffer',                kind: 'read'  },
+  0xF2: { name: 'Read Buffer',                kind: 'read'  },
+  0x06: { name: 'Read Modified',              kind: 'read'  },
+  0xF6: { name: 'Read Modified',              kind: 'read'  },
+  0x6E: { name: 'Read Modified All',          kind: 'read'  },
+  0x11: { name: 'Write Structured Field',     kind: 'wsf'   },
+  0xF3: { name: 'Write Structured Field',     kind: 'wsf'   },
+};
+
+const AID_BY_BYTE = Object.fromEntries(Object.entries(AIDS).map(([name, byte]) => [byte, name]));
+
+// ── GDDM / Object Data structured fields ────────────────────────────
+// IBM 3270 Data Stream Programmer's Reference (GA23-0059) ch.5 "Object
+// Control/Data/Picture" — carries GDDM graphics (GDF order stream, see
+// GDDM Base Application Programming Reference ch.10) or images embedded
+// in a Write Structured Field payload: length(2) + SFID(2) + PID(1) +
+// flags(1) + OBJTYP(1) + DATA(n). We only flag presence/type here — the
+// GDF order stream itself isn't decoded, that's a separate rendering
+// concern out of scope for a wire-level security inspector.
+const OBJ_SF = { 0x0F0F: 'Object Data', 0x0F10: 'Object Picture', 0x0F11: 'Object Control' };
+const OBJTYP_NAME = { 0x00: 'Graphics', 0x01: 'Image' };
+
+// AID X'88' precedes inbound structured-field replies (ch.2/6 of
+// GA23-0059) — e.g. a terminal's response to a Read Partition Query.
+// Query Reply structured fields use a 1-byte SFID (X'81') + 1-byte QCODE
+// rather than the 2-byte SFID that Object Control/Data/Picture use.
+const AID_STRUCTURED_FIELD = 0x88;
+const QUERY_REPLY_SFID = 0x81;
+const GRAPHIC_QCODE = { 0x85: 'Extended Drawing Routine', 0x86: 'Graphic Symbol Sets', 0xB4: 'Graphic Color' };
+
+// Walks length-prefixed structured fields starting at `offset` within
+// `bytes`. Each field: length(2, includes itself) + id1(1) + id2(1) + body.
+// Stops at the first malformed/truncated field rather than throwing —
+// this runs over untrusted wire data.
+function walkStructuredFields(bytes, offset) {
+  const fields = [];
+  let i = offset;
+  while (i + 4 <= bytes.length) {
+    const len = (bytes[i] << 8) | bytes[i + 1];
+    if (len < 4 || i + len > bytes.length) break;
+    fields.push({ start: i, end: i + len, id1: bytes[i + 2], id2: bytes[i + 3], id: (bytes[i + 2] << 8) | bytes[i + 3] });
+    i += len;
+  }
+  return fields;
+}
+
+const CP037 = 37;
+const toAscii = buf => Ebcdic.toAscii(Buffer.isBuffer(buf) ? buf : Buffer.from(buf), CP037);
+
+// Same device-type pattern session.js matches out of BIND-IMAGE payloads
+// and mock hosts match out of TTYPE/DEVICE-TYPE negotiation — redeclared
+// here so the decoder can pick the model out of whichever of the three
+// carries it (TN3270E DEVICE-TYPE subneg, classic TTYPE subneg, BIND-IMAGE).
+const MODEL_RE = /IBM-(3278|3279)-(\d)(-E)?/;
+function extractModel(buf) {
+  const text = buf.toString('ascii').replace(/[^\x20-\x7e]/g, '');
+  const m = text.match(MODEL_RE);
+  return m ? `${m[1]}-${m[2]}${m[3] || ''}` : null;
+}
+
+function describeFa(fa) {
+  const bits = [];
+  bits.push(fa & FA_PROTECTED ? 'PROTECTED' : 'UNPROTECTED');
+  if (isNonDisplayFa(fa)) bits.push('NONDISPLAY');
+  else if ((fa & FA_INTENSITY) === 0x08) bits.push('INTENSIFIED');
+  if (fa & FA_NUMERIC) bits.push('NUMERIC');
+  if (fa & FA_MDT) bits.push('MDT');
+  return `FA=0x${fa.toString(16).toUpperCase().padStart(2, '0')} (${bits.join(', ')})`;
+}
+
+// ── Telnet-level framing pass ──────────────────────────────────────
+// Walks `buf` exactly like Tn3270Session._processBuffer does, but instead
+// of dispatching into a live session, returns the logical units found and
+// how many leading bytes were fully consumed (the rest — an in-progress
+// negotiation triplet or 3270 data record split across a TCP chunk
+// boundary — is left for the next frame to complete).
+function extractUnits(buf) {
+  const units = [];
+  let i = 0, safeIdx = 0;
+  let recordBytes = null, recordStart = null;
+  let negoRun = null;
+
+  const flushNego = () => {
+    if (negoRun) {
+      units.push({ type: 'negotiation', start: negoRun.start, end: i, items: negoRun.items });
+      negoRun = null;
+    }
+  };
+
+  while (i < buf.length) {
+    const b = buf[i];
+
+    if (recordBytes !== null) {
+      if (b === IAC) {
+        const nxt = buf[i + 1];
+        if (nxt === undefined) break; // ambiguous — wait for more
+        if (nxt === IAC) { recordBytes.push(0xFF); i += 2; continue; }
+        if (nxt === EOR) {
+          units.push({ type: 'data', start: recordStart, end: i + 2, bytes: Buffer.from(recordBytes) });
+          recordBytes = null; recordStart = null;
+          i += 2; safeIdx = i; continue;
+        }
+        i += 2; continue; // malformed mid-record IAC — drop 2 bytes, matches session.js
+      }
+      recordBytes.push(b); i++; continue;
+    }
+
+    if (b !== IAC) {
+      flushNego();
+      recordStart = i; recordBytes = [b]; i++;
+      continue;
+    }
+
+    const cmd = buf[i + 1];
+    if (cmd === undefined) { flushNego(); break; }
+
+    if (cmd === NOP) { i += 2; safeIdx = i; continue; }
+
+    if (cmd === DO || cmd === DONT || cmd === WILL || cmd === WONT) {
+      const opt = buf[i + 2];
+      if (opt === undefined) break; // wait for the option byte
+      if (!negoRun) negoRun = { start: i, items: [] };
+      negoRun.items.push({ cmd, opt });
+      i += 3; safeIdx = i; continue;
+    }
+
+    if (cmd === SB) {
+      const seIdx = buf.indexOf(Buffer.from([IAC, SE]), i + 2);
+      if (seIdx === -1) { flushNego(); break; }
+      flushNego();
+      units.push({ type: 'subneg', start: i, end: seIdx + 2, bytes: buf.slice(i + 2, seIdx) });
+      i = seIdx + 2; safeIdx = i; continue;
+    }
+
+    i += 2; safeIdx = i; // unrecognized two-byte IAC command — skip
+  }
+
+  if (recordBytes === null) flushNego();
+  return { units, consumed: safeIdx };
+}
+
+// ── Inbound (host→client) 3270 write decode ────────────────────────
+function decodeWrite(bytes, faMap, cols, totalCells) {
+  const cmdByte = bytes[0];
+  const info = CMD_INFO[cmdByte];
+  const cmdName = info ? info.name : `Unknown command 0x${cmdByte.toString(16)}`;
+
+  if (!info || info.kind === 'read' || info.kind === 'eau') {
+    if (info?.kind === 'eau') faMap.forEach((fa, addr) => { if (!(fa & FA_PROTECTED)) faMap.delete(addr); });
+    return { summary: cmdName, orders: [{ type: info?.kind === 'read' ? 'READ' : 'CMD', meaning: cmdName, range: [0, bytes.length - 1] }], danger: false, aid: null };
+  }
+  if (info.kind === 'wsf') {
+    const gddmFields = walkStructuredFields(bytes, 1)
+      .filter(f => OBJ_SF[f.id])
+      .map(f => ({ field: f, name: OBJ_SF[f.id], objtypName: OBJTYP_NAME[bytes[f.start + 6]] || `0x${bytes[f.start + 6]?.toString(16)}` }));
+
+    if (gddmFields.length) {
+      const orders = gddmFields.map(g => ({
+        type: 'GDDM-OBJ',
+        meaning: `${g.name} (SFID 0x${g.field.id.toString(16).toUpperCase()}) — object type ${g.objtypName}`,
+        range: [g.field.start, g.field.end - 1],
+      }));
+      const kinds = [...new Set(gddmFields.map(g => g.objtypName))].join('/');
+      return { summary: `${cmdName} — GDDM/Object Data (${kinds}) (${bytes.length}B)`, orders, danger: false, aid: null };
+    }
+
+    return { summary: `${cmdName} (${bytes.length}B)`, orders: [{ type: 'WSF', meaning: 'Write Structured Field — payload not decoded (query reply / IND$FILE / etc.)', range: [0, bytes.length - 1] }], danger: false, aid: null };
+  }
+
+  if (info.erase) faMap.clear();
+
+  const orders = [];
+  const wcc = bytes[1];
+  orders.push({ type: 'WCC', meaning: `Write Control Character 0x${(wcc ?? 0).toString(16).padStart(2, '0')}${wcc & WCC_RESET ? ' — reset MDT bits' : ''}`, range: [1, 1] });
+
+  let addr = 0, i = 2, danger = false;
+
+  while (i < bytes.length) {
+    const b = bytes[i];
+
+    if (b === ORDER_SF) {
+      const fa = bytes[i + 1];
+      faMap.set(addr, fa);
+      const nd = isNonDisplayFa(fa);
+      if (nd) danger = true;
+      orders.push({ type: 'SF', meaning: `Start Field — ${describeFa(fa)}`, range: [i, i + 1], danger: nd });
+      addr = (addr + 1) % totalCells; i += 2; continue;
+    }
+
+    if (b === ORDER_SBA) {
+      const newAddr = decode3270Address(bytes[i + 1], bytes[i + 2], cols);
+      orders.push({ type: 'SBA', meaning: `Set Buffer Address → row ${Math.floor(newAddr / cols) + 1}, col ${(newAddr % cols) + 1}`, range: [i, i + 2] });
+      addr = newAddr; i += 3; continue;
+    }
+
+    if (b === ORDER_IC) {
+      orders.push({ type: 'IC', meaning: 'Insert Cursor here', range: [i, i] });
+      i += 1; continue;
+    }
+
+    if (b === ORDER_SFE) {
+      const pairCount = bytes[i + 1];
+      let baseFa = 0x60, j = i + 2;
+      for (let p = 0; p < pairCount; p++) {
+        if (bytes[j] === 0xC0) baseFa = bytes[j + 1];
+        j += 2;
+      }
+      faMap.set(addr, baseFa);
+      const nd = isNonDisplayFa(baseFa);
+      if (nd) danger = true;
+      orders.push({ type: 'SFE', meaning: `Start Field Extended — ${describeFa(baseFa)} (${pairCount} attr pair${pairCount === 1 ? '' : 's'})`, range: [i, j - 1], danger: nd });
+      addr = (addr + 1) % totalCells; i = j; continue;
+    }
+
+    if (b === ORDER_SA) {
+      const type = bytes[i + 1], value = bytes[i + 2];
+      const label = type === 0x42 ? 'color' : type === 0x41 ? 'highlight' : 'reset';
+      orders.push({ type: 'SA', meaning: `Set Attribute — ${label}${type !== 0x00 ? ` 0x${(value ?? 0).toString(16)}` : ''} for following characters`, range: [i, i + 2] });
+      i += 3; continue;
+    }
+
+    if (b === ORDER_MF) {
+      const pairCount = bytes[i + 1];
+      let j = i + 2, newFa = null;
+      for (let p = 0; p < pairCount; p++) {
+        if (bytes[j] === 0xC0) newFa = bytes[j + 1];
+        j += 2;
+      }
+      if (newFa != null) faMap.set(addr, newFa);
+      orders.push({ type: 'MF', meaning: `Modify Field attributes${newFa != null ? ` — ${describeFa(newFa)}` : ''}`, range: [i, j - 1] });
+      addr = (addr + 1) % totalCells; i = j; continue;
+    }
+
+    if (b === ORDER_RA) {
+      const toAddr = decode3270Address(bytes[i + 1], bytes[i + 2], cols);
+      const charByte = bytes[i + 3];
+      const ch = charByte >= 0x40 ? toAscii([charByte]) : '·';
+      orders.push({ type: 'RA', meaning: `Repeat '${ch}' to row ${Math.floor(toAddr / cols) + 1}, col ${(toAddr % cols) + 1}`, range: [i, i + 3] });
+      addr = toAddr; i += 4; continue;
+    }
+
+    if (b === ORDER_EUA) {
+      const toAddr = decode3270Address(bytes[i + 1], bytes[i + 2], cols);
+      orders.push({ type: 'EUA', meaning: `Erase Unprotected to row ${Math.floor(toAddr / cols) + 1}, col ${(toAddr % cols) + 1}`, range: [i, i + 2] });
+      addr = toAddr; i += 3; continue;
+    }
+
+    if (b === ORDER_PT) {
+      orders.push({ type: 'PT', meaning: 'Program Tab — advance to next unprotected field', range: [i, i] });
+      i += 1; continue;
+    }
+
+    if (b === ORDER_GE) {
+      orders.push({ type: 'GE', meaning: 'Graphic Escape', range: [i, i + 1] });
+      i += 2; continue;
+    }
+
+    // Coalesce a run of plain character data into one readable order.
+    let j = i;
+    while (j < bytes.length && !ORDER_BYTES.has(bytes[j])) j++;
+    const text = toAscii(bytes.slice(i, j));
+    orders.push({ type: 'DATA', meaning: `"${text}"`, range: [i, j - 1] });
+    addr = (addr + (j - i)) % totalCells;
+    i = j;
+  }
+
+  const fieldCount = orders.filter(o => o.type === 'SF' || o.type === 'SFE').length;
+  const summary = `${cmdName} · ${fieldCount} field${fieldCount === 1 ? '' : 's'}${danger ? ' · nondisplay field written' : ''}`;
+  return { summary, orders, danger, aid: null };
+}
+
+// ── Outbound (client→host) AID record decode ───────────────────────
+// Matches the exact layout Tn3270Session.sendAid() documents and builds:
+// AID(1) + cursorAddr(2, raw — no SBA prefix) + repeating[SBA(3) + data].
+function decodeAid(bytes, faMap, cols, totalCells) {
+  if (bytes.length < 3) return null;
+  const aidByte = bytes[0];
+
+  if (aidByte === AID_STRUCTURED_FIELD) {
+    const fields = walkStructuredFields(bytes, 1);
+    let gddmCap = false;
+    const orders = [{ type: 'AID', meaning: 'STRUCTURED FIELD — inbound structured field reply', range: [0, 0] }];
+    for (const f of fields) {
+      const graphic = f.id1 === QUERY_REPLY_SFID && GRAPHIC_QCODE[f.id2];
+      if (graphic) gddmCap = true;
+      orders.push({
+        type: 'QueryReply',
+        meaning: graphic
+          ? `Query Reply (${GRAPHIC_QCODE[f.id2]}) — terminal declares GDDM/graphics capability`
+          : `Structured field (SFID 0x${f.id.toString(16).toUpperCase()}, ${f.end - f.start}B)`,
+        range: [f.start, f.end - 1],
+      });
+    }
+    return { summary: `STRUCTURED FIELD reply${gddmCap ? ' · GDDM graphics capability declared' : ''}`, orders, danger: false, aid: 'STRUCTURED_FIELD' };
+  }
+
+  const aidName = AID_BY_BYTE[aidByte];
+  if (!aidName) return null; // not a recognized AID — caller falls back to a generic label
+
+  const cursorAddr = decode3270Address(bytes[1], bytes[2], cols);
+  const orders = [
+    { type: 'AID', meaning: `${aidName} — transmit modified fields`, range: [0, 0] },
+    { type: 'Cursor', meaning: `Cursor at row ${Math.floor(cursorAddr / cols) + 1}, col ${(cursorAddr % cols) + 1}`, range: [1, 2] },
+  ];
+
+  let i = 3, danger = false;
+  while (i < bytes.length) {
+    if (bytes[i] !== ORDER_SBA) {
+      orders.push({ type: 'DATA', meaning: `${bytes.length - i} unstructured byte(s) — not SBA-delimited (raw send / EDIT input line?)`, range: [i, bytes.length - 1] });
+      break;
+    }
+    const fieldAddr = decode3270Address(bytes[i + 1], bytes[i + 2], cols);
+    const faAddr = (fieldAddr - 1 + totalCells) % totalCells;
+    const fa = faMap.get(faAddr);
+    const nd = fa !== undefined && isNonDisplayFa(fa);
+    let j = i + 3;
+    while (j < bytes.length && bytes[j] !== ORDER_SBA) j++;
+    const dataBytes = bytes.slice(i + 3, j);
+    if (nd) danger = true;
+
+    orders.push({ type: 'SBA', meaning: `Field @ row ${Math.floor(fieldAddr / cols) + 1}, col ${(fieldAddr % cols) + 1}${nd ? ' (nondisplay)' : ''}`, range: [i, i + 2] });
+    orders.push({
+      type: 'DATA',
+      meaning: nd ? `${dataBytes.length} byte(s) — nondisplay field content, masked` : `"${toAscii(dataBytes)}"`,
+      range: [i + 3, j - 1],
+      danger: nd,
+    });
+    i = j;
+  }
+
+  const summary = `AID=${aidName}${danger ? ' · touches nondisplay field' : ''}`;
+  return { summary, orders, danger, aid: aidName };
+}
+
+// ── Top-level entry point ──────────────────────────────────────────
+/**
+ * @param {Array<{ts:number, dir:'sent'|'recv', data:Buffer}>} frames — in
+ *   chronological order, exactly as stored by features/pcap.js.
+ * @param {{cols?:number, rows?:number}} opts — initial/default geometry
+ *   (24x80 unless overridden), active until a model is negotiated and/or
+ *   the host switches geometry with Erase/Write (Alternate).
+ * @returns {Array} decoded records: {ts, dir, kind, raw, summary, aid, orders, danger}
+ */
+export function decodeCapture(frames, opts = {}) {
+  // The *default* geometry (EW) is always 24x80 regardless of model — only
+  // the *alternate* geometry (EWA) depends on the negotiated device type,
+  // exactly as Tn3270Session._applyModel/_setActiveGeometry track it.
+  const DEFAULT_ROWS = 24, DEFAULT_COLS = 80;
+  let cols = opts.cols || DEFAULT_COLS;
+  let rows = opts.rows || DEFAULT_ROWS;
+  let totalCells = cols * rows;
+  let altRows = rows, altCols = cols;
+  const applyModel = model => {
+    const dims = modelDimensions(model);
+    altRows = dims.rows; altCols = dims.cols;
+  };
+  const faMap = new Map();
+  let tn3270e = false;
+
+  const streams = { sent: Buffer.alloc(0), recv: Buffer.alloc(0) };
+  const out = [];
+
+  for (const frame of frames) {
+    if (frame.dir !== 'sent' && frame.dir !== 'recv') continue;
+    streams[frame.dir] = Buffer.concat([streams[frame.dir], frame.data]);
+    const { units, consumed } = extractUnits(streams[frame.dir]);
+    streams[frame.dir] = streams[frame.dir].slice(consumed);
+
+    for (const u of units) {
+      if (u.type === 'negotiation') {
+        const parts = u.items.map(it => {
+          const optName = OPT_NAMES[it.opt] || `0x${it.opt.toString(16)}`;
+          if (it.opt === 0x28) { // TN3270E
+            if (it.cmd === DO || it.cmd === WILL) tn3270e = true;
+            if (it.cmd === DONT || it.cmd === WONT) tn3270e = false;
+          }
+          return `IAC ${CMD_NAMES[it.cmd]} ${optName}`;
+        });
+        out.push({
+          ts: frame.ts, dir: frame.dir, kind: 'negotiation',
+          raw: streamsRawSlice(frame, u),
+          summary: parts.join(' · '), aid: null, orders: [], danger: false,
+        });
+        continue;
+      }
+
+      if (u.type === 'subneg') {
+        const opt = u.bytes[0];
+        const isTn3270e = opt === 0x28;
+        const summary = isTn3270e ? decodeTn3270eSubneg(u.bytes) : `SB opt=0x${opt.toString(16)} (${u.bytes.length}B)`;
+        if (isTn3270e && (u.bytes[1] === 0x03 || u.bytes[1] === 0x02)) tn3270e = true; // FUNCTIONS or DEVICE-TYPE exchange implies TN3270E active
+        // TN3270E DEVICE-TYPE (opt 0x28) and classic TTYPE (opt 0x18) subnegs
+        // both carry an "IBM-model" string — either can be the one that
+        // reveals what the alternate screen size actually is.
+        const detectedModel = extractModel(u.bytes);
+        if (detectedModel) applyModel(detectedModel);
+        out.push({
+          ts: frame.ts, dir: frame.dir, kind: 'tn3270e-subneg',
+          raw: u.bytes, summary, aid: null, orders: [], danger: false,
+        });
+        continue;
+      }
+
+      if (u.type === 'data') {
+        let body = u.bytes;
+        // Both directions carry the TN3270E 5-byte header once negotiated —
+        // Tn3270Session._sendDataRecord() prepends it on send, symmetric with
+        // _handle3270Record() stripping it on receipt (see also the mock
+        // hosts' handle3270Record(), which mirrors the same symmetry).
+        if (tn3270e) {
+          const dataType = body[0];
+          if (dataType === 0x05) { // BIND-IMAGE
+            const detectedModel = extractModel(body.slice(5));
+            if (detectedModel) applyModel(detectedModel);
+            out.push({ ts: frame.ts, dir: frame.dir, kind: 'bind-image', raw: body, summary: 'BIND-IMAGE (session parameters)', aid: null, orders: [], danger: false });
+            continue;
+          }
+          if (dataType !== 0x00) {
+            out.push({ ts: frame.ts, dir: frame.dir, kind: 'unknown', raw: body, summary: `Unrecognized TN3270E data-type 0x${dataType.toString(16)}`, aid: null, orders: [], danger: false });
+            continue;
+          }
+          body = body.slice(5); // strip 5-byte TN3270E header
+        }
+
+        if (frame.dir === 'recv') {
+          // EW selects the default 24x80 geometry, EWA selects the model's
+          // alternate size — every buffer address that follows is relative
+          // to whichever one was just selected (mirrors _setActiveGeometry).
+          const info = CMD_INFO[body[0]];
+          if (info?.erase) {
+            cols = info.alt ? altCols : DEFAULT_COLS;
+            rows = info.alt ? altRows : DEFAULT_ROWS;
+            totalCells = cols * rows;
+          }
+          const decoded = decodeWrite(body, faMap, cols, totalCells);
+          out.push({ ts: frame.ts, dir: frame.dir, kind: 'write', raw: body, ...decoded });
+        } else {
+          const decoded = decodeAid(body, faMap, cols, totalCells);
+          if (decoded) {
+            out.push({ ts: frame.ts, dir: frame.dir, kind: 'aid', raw: body, ...decoded });
+          } else {
+            out.push({ ts: frame.ts, dir: frame.dir, kind: 'unknown', raw: body, summary: `Raw outbound data (${body.length}B) — not a recognized AID record`, aid: null, orders: [], danger: false });
+          }
+        }
+      }
+    }
+  }
+
+  out.sort((a, b) => a.ts - b.ts);
+  out.forEach((r, idx) => { r.no = idx + 1; });
+  return out;
+}
+
+// extractUnits works on the accumulated per-direction buffer, not the
+// individual frame, so a unit's raw bytes for negotiation/data records
+// come from `u.bytes` (data) or need reconstructing for negotiation. We
+// only need something reasonable for the hex pane, so negotiation frames
+// just show their constituent IAC bytes.
+function streamsRawSlice(frame, u) {
+  const parts = [];
+  for (const it of u.items) parts.push(IAC, it.cmd, it.opt);
+  return Buffer.from(parts);
+}

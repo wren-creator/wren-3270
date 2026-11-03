@@ -1,0 +1,28 @@
+# Local configuration — never commit
+.env
+node_modules/
+
+# User macros — local data, never commit
+macros/local/
+macros/accounts/
+
+# Private connection profiles — user's own hosts, never commit
+ssh-hosts.txt
+lpars.txt
+
+# VTAM pool-dashboard thresholds — operator/shop-specific, never commit
+pool-limits.json
+
+# RACF PROBE wordlist — operator's own default-credential list, edited in place
+default-accounts.txt
+
+# Stale root-level artifacts
+macros.json
+macros/macros.json
+
+# Working doc, not for the repo
+NDA.md
+
+# RoE scope guard — engagement-specific (customer hosts, guest IDs) and its audit trail, never commit
+scope.json
+scope-audit.log

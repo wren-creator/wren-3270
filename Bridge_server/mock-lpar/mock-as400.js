@@ -1,0 +1,3032 @@
+/**
+ * mock-lpar/mock-as400.js
+ * ─────────────────────────────────────────────────────────────────
+ * Lightweight TN5250 server simulating an IBM i (AS/400) SIGNON screen,
+ * a main menu with a few sub-menus, and a DSPMSG-style message queue,
+ * for local development/testing of the bridge's TN5250 engine
+ * (tn5250/session.js) without a real IBM i host.
+ *
+ * The menu tree lives in the MENUS table below — add an entry there to
+ * add a new menu; options without a `goto`/`action` automatically land
+ * on a generic "not implemented" stub screen rather than dead-ending.
+ *
+ * Byte-level protocol values (GDS record header, ESC commands, WTD
+ * orders, field attribute bytes, AID codes) are the same ones verified
+ * against the open-source tn5250 project (lib5250) when session.js was
+ * built — see that file's header comment for references.
+ */
+
+'use strict';
+
+const net = require('net');
+const fs = require('fs');
+const path = require('path');
+const { parseDds } = require('./rpg/dds');
+const { parseRpgle } = require('./rpg/rpgle');
+const { runProgram } = require('./rpg/interpreter');
+
+const PORT    = parseInt(process.env.MOCK_AS400_PORT  || '3272', 10);
+const LOG     = (process.env.LOG_LEVEL || 'info') === 'debug';
+const SYSNAME = process.env.MOCK_AS400_SYSID || 'AS400MOCK';
+
+const IAC  = 0xFF, DONT = 0xFE, DO = 0xFD, WONT = 0xFC, WILL = 0xFB;
+const SB   = 0xFA, SE   = 0xF0, EOR = 0xEF, NOP = 0xF1;
+
+const OPT_BINARY = 0x00;
+const OPT_TIMING = 0x06;
+const OPT_TTYPE  = 0x18;
+const OPT_EOR    = 0x19;
+const OPT_NEWENV = 0x27; // 39
+
+const ENV_IS = 0x00, ENV_SEND = 0x01;
+
+const ESC = 0x04;
+const CMD_CLEAR_UNIT           = 0x40;
+const CMD_CLEAR_UNIT_ALTERNATE = 0x20;
+const CMD_WRITE_TO_DISPLAY     = 0x11;
+const CMD_READ_INPUT_FIELDS    = 0x42;
+
+const ORDER_SBA = 0x11;
+const ORDER_IC  = 0x13;
+const ORDER_SF  = 0x1D;
+
+const ATTR_GREEN      = 0x20;
+const ATTR_WHITE       = 0x22;
+const ATTR_NONDISPLAY  = 0x27;
+const ATTR_RED         = 0x28;
+
+// Field Format Word bits — input field, MDT not set, alpha-shift.
+const FFW_INPUT_ALPHA = 0x0000;
+const FFW_INPUT_NONDISPLAY_ALPHA = 0x0000; // nondisplay comes from the attr byte, not FFW
+
+const GDS_HI = 0x12, GDS_LO = 0xA0;
+const FLOW_DISPLAY = 0x0000;
+const OPCODE_PUT_GET = 3;
+
+// ── EBCDIC (CP037) — same table as the other mocks/session.js ───────
+const EBCDIC_TO_ASCII = Buffer.from([
+  0x00,0x01,0x02,0x03,0x9C,0x09,0x86,0x7F,0x97,0x8D,0x8E,0x0B,0x0C,0x0D,0x0E,0x0F,
+  0x10,0x11,0x12,0x13,0x9D,0x0A,0x08,0x87,0x18,0x19,0x92,0x8F,0x1C,0x1D,0x1E,0x1F,
+  0x80,0x81,0x82,0x83,0x84,0x85,0x17,0x1B,0x88,0x89,0x8A,0x8B,0x8C,0x05,0x06,0x07,
+  0x90,0x91,0x16,0x93,0x94,0x95,0x96,0x04,0x98,0x99,0x9A,0x9B,0x14,0x15,0x9E,0x1A,
+  0x20,0xA0,0xE2,0xE4,0xE0,0xE1,0xE3,0xE5,0xE7,0xF1,0xA2,0x2E,0x3C,0x28,0x2B,0x7C,
+  0x26,0xE9,0xEA,0xEB,0xE8,0xED,0xEE,0xEF,0xEC,0xDF,0x21,0x24,0x2A,0x29,0x3B,0x5E,
+  0x2D,0x2F,0xC2,0xC4,0xC0,0xC1,0xC3,0xC5,0xC7,0xD1,0xA6,0x2C,0x25,0x5F,0x3E,0x3F,
+  0xF8,0xC9,0xCA,0xCB,0xC8,0xCD,0xCE,0xCF,0xCC,0x60,0x3A,0x23,0x40,0x27,0x3D,0x22,
+  0xD8,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0xAB,0xBB,0xF0,0xFD,0xFE,0xB1,
+  0xB0,0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,0x70,0x71,0x72,0xAA,0xBA,0xE6,0xB8,0xC6,0xA4,
+  0xB5,0x7E,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0xA1,0xBF,0xD0,0x5B,0xDE,0xAE,
+  0xAC,0xA3,0xA5,0xB7,0xA9,0xA7,0xB6,0xBC,0xBD,0xBE,0xDD,0xA8,0xAF,0x5D,0xB4,0xD7,
+  0x7B,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0xAD,0xF4,0xF6,0xF2,0xF3,0xF5,
+  0x7D,0x4A,0x4B,0x4C,0x4D,0x4E,0x4F,0x50,0x51,0x52,0xB9,0xFB,0xFC,0xF9,0xFA,0xFF,
+  0x5C,0xF7,0x53,0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0xB2,0xD4,0xD6,0xD2,0xD3,0xD5,
+  0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0xB3,0xDB,0xDC,0xD9,0xDA,0x9F,
+]);
+const ASCII_TO_EBCDIC = Buffer.alloc(256, 0x3F);
+for (let eb = 0; eb < 256; eb++) {
+  const asc = EBCDIC_TO_ASCII[eb];
+  if (ASCII_TO_EBCDIC[asc] === 0x3F) ASCII_TO_EBCDIC[asc] = eb;
+}
+function toEbcdic(str) {
+  const buf = Buffer.alloc(str.length);
+  for (let i = 0; i < str.length; i++) buf[i] = ASCII_TO_EBCDIC[str.charCodeAt(i)] ?? 0x3F;
+  return buf;
+}
+
+// ── 5250 screen builders ─────────────────────────────────────────────
+// fields: { row, col, text, input, nondisplay, length }
+// (row/col are 0-based here; converted to 1-based at the SBA/SF layer.)
+function buildScreen(cols, fields, insertCursor) {
+  const parts = [];
+
+  // CC1, CC2 — no special keyboard-lock semantics needed for a mock.
+  parts.push(0x00, 0x00);
+
+  for (const f of fields) {
+    parts.push(ORDER_SBA, f.row + 1, f.col + 1);
+
+    if (f.input) {
+      const ffw = f.nondisplay ? FFW_INPUT_NONDISPLAY_ALPHA : FFW_INPUT_ALPHA;
+      const attr = f.nondisplay ? ATTR_NONDISPLAY : ATTR_GREEN;
+      const length = f.length || 20;
+      parts.push(ORDER_SF, (ffw >> 8) & 0xFF, ffw & 0xFF, attr, (length >> 8) & 0xFF, length & 0xFF);
+      if (f.text) parts.push(...toEbcdic(f.text.padEnd(length, ' ').slice(0, length)));
+    } else {
+      parts.push(ORDER_SF, f.attr || ATTR_WHITE);
+      if (f.text) parts.push(...toEbcdic(f.text));
+    }
+  }
+
+  // Insert Cursor order — places the display cursor at the first input
+  // field so the operator can type immediately. IC = 0x13, row+1, col+1.
+  if (insertCursor) {
+    parts.push(ORDER_IC, insertCursor.row + 1, insertCursor.col + 1);
+  }
+
+  return Buffer.from(parts);
+}
+
+function wrapEsc(cmd, body) {
+  return Buffer.concat([Buffer.from([ESC, cmd]), body]);
+}
+
+// Parse a client's field-data response into per-SBA text runs, so field
+// values can be matched by (row, col) instead of blindly concatenating
+// every character in the response (which merges User + Password into one
+// blob and can't tell one input field from another).
+function parseFieldRuns(fieldData) {
+  const runs = [];
+  let i = 0;
+  let cur = null;
+  while (i < fieldData.length) {
+    if (fieldData[i] === ORDER_SBA) {
+      if (cur) runs.push(cur);
+      cur = { row: fieldData[i + 1] - 1, col: fieldData[i + 2] - 1, text: '' };
+      i += 3;
+      continue;
+    }
+    if (cur) {
+      const ch = EBCDIC_TO_ASCII[fieldData[i]];
+      cur.text += (ch >= 0x20 && ch < 0x7F) ? String.fromCharCode(ch) : ' ';
+    }
+    i++;
+  }
+  if (cur) runs.push(cur);
+  return runs;
+}
+
+function fieldAt(runs, row) {
+  const run = runs.find(r => r.row === row);
+  return run ? run.text.trim() : '';
+}
+
+function screenSignon(message = '') {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-US');
+  const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
+
+  const clearUnit = Buffer.from([ESC, CMD_CLEAR_UNIT]);
+  const fields = [
+    { row: 1,  col: 30, text: 'Sign On', input: false },
+    { row: 3,  col: 2,  text: `System  . . . . . :   ${SYSNAME}`, input: false },
+    { row: 4,  col: 2,  text: `Subsystem . . . . :   QINTER`, input: false },
+    { row: 5,  col: 2,  text: `Display . . . . . :   QPADEV0001`, input: false },
+    { row: 7,  col: 2,  text: 'User  . . . . . . . . . . . . .', input: false },
+    { row: 7,  col: 53, text: '', input: true, length: 10 },
+    { row: 8,  col: 2,  text: 'Password  . . . . . . . . . . .', input: false },
+    { row: 8,  col: 53, text: '', input: true, length: 10, nondisplay: true },
+    { row: 9,  col: 2,  text: 'Program/procedure . . . . . . .', input: false },
+    { row: 9,  col: 53, text: '', input: true, length: 10 },
+    { row: 10, col: 2,  text: 'Menu  . . . . . . . . . . . . .', input: false },
+    { row: 10, col: 53, text: '', input: true, length: 10 },
+    { row: 11, col: 2,  text: 'Current library . . . . . . . .', input: false },
+    { row: 11, col: 53, text: '', input: true, length: 10 },
+    { row: 22, col: 2,  text: `${dateStr}  ${timeStr}`, input: false },
+    { row: 23, col: 2,  text: '(C) COPYRIGHT MOCK AS/400 1988, 2026.', input: false },
+  ];
+  if (message) fields.push({ row: 20, col: 2, text: message.slice(0, 76), input: false, attr: ATTR_RED });
+  const wtd = wrapEsc(CMD_WRITE_TO_DISPLAY, buildScreen(80, fields, { row: 7, col: 53 }));
+  const readCmd = Buffer.from([ESC, CMD_READ_INPUT_FIELDS]);
+
+  return Buffer.concat([clearUnit, wtd, readCmd]);
+}
+
+// ── Menu tree ─────────────────────────────────────────────────────
+// Data-driven so adding a menu or option is just adding data, not a new
+// render function. Each option either:
+//   goto:     <menu id>   — jump to another menu in this table
+//   action:   'messages'  — jump to the Display Messages screen
+//   (neither)              — jump to a generic "not implemented" stub
+// '90' (sign off) is handled universally, not listed per menu, matching
+// real AS/400 menus where it's always available.
+const MENUS = {
+  MAIN: {
+    title: 'MAIN MENU',
+    options: [
+      { num: '1', label: 'User tasks',                    goto: 'USER' },
+      { num: '2', label: 'Office tasks',                   goto: 'OFFICE' },
+      { num: '3', label: 'General system tasks',           goto: 'SYSTEM' },
+      { num: '4', label: 'Files, libraries, and folders',  goto: 'FILES' },
+      { num: '5', label: 'Programming',                    goto: 'PROGRAMMING' },
+      { num: '9', label: 'Display messages',                action: 'messages' },
+    ],
+  },
+  USER: {
+    title: 'USER TASKS',
+    parent: 'MAIN',
+    options: [
+      { num: '1', label: 'Send messages',                  run: 'SNDMSG' },
+      { num: '2', label: 'Display messages',                action: 'messages' },
+      { num: '3', label: 'Work with spooled files',        run: 'WRKSPLF' },
+      { num: '4', label: 'Work with batch jobs',           run: 'WRKBCHJOB' },
+      { num: '5', label: 'Work with your jobs',             run: 'WRKUSRJOB' },
+      { num: '6', label: 'Display current job',             run: 'DSPJOB' },
+    ],
+  },
+  OFFICE: {
+    title: 'OFFICE TASKS',
+    parent: 'MAIN',
+    options: [
+      { num: '1', label: 'Work with calendar' },
+      { num: '2', label: 'Send/receive documents' },
+      { num: '3', label: 'Work with mail',                  action: 'messages' },
+    ],
+  },
+  SYSTEM: {
+    title: 'GENERAL SYSTEM TASKS',
+    parent: 'MAIN',
+    options: [
+      { num: '1', label: 'Work with active jobs',           run: 'WRKACTJOB' },
+      { num: '2', label: 'Work with printers' },
+      { num: '3', label: 'Display system status' },
+      { num: '4', label: 'Work with subsystems',            run: 'WRKSBS' },
+      { num: '5', label: 'Work with system values',         run: 'WRKSYSVAL' },
+      { num: '6', label: 'Work with user profiles',         run: 'WRKUSRPRF' },
+      { num: '7', label: 'Work with objects (public auth)', run: 'WRKOBJ' },
+    ],
+  },
+  FILES: {
+    title: 'FILES, LIBRARIES, AND FOLDERS',
+    parent: 'MAIN',
+    options: [
+      { num: '1', label: 'Work with libraries',            run: 'WRKLIB' },
+      { num: '2', label: 'Display library list',           run: 'DSPLIBL' },
+    ],
+  },
+  PROGRAMMING: {
+    title: 'PROGRAMMING',
+    parent: 'MAIN',
+    options: [
+      { num: '1', label: 'Programming Development Manager (PDM)', run: 'STRPDM' },
+      { num: '2', label: 'Interactive SQL',                        run: 'STRSQL' },
+    ],
+  },
+};
+
+// ── Seeded security posture (deliberately weak, for tooling) ────────
+// This is the IBM i analog of the mock z/OS host's exposed RACF gaps:
+// a realistic *insecure* baseline so security tools built against the
+// mock have genuine findings to surface. `weak`/privileged flags drive
+// the red highlighting on the panels below. Harden a value by editing
+// its entry here — nothing else needs to change.
+
+// System values a real security review would pull (DSPSYSVAL/WRKSYSVAL).
+const SYSVALS = {
+  QSECURITY:  { value: '30',      text: 'System security level',              weak: true,
+                note: 'Level 30 enforces password + resource security but NOT object ownership integrity; level 40 or 50 is recommended.' },
+  QMAXSIGN:   { value: '*NOMAX',  text: 'Maximum sign-on attempts allowed',   weak: true,
+                note: 'Unlimited sign-on attempts let an attacker brute-force passwords with no lockout. Set a finite limit (e.g. 3).' },
+  QMAXSGNACN: { value: '1',       text: 'Action when sign-on attempts reached', weak: true,
+                note: 'Action 1 disables only the device, not the profile, so a guessed profile stays enabled. Use 3 (disable both).' },
+  QPWDEXPITV: { value: '*NOMAX',  text: 'Password expiration interval',       weak: true,
+                note: 'Passwords never expire — compromised credentials stay valid indefinitely.' },
+  QPWDMINLEN: { value: '1',       text: 'Minimum password length',            weak: true,
+                note: 'One-character passwords are permitted.' },
+  QPWDRQDDIF: { value: '0',       text: 'Duplicate password control',         weak: true,
+                note: '0 = users may reuse any previous password immediately.' },
+  QPWDLVL:    { value: '0',       text: 'Password level',                     weak: true,
+                note: 'Level 0 caps passwords at 10 chars and stores weak NetServer hashes.' },
+  QINACTITV:  { value: '*NONE',   text: 'Inactive job time-out',              weak: true,
+                note: 'Idle sessions are never disconnected — an unattended terminal stays signed on.' },
+  QLMTSECOFR: { value: '0',       text: 'Limit security officer device access', weak: true,
+                note: '0 = *ALLOBJ/*SERVICE users can sign on at ANY device, not just controlled ones.' },
+  QAUTOVRT:   { value: '*NOMAX',  text: 'Autoconfigure virtual devices',        weak: true,
+                note: '*NOMAX lets the system auto-create unlimited virtual (Telnet / pass-through) device descriptions — a network attacker gets an endless supply of sign-on target devices with no admin action. Set to 0, or a small controlled number.' },
+  QALWOBJRST: { value: '*ALL',    text: 'Allow object restore option',        weak: true,
+                note: '*ALL permits restoring security-sensitive and state programs — a supply-chain/restore attack vector.' },
+  QCRTAUT:    { value: '*CHANGE', text: 'Default public authority for new objects', weak: true,
+                note: 'New objects default to *PUBLIC *CHANGE — over-permissive out of the box.' },
+  QRETSVRSEC: { value: '1',       text: 'Retain server security data',        weak: true,
+                note: '1 = decryptable passwords are retained on the system for server functions.' },
+  QAUDCTL:    { value: '*NONE',   text: 'Auditing control',                   weak: true,
+                note: 'Security auditing is OFF — no audit journal of privileged actions.' },
+  QDSPSGNINF: { value: '1',       text: 'Sign-on information display',        weak: false,
+                note: 'Users are shown last sign-on info — a good setting.' },
+  // ── From a review of IBM i audit practice (added 2026-10-14). Values mirror
+  // common shipped or drifted settings, a few hardened for contrast. ──
+  QPWDLMTREP: { value: '0',       text: 'Limit repeating characters',         weak: true,
+                note: '0 = no restriction on repeated characters. 2 stops consecutive repeats, 1 is stricter.' },
+  QPWDLMTCHR: { value: '*NONE',   text: 'Restricted password characters',     weak: false,
+                note: '*NONE allows every character. Restrict characters only if policy requires it.' },
+  QPWDVLDPGM: { value: '*NONE',   text: 'Password validation program',        weak: false,
+                note: 'No custom validation program here. Also check exit point QIBM_QSY_VLD_PASSWRD, validation can be registered there.' },
+  QINACTMSGQ: { value: 'QSYSOPR', text: 'Inactive job message queue',         weak: true,
+                note: 'A message queue only sends a message and leaves the session open, that is notification, not a control. Use *ENDJOB or *DSCJOB.' },
+  QLMTDEVSSN: { value: '0',       text: 'Limit device sessions',              weak: true,
+                note: '0 = no limit on device sessions per user. 1 limits a user to one.' },
+  QAUDLVL:    { value: '*AUTFAIL *SECURITY', text: 'Auditing level',          weak: true,
+                note: 'Event auditing is on but narrow. Missing the spool, print, program-adoption, system-management, create/delete and save/restore levels.' },
+  QAUDLVL2:   { value: '*NONE',   text: 'Auditing level extension',           weak: false,
+                note: 'Only read when QAUDLVL includes *AUDLVL2.' },
+  QAUDENDACN: { value: '*NOTIFY', text: 'Action when auditing cannot run',    weak: true,
+                note: '*NOTIFY lets the system keep running unaudited when the audit journal cannot be written. *PWRDWNSYS for high security.' },
+  QAUDFRCLVL: { value: '*SYS',    text: 'Audit journal force level',          weak: false,
+                note: '*SYS lets the system decide when audit records are forced to disk. A lower number loses fewer entries in a crash.' },
+  QCRTOBJAUD: { value: '*NONE',   text: 'Auditing for new objects',           weak: false,
+                note: '*NONE is acceptable as the system default. Set CRTOBJAUD to *CHANGE or *ALL on sensitive libraries.' },
+  QALWUSRDMN: { value: '*ALL',    text: 'Allow user domain objects',          weak: true,
+                note: '*ALL is the shipped default, not a hardened setting. Name the libraries that may hold user-domain objects.' },
+  QFRCCVNRST: { value: '1',       text: 'Force conversion on restore',        weak: false,
+                note: 'Controls conversion or rejection of objects on restore. Choose a value per policy and record why.' },
+  QUSEADPAUT: { value: '*NONE',   text: 'Use adopted authority',              weak: true,
+                note: '*NONE means no restriction: any user can create a program that uses adopted authority. Name an authorization list instead.' },
+  QSCANFS:    { value: '*ROOTOPNUD', text: 'Scan file systems',               weak: false,
+                note: 'Needs a registered scan exit program to mean anything.' },
+  QSCANFSCTL: { value: '*NONE',   text: 'Scan file systems control',          weak: false,
+                note: 'Controls what happens on scan failure and which operations trigger scans.' },
+  QRMTSIGN:   { value: '*VERIFY', text: 'Remote sign-on control',             weak: true,
+                note: '*VERIFY and *SAMEPRF let a remote session skip the sign-on screen. Use *REJECT or *FRCSIGNON.' },
+  QRMTSRVATR: { value: '0',       text: 'Remote service attribute',           weak: false,
+                note: '0 disables remote service access. 1 enables it.' },
+  QSHRMEMCTL: { value: '1',       text: 'Shared memory control',              weak: false,
+                note: '1 limits write-capable shared memory to users with *ALLOBJ.' },
+};
+const SYSVAL_KEYS = Object.keys(SYSVALS);
+
+// User profiles (DSPUSRPRF/WRKUSRPRF) with special authorities.
+// `pwdNone` — password is *NONE (profile cannot sign on interactively, but
+// background subsystem jobs still run under it). `pwdChg` — date password
+// last changed, or *NA when there is no password.
+//
+// Two layers here:
+//   1. The hand-picked findings set (QSECOFR/QSRV default passwords, an
+//      over-privileged APPADMIN, an enabled QTMHHTTP, …) — an UNHARDENED
+//      factory box, which is what the Shipped Profile Audit flags.
+//   2. The FULL IBM-supplied (Q*) profile set below it — modern IBM i ships
+//      almost all of these PASSWORD(*NONE), so they are audit-COMPLIANT and
+//      exist for enumeration realism: WRKUSRPRF paging, DSPJOB library-list
+//      drilling, and the Sign On CPF1118-vs-CPF1120 existence oracle. Table
+//      sourced from a colleague's unpublished iSeries security field notes
+//      (author anonymous, joint whitepaper pending), cross-checked against
+//      the IBM i Security Reference (SC41-5302) "IBM-supplied user profiles"
+//      table. QSRVBAS is the one deliberate exception — it keeps its shipped
+//      default password (= profile name), the classic Ch.2 finding.
+const USRPRFS = [
+  { name: 'QSECOFR',  text: 'Security officer',              status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*ALLOBJ','*SECADM','*SAVSYS','*JOBCTL','*SERVICE','*SPLCTL','*AUDIT','*IOSYSCFG'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: true,  pwdNone: false, pwdChg: '06/28/26', lastSignon: '07/06/26 08:14:22' },
+  { name: 'QPGMR',    text: 'Programmer',                    status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*JOBCTL','*SPLCTL','*SAVSYS'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: false, pwdNone: false, pwdChg: '01/14/25', lastSignon: '07/05/26 17:02:10' },
+  { name: 'APPADMIN', text: 'Application service account',   status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*ALLOBJ','*JOBCTL'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: false, pwdNone: false, pwdChg: '07/01/26', lastSignon: '07/07/26 02:00:05' },
+  { name: 'JSMITH',   text: 'John Smith - Accounting',       status: '*ENABLED',  group: 'GRPACCT',
+    // Supplemental groups never show in the primary group field, which is the
+    // point: GRPADMIN holds *ALLOBJ and JSMITH reaches it only this way.
+    supGroups: ['GRPADMIN'],
+    specialAuth: [],
+    lmtcpb: '*YES', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: false, pwdChg: '07/02/26', lastSignon: '07/06/26 09:30:44' },
+  // Group profiles (added for the Group Profile Review). GRPACCT is the tidy
+  // one, non-interactive. GRPADMIN holds *ALLOBJ and has a password, a group
+  // someone can sign on as. GRPDEV is a plain group with one member.
+  { name: 'GRPACCT',  text: 'Accounting group',              status: '*ENABLED',  group: '*NONE',
+    specialAuth: [],
+    lmtcpb: '*YES', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true,  pwdChg: '*NA',      lastSignon: '*NONE' },
+  { name: 'GRPADMIN', text: 'Application admins group',      status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*ALLOBJ'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: false, pwdNone: false, pwdChg: '02/11/25', lastSignon: '*NONE' },
+  { name: 'GRPDEV',   text: 'Developers group',              status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*SAVSYS'],
+    lmtcpb: '*YES', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true,  pwdChg: '*NA',      lastSignon: '*NONE' },
+  { name: 'KLEE',     text: 'Kim Lee - Application support', status: '*ENABLED',  group: 'GRPADMIN',
+    specialAuth: ['*SPLCTL'],
+    lmtcpb: '*YES', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: false, pwdChg: '06/30/26', lastSignon: '07/07/26 07:45:10' },
+  { name: 'RTAYLOR',  text: 'R Taylor - Developer',          status: '*ENABLED',  group: 'GRPDEV',
+    supGroups: ['GRPACCT'],
+    specialAuth: [],
+    lmtcpb: '*YES', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: false, pwdChg: '05/19/26', lastSignon: '07/06/26 10:12:03' },
+  { name: 'QSYSOPR',  text: 'System operator',               status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*JOBCTL','*SAVSYS'],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: false, pwdChg: '03/22/25', lastSignon: '07/06/26 06:00:00' },
+  { name: 'QUSER',    text: 'Default user profile',          status: '*ENABLED',  group: '*NONE',
+    specialAuth: [],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: false, pwdChg: '11/03/24', lastSignon: '*NONE' },
+  { name: 'QSRV',     text: 'Service representative',        status: '*DISABLED', group: '*NONE',
+    specialAuth: ['*ALLOBJ','*SERVICE'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: true,  pwdNone: false, pwdChg: '01/01/24', lastSignon: '*NONE' },
+  { name: 'QSYS',     text: 'Internal system profile',       status: '*DISABLED', group: '*NONE',
+    specialAuth: ['*ALLOBJ','*SECADM','*SAVSYS','*JOBCTL','*SERVICE','*SPLCTL','*AUDIT','*IOSYSCFG'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: false, pwdNone: true,  pwdChg: '*NA',      lastSignon: '*NONE' },
+  { name: 'QTMHHTTP', text: 'IBM HTTP Server for i',         status: '*ENABLED',  group: '*NONE',
+    specialAuth: [],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: false, pwdChg: '02/09/25', lastSignon: '*NONE' },
+
+  // ── Full IBM-supplied (Q*) profile set ──────────────────────────────────
+  // QSRVBAS: the deliberate finding — ships PASSWORD(QSRVBAS), holds *ALLOBJ.
+  { name: 'QSRVBAS',   text: 'Basic service profile',         status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*ALLOBJ','*SAVSYS','*JOBCTL'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: true,  pwdNone: false, pwdChg: '01/01/24', lastSignon: '*NONE' },
+  // Elevated shipped profiles — powerful, but PASSWORD(*NONE) keeps them
+  // non-interactive and therefore compliant (SPCAUT per SC41-5302).
+  { name: 'QLPAUTO',   text: 'LP automatic install',          status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*ALLOBJ','*SECADM','*SAVSYS','*JOBCTL','*IOSYSCFG'],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true,  pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QLPINSTALL', text: 'LP install',                   status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*ALLOBJ','*SECADM','*SAVSYS','*JOBCTL','*IOSYSCFG'],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true,  pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QTCP',      text: 'TCP/IP',                         status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*JOBCTL'],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true,  pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QPM400',    text: 'Performance Management',         status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*IOSYSCFG','*JOBCTL'],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true,  pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QCLUSTER',  text: 'Cluster',                        status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*IOSYSCFG'],
+    lmtcpb: '*NO',  pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true,  pwdChg: '*NA', lastSignon: '*NONE' },
+  // The remainder ship SPCAUT(*NONE) + PASSWORD(*NONE) — all audit-compliant.
+  { name: 'QAUTPROF',  text: 'Auto profile', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QBRMS',     text: 'Backup Recovery Media Svcs', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QCLUMGT',   text: 'Cluster management', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QCOLSRV',   text: 'Collection Services', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QDBSHR',    text: 'Internal database share', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QDBSHRDO',  text: 'Internal DB share (DDM)', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QDFTOWN',   text: 'Default object owner', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QDIRSRV',   text: 'Directory (LDAP) server', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*YES', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QDLFM',     text: 'DLO file manager', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QDOC',      text: 'Internal document', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QDSNX',     text: 'Dist Systems Node Exec', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QEJB',      text: 'WebSphere / EJB', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QFNC',      text: 'Finance', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QGATE',     text: 'VM/MVS bridge', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QMQM',      text: 'MQ Series', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QMQMADM',   text: 'MQ Series administration', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QMSF',      text: 'Mail Server Framework', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QNETSPLF',  text: 'Network spooled files', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QNFSANON',  text: 'NFS anonymous', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QNOTES',    text: 'Lotus Domino', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QNTP',      text: 'Network Time Protocol', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QPEX',      text: 'Performance Explorer', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QPRJOWN',   text: 'Project owner', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QRJE',      text: 'Remote Job Entry', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QRMTCAL',   text: 'Remote calendar', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QSNADS',    text: 'SNA Distribution Services', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QSPL',      text: 'Spooling', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QSPLJOB',   text: 'Internal spool job', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QSVCDRCTR', text: 'Service Director', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QTFTP',     text: 'TFTP server', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QTMHHTP1',  text: 'HTTP server CGI', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QTMPLPD',   text: 'Remote LPR (LPD)', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QTMTWSG',   text: 'Workstation Gateway', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QTSTRQS',   text: 'Test request', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QUMB',      text: 'Ultimedia', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QYPSJSVR',  text: 'Mgmt Central Java server', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QYPUOWN',   text: 'Mgmt Central owner', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+  { name: 'QX400',     text: 'X.400 mail', status: '*ENABLED', group: '*NONE', specialAuth: [],
+    lmtcpb: '*NO', pwdExpiry: '*SYSVAL', pwdDefault: false, pwdNone: true, pwdChg: '*NA', lastSignon: '*NONE' },
+
+  // ── Irregular profile ─────────────────────────────────────────────────
+  // QYSPJ is NOT an IBM-supplied profile. It is a blend-in backdoor: a
+  // Q-named, *ALLOBJ *SECADM profile with an innocuous description, planted
+  // so an admin scanning WRKUSRPRF skims past it as "just another Q thing".
+  // Carmel's Ch.2 note ("consider creating a new account such as QYSPJ").
+  // The Shipped Profile Audit flags it because the name is not on the
+  // known IBM-supplied list — a recently-changed password on a privileged
+  // Q* profile IBM never ships.
+  { name: 'QYSPJ',     text: 'System operator',               status: '*ENABLED',  group: '*NONE',
+    specialAuth: ['*ALLOBJ','*SECADM','*JOBCTL'],
+    lmtcpb: '*NO',  pwdExpiry: '*NOMAX',  pwdDefault: true,  pwdNone: false, pwdChg: '07/04/26', lastSignon: '07/07/26 03:12:40' },
+];
+
+// Sign On passwords. Only consulted when a password is actually typed —
+// a blank password still walks in as any user (the mock's long-standing
+// convenience, and what every existing IBM i walkthrough relies on). With
+// a password present, the mock validates it so the RACF PROBE has a real
+// target: profiles with pwdDefault use their own name, the rest use a set
+// value. QSYS is intentionally absent (pwdNone → CPF1118). Kept in sync
+// with the pwdDefault flags in USRPRFS above.
+const CREDENTIALS = {
+  QSECOFR:  'QSECOFR',      // pwdDefault
+  QSRV:     'QSRV',         // pwdDefault
+  QSRVBAS:  'QSRVBAS',      // pwdDefault
+  QYSPJ:    'QYSPJ',        // pwdDefault — planted backdoor, lazy password
+  QPGMR:    'PgmrPass1',
+  QSYSOPR:  'OpsPass22',
+  QUSER:    'Guest2026',
+  QTMHHTTP: 'HttpAdm99',
+  JSMITH:   'Summer2026',
+  APPADMIN: 'Appl1cation',
+};
+
+// Objects and their *PUBLIC / private authorities (DSPOBJAUT/WRKOBJ).
+const OBJECTS = [
+  { name: 'EMPMAST', lib: 'PAYROLL', type: '*FILE',   owner: 'APPADMIN', publicAuth: '*ALL',     authList: '*NONE',
+    priv: [ { user: 'APPADMIN', auth: '*ALL' }, { user: '*PUBLIC', auth: '*ALL' }, { user: 'JSMITH', auth: '*CHANGE' } ] },
+  { name: 'PAYROLL', lib: 'QSYS',    type: '*LIB',    owner: 'APPADMIN', publicAuth: '*CHANGE',  authList: '*NONE',
+    priv: [ { user: 'APPADMIN', auth: '*ALL' }, { user: '*PUBLIC', auth: '*CHANGE' } ] },
+  { name: 'QGPL',    lib: 'QSYS',    type: '*LIB',    owner: 'QSYS',     publicAuth: '*CHANGE',  authList: '*NONE',
+    priv: [ { user: '*PUBLIC', auth: '*CHANGE' } ] },
+  { name: 'USRPRF',  lib: 'QSYS',    type: '*USRPRF', owner: 'QSECOFR',  publicAuth: '*EXCLUDE', authList: '*NONE',
+    priv: [ { user: '*PUBLIC', auth: '*EXCLUDE' } ] },
+  { name: 'CONFIG',  lib: 'APPLIB',  type: '*FILE',   owner: 'APPADMIN', publicAuth: '*USE',     authList: 'SECAUTL',
+    priv: [ { user: '*PUBLIC', auth: '*USE' }, { user: 'GRPACCT', auth: '*CHANGE' } ] },
+  { name: 'QCMD',    lib: 'QSYS',    type: '*CMD',    owner: 'QSYS',     publicAuth: '*USE',     authList: '*NONE',
+    priv: [ { user: '*PUBLIC', auth: '*USE' } ] },
+];
+
+// ── Wave 2 surfaces ────────────────────────────────────────────────
+// Network attributes (DSPNETA). Weak inbound-request settings are remote
+// job / command execution vectors.
+const NETA = {
+  SYSNAME:   { value: SYSNAME,   text: 'Current system name',            weak: false },
+  LCLLOCNAME:{ value: 'MOCKLOC', text: 'Local location name',            weak: false },
+  JOBACN:    { value: '*FILE',   text: 'Job action (inbound requests)',  weak: true,
+               note: '*FILE runs submitted job streams automatically — remote job/command execution. Use *REJECT or *SEARCH.' },
+  DDMACC:    { value: '*ALL',    text: 'DDM/DRDA request access',        weak: true,
+               note: '*ALL lets any remote system run DDM/DRDA (remote SQL and commands). Restrict with a DDM exit program.' },
+  PCSACC:    { value: '*REGFAC', text: 'Client request access',          weak: true,
+               note: '*REGFAC allows Client Access host-server functions broadly; gate them with registered exit programs.' },
+  ALWANYNET: { value: '*ANYNET', text: 'Allow AnyNet support',           weak: true,
+               note: '*ANYNET permits APPC-over-TCP tunnelling — widens the remote attack surface. Use *NONE unless required.' },
+  ALRSTS:    { value: '*ON',     text: 'Alert status',                   weak: false },
+};
+
+// Exit point / service registration audit (WRKREGINF). An exit point with no
+// registered validation program means nothing gates requests coming through
+// it — the classic way a restricted shell (LMTCPB(*YES)) turns out not to
+// matter, FTP/remote-SQL/remote-command/NetServer all bypass it untouched.
+// Classification lives client-side (as400sec-parse.js), same split as NETA.
+const EXIT_POINTS = {
+  QIBM_QZDA_INIT:       { value: '*NONE' },
+  QIBM_QZDA_SQL1:       { value: 'SQLEXITPGM' },
+  QIBM_QTMF_SERVER_REQ: { value: '*NONE' },
+  QIBM_QTMF_CLIENT_REQ: { value: '*NONE' },
+  QIBM_QPWFS_FILE_SERV: { value: '*NONE' },
+  QIBM_QCA_RTV_COMMAND: { value: '*NONE' },
+  // From a review of IBM i audit practice (added 2026-10-14). QZRC_RMT is the
+  // remote command and program call server's own exit point; one is registered
+  // here (QZSO_SIGNON) for contrast.
+  QIBM_QZDA_NDB1:       { value: '*NONE' },
+  QIBM_QZDA_ROI1:       { value: '*NONE' },
+  QIBM_QZRC_RMT:        { value: '*NONE' },
+  QIBM_QZSO_SIGNON:     { value: 'SIGNONEXIT' },
+  QIBM_QTMF_SVR_LOGON:  { value: '*NONE' },
+  QIBM_QSY_VLD_PASSWRD: { value: '*NONE' },
+  QIBM_QTG_DEVINIT:     { value: '*NONE' },
+  QIBM_QZHQ_DATA_QUEUE: { value: '*NONE' },
+};
+
+// NetServer (SMB) configuration. A genuine IBM i has no single green-screen
+// CL command for this (iSeries Navigator / the QZLSCFG API own it there), but
+// a flat report screen under an invented DSPNETSVR command matches this
+// mock's existing DSPNETA shape closely enough to teach the same finding. A
+// set guest profile means unauthenticated SMB clients get mapped to it;
+// unsigned SMB lets requests be tampered with or replayed in transit.
+const NETSVR = {
+  SERVERNAME:  { value: 'MOCKSRV' },
+  GUESTUSRPRF: { value: 'QNETSVRGST' },
+  AUTOSTART:   { value: '*YES' },
+  SIGNEDSMB:   { value: '*NO' },
+  BROWSEABLE:  { value: '*YES' },
+};
+
+// IFS permission sweep (WRKLNK). Shops that lock DB2 libraries down tight
+// often treat the IFS like an unmonitored NFS share — world-writable scripts,
+// plaintext credentials in config, and readable private keys are common
+// finds. No drill-down needed, same shape as the Job Description scanner:
+// the list already carries everything the classifier needs.
+const IFS_OBJECTS = [
+  { path: '/home/webadmin/deploy.sh',   type: '*STMF', owner: 'WEBADMIN', auth: '*RWX' },
+  { path: '/www/myapp/config/db.conf',  type: '*STMF', owner: 'QTMHHTTP', auth: '*RW'  },
+  { path: '/home/webadmin/.ssh/id_rsa', type: '*STMF', owner: 'WEBADMIN', auth: '*R'   },
+  { path: '/QOpenSys/var/log/app.log',  type: '*STMF', owner: 'APPADMIN', auth: '*RW'  },
+  { path: '/QSYS.LIB',                  type: '*DIR',  owner: 'QSYS',    auth: '*RX'  },
+];
+
+// Adopted-authority runtime scanner (WRKJOB OPTION(*PGMSTK) -> DSPPGM per
+// adopting entry). A program compiled with USRPRF(*OWNER) runs under the
+// owning profile's authority at that stack level once invoked — if the
+// owner holds *ALLOBJ, an unchecked parameter in whatever calls into it
+// (a CL or RPG wrapper) runs with the owner's full authority. The call
+// stack itself only shows *whether* a level adopts; DSPPGM is the real
+// command that shows *whose* authority it adopts.
+const CALL_STACK = [
+  { program: 'QCMD',    lib: 'QSYS',   actgrp: 'QDFTACTGRP', stmt: '000010', adopt: false },
+  { program: 'APPMENU', lib: 'APPLIB', actgrp: 'QDFTACTGRP', stmt: '000120', adopt: false },
+  { program: 'PAYUPD',  lib: 'APPLIB', actgrp: 'QDFTACTGRP', stmt: '000045', adopt: true  },
+];
+const PGM_OWNERS = {
+  'APPLIB/PAYUPD': { owner: 'QSECOFR', usrprf: '*OWNER', useAdoptedAuth: '*YES' },
+};
+
+// Job descriptions (WRKJOBD/DSPJOBD). A JOBD that names a real USER() and is
+// usable by *PUBLIC lets any user SBMJOB and run code as that user — the
+// classic IBM i privilege-escalation path when the user is privileged.
+const JOBDS = [
+  { name: 'QDFTJOBD', lib: 'QGPL',   user: '*RQD',     publicAuth: '*USE',     jobq: 'QBATCH', rtgdta: 'QCMDI', text: 'Default job description' },
+  { name: 'QBATCH',   lib: 'QGPL',   user: '*RQD',     publicAuth: '*USE',     jobq: 'QBATCH', rtgdta: 'QCMDB', text: 'Batch job description' },
+  { name: 'APPJOBD',  lib: 'APPLIB', user: 'QSECOFR',  publicAuth: '*USE',     jobq: 'QBATCH', rtgdta: 'QCMDB', text: 'Application batch submit' },
+  { name: 'WEBJOBD',  lib: 'APPLIB', user: 'APPADMIN', publicAuth: '*CHANGE',  jobq: 'QBATCH', rtgdta: 'QCMDB', text: 'Web backend jobs' },
+  { name: 'OPSJOBD',  lib: 'QGPL',   user: 'QSYSOPR',  publicAuth: '*EXCLUDE', jobq: 'QBATCH', rtgdta: 'QCMDB', text: 'Operations jobs' },
+];
+
+// Authorization lists (WRKAUTL/DSPAUTL). Over-permissive *PUBLIC on an authl
+// cascades to every object it secures.
+const AUTLS = [
+  { name: 'SECAUTL',  owner: 'QSECOFR',  publicAuth: '*EXCLUDE', text: 'Security config objects',
+    users: [ { user: '*PUBLIC', auth: '*EXCLUDE' }, { user: 'APPADMIN', auth: '*USE' } ],
+    secured: [ 'APPLIB/CONFIG' ] },
+  { name: 'PAYAUTL',  owner: 'APPADMIN', publicAuth: '*CHANGE',  text: 'Payroll objects',
+    users: [ { user: '*PUBLIC', auth: '*CHANGE' }, { user: 'JSMITH', auth: '*ALL' } ],
+    secured: [ 'PAYROLL/EMPMAST', 'QSYS/PAYROLL' ] },
+  { name: 'QSYSAUTL', owner: 'QSYS',     publicAuth: '*USE',     text: 'System shared objects',
+    users: [ { user: '*PUBLIC', auth: '*USE' } ],
+    secured: [ 'QSYS/QGPL' ] },
+];
+
+// Active jobs (WRKACTJOB). Jobs running under a privileged profile are the
+// interesting finding — an *ALLOBJ batch job or a broadly-reachable host server.
+const ACTJOBS = [
+  { sbs: 'QINTER',  job: 'DSP01',      user: 'JSMITH',   type: 'INT', func: 'CMD-WRKACTJOB', status: 'RUN' },
+  { sbs: 'QBATCH',  job: 'NIGHTLYRUN', user: 'APPADMIN', type: 'BCH', func: 'PGM-PAYRPT',    status: 'ACTIVE' },
+  { sbs: 'QSYSWRK', job: 'QZDASOINIT', user: 'QUSER',    type: 'PJ',  func: 'PGM-QZDASO',    status: 'ACTIVE' },
+  { sbs: 'QCMN',    job: 'QRWTSRVR',   user: 'QUSER',    type: 'PJ',  func: '*',             status: 'ACTIVE' },
+  { sbs: 'QSYSWRK', job: 'MAINTJOB',   user: 'QSECOFR',  type: 'BCH', func: 'PGM-MAINT',     status: 'ACTIVE' },
+  // Mainframe 202 (200 series) Differential-Diagnosis vignette: MSGW is
+  // a real, distinct IBM i job status, waiting on a reply to an inquiry
+  // message the program itself sent, not stuck and not crashed. The
+  // message explaining what it's waiting on is seeded in seedMessages()
+  // below, discoverable via DSPMSG.
+  { sbs: 'QBATCH',  job: 'MTHCLOSE',   user: 'APPADMIN', type: 'BCH', func: 'PGM-MTHCLOSE',  status: 'MSGW' },
+];
+
+// Subsystems (WRKSBS) — mostly informational context for the active-job view.
+const SBS = [
+  { name: 'QINTER',  status: 'ACTIVE', maxJobs: '*NOMAX', text: 'Interactive subsystem' },
+  { name: 'QBATCH',  status: 'ACTIVE', maxJobs: '*NOMAX', text: 'Batch subsystem' },
+  { name: 'QSYSWRK', status: 'ACTIVE', maxJobs: '*NOMAX', text: 'System work subsystem' },
+  { name: 'QCMN',    status: 'ACTIVE', maxJobs: '*NOMAX', text: 'Communications subsystem' },
+  { name: 'QTCP',    status: 'ACTIVE', maxJobs: '*NOMAX', text: 'TCP/IP subsystem' },
+];
+
+// Which user names denote a privileged profile (for red-highlighting jobs /
+// JOBDs that run as them). Derived from USRPRFS so it stays in sync.
+const PRIV_USERS = new Set(USRPRFS.filter(p =>
+  p.specialAuth.includes('*ALLOBJ') || p.specialAuth.includes('*SECADM')).map(p => p.name));
+
+// ── Wave 3 surfaces ───────────────────────────────────────────────
+// Everyday operator / PDM / SQL navigation — realistic-looking data, no
+// weak/privileged flagging (unlike Waves 1-2, these aren't a security demo).
+
+// Spooled files (WRKSPLF). System-wide, like the other "Work with" panels
+// (not filtered to the signed-on user) so there's always something to see.
+const SPLFILES = [
+  { file: 'QSYSPRT',   number: '000123', job: 'PAYRPT/APPADMIN/048812', user: 'APPADMIN', status: '*RDY', pages: 42,  copies: 1, formtype: '*STD',   priority: 5, outq: 'QGPL/QPRINT',
+    content: [
+      'PAYROLL REGISTER -- PAY PERIOD ENDING 07/15/26',
+      '',
+      'EMP NO   NAME               DEPT     GROSS PAY',
+      '10234    J SMITH            ACCT       3,420.00',
+      '10391    R JONES            MFG        2,980.50',
+      '10502    A GARCIA           ACCT       3,105.75',
+      '',
+      '*** END OF REPORT -- 3 EMPLOYEES ***',
+    ] },
+  { file: 'QPJOBLOG',  number: '000098', job: 'RPTPRINT/JSMITH/048790', user: 'JSMITH',   status: '*SAV', pages: 3,   copies: 1, formtype: '*STD',   priority: 5, outq: 'QGPL/QPRINT',
+    content: [
+      'Job 048790/JSMITH/RPTPRINT started on 07/16/26 at 14:22:10 in subsystem QBATCH.',
+      'CPF1124 - Job 048790/JSMITH/RPTPRINT started.',
+      'Job 048790/JSMITH/RPTPRINT completed normally on 07/16/26 at 14:23:02.',
+    ] },
+  { file: 'MTHENDRPT', number: '000101', job: 'MTHEND/QPGMR/048805',    user: 'QPGMR',    status: '*HLD', pages: 128, copies: 2, formtype: 'INVOICE', priority: 3, outq: 'QGPL/QPRINT',
+    content: [ '(Spooled file held -- release with WRKSPLF option 6 on a real system.)' ] },
+];
+
+// Output queues (WRKOUTQ).
+const OUTQS = [
+  { name: 'QPRINT',    lib: 'QGPL',    files: 2, status: 'RELEASED', maxpri: '*NOMAX' },
+  { name: 'PRT01',     lib: 'QUSRSYS', files: 1, status: 'RELEASED', maxpri: '*NOMAX' },
+  { name: 'QEZJOBLOG', lib: 'QGPL',    files: 0, status: 'HELD',     maxpri: '*NOMAX' },
+];
+
+// Batch jobs (WRKBCHJOB) -- system-wide submitted jobs, distinct from a
+// user's own jobs (WRKUSRJOB, built dynamically below).
+const BCHJOBS = [
+  { name: 'PAYRPT',   user: 'APPADMIN', number: '048812', sbs: 'QBATCH', jobq: 'QGPL/QBATCH', status: '*ACTIVE', submitted: '07/16/26 22:00:03' },
+  { name: 'MTHEND',   user: 'QPGMR',    number: '048805', sbs: 'QBATCH', jobq: 'QGPL/QBATCH', status: '*JOBQ',   submitted: '07/17/26 06:00:00' },
+  { name: 'RPTPRINT', user: 'JSMITH',   number: '048790', sbs: 'QBATCH', jobq: 'QGPL/QBATCH', status: '*OUTQ',   submitted: '07/16/26 14:22:10' },
+];
+
+// Job numbers for SBMJOB (Mainframe 403), starting past the seeded range
+// above (048790-048812) so nothing collides.
+let NEXT_BCHJOB_NUM = 48900;
+
+// A signed-on user's own jobs (WRKUSRJOB), built live from the session's
+// user rather than a static table since any userid can sign on. Also the
+// lookup path JOB_DETAIL uses for jobs picked from USRJOB_LIST.
+function buildUserJobs(user) {
+  return [
+    { name: 'QPADEV0001', user, number: '041823', sbs: 'QINTER', jobq: null,           type: 'INT', status: '*ACTIVE', func: 'CMD-ENTRY' },
+    { name: 'RPTQRY',     user, number: '041790', sbs: 'QBATCH', jobq: 'QGPL/QBATCH',  type: 'BCH', status: '*OUTQ',   func: 'PGM-RPTQRY' },
+  ];
+}
+
+// Libraries (WRKLIB).
+// crtaut is the library's CRTAUT: the authority *PUBLIC gets on objects created in
+// it. *SYSVAL means "whatever QCRTAUT says", so the system value is only the
+// fallback and a library can override it either way. PAYROLL inherits the weak
+// system value, APPLIB overrides it upward, MYLIB overrides it downward, TOOLLIB
+// hands it to an authorization list.
+const LIBRARIES = [
+  { name: 'QGPL',    type: '*PROD', asp: 1, text: 'General purpose library',          objects: 812,  crtaut: '*SYSVAL' },
+  { name: 'QSYS',    type: '*SYS',  asp: 1, text: 'System library',                   objects: 4213, crtaut: '*SYSVAL' },
+  { name: 'QTEMP',   type: '*TEMP', asp: 1, text: 'Temporary job library',            objects: 0,    crtaut: '*SYSVAL' },
+  { name: 'PAYROLL', type: '*PROD', asp: 1, text: 'Payroll application data',         objects: 18,   crtaut: '*SYSVAL' },
+  { name: 'APPLIB',  type: '*PROD', asp: 1, text: 'Application program library',      objects: 47,   crtaut: '*USE' },
+  { name: 'MYLIB',   type: '*TEST', asp: 1, text: 'Personal development library',     objects: 6,    crtaut: '*ALL' },
+  { name: 'HRLIB',   type: '*PROD', asp: 1, text: 'Human resources data',             objects: 12,   crtaut: '*EXCLUDE' },
+  { name: 'TOOLLIB', type: '*PROD', asp: 1, text: 'Operations utility programs',      objects: 9,    crtaut: 'SECAUTL' },
+];
+
+// Current library list (DSPLIBL) -- fixed order: system, product, current, user.
+const LIBL = [
+  { name: 'QSYS',    type: 'SYS' },
+  { name: 'QSYS2',   type: 'SYS' },
+  { name: 'QHLPSYS', type: 'SYS' },
+  { name: 'QUSRSYS', type: 'SYS' },
+  { name: 'APPLIB',  type: 'PRD' },
+  { name: 'MYLIB',   type: 'CUR' },
+  { name: 'QGPL',    type: 'USR' },
+  { name: 'QTEMP',   type: 'USR' },
+];
+
+// Objects browsed with PDM (WRKOBJPDM LIB(x)), keyed by library name.
+const PDM_OBJECTS = {
+  QGPL: [
+    { name: 'QCLSRC',  type: '*FILE', attr: 'PF-SRC', text: 'CL source physical file',       size: '128K' },
+    { name: 'QDDSSRC', type: '*FILE', attr: 'PF-SRC', text: 'DDS source physical file',       size: '64K' },
+    { name: 'STRSBS',  type: '*PGM',  attr: 'CLLE',   text: 'Start subsystem wrapper',        size: '32K' },
+  ],
+  APPLIB: [
+    { name: 'QRPGLESRC', type: '*FILE', attr: 'PF-SRC', text: 'RPGLE source physical file',   size: '256K' },
+    { name: 'QDDSSRC',   type: '*FILE', attr: 'PF-SRC', text: 'DDS source physical file',     size: '64K' },
+    { name: 'PAYRPT',    type: '*PGM',  attr: 'RPGLE',  text: 'Payroll report program',       size: '184K' },
+    { name: 'ADVENTURE', type: '*PGM',  attr: 'RPGLE',  text: 'Text-adventure game',           size: '96K' },
+    { name: 'SALESRPT',  type: '*PGM',  attr: 'RPGLE',  text: 'Quarterly sales report (101 exercise)', size: '80K' },
+    { name: 'CONFIG',    type: '*FILE', attr: 'PF',     text: 'Application config data',      size: '8K' },
+  ],
+};
+
+// Source members browsed with PDM (WRKMBRPDM FILE(lib/file)), keyed by "LIB/FILE".
+const SRCMEMBERS = {
+  'APPLIB/QRPGLESRC': [
+    { name: 'PAYRPT', type: 'RPGLE', text: 'Payroll report program', changed: '07/10/26 11:04:22', src: [
+      '     H OPTION(*SRCSTMT)',
+      '     FEMPMAST   IF   E           K DISK',
+      '     C                   READ      EMPMAST                              99',
+      '     C                   DOW       NOT %EOF',
+      '     C                   EXCEPT    DETAIL',
+      '     C                   READ      EMPMAST                              99',
+      '     C                   ENDDO',
+    ] },
+    { name: 'LEAVCALC', type: 'RPGLE', text: 'Leave balance calculation', changed: '06/28/26 09:15:40', src: [
+      '     H OPTION(*SRCSTMT)',
+      '     D balance         S              7P 2',
+      '     C     eval      balance = balance + accrued',
+    ] },
+    { name: 'ADVENTURE', type: 'RPGLE', text: 'Text-adventure game', changed: '07/28/26 21:00:00',
+      srcFile: path.join(__dirname, 'rpg/programs/adventure.rpgle') },
+    { name: 'SALESRPT', type: 'RPGLE', text: 'Quarterly sales report (101 exercise)', changed: '08/10/26 00:00:00',
+      srcFile: path.join(__dirname, 'rpg/programs/salesrpt.rpgle') },
+  ],
+  'APPLIB/QDDSSRC': [
+    { name: 'ADVENTURE', type: 'DSPF', text: 'Text-adventure game display file', changed: '07/28/26 21:00:00',
+      srcFile: path.join(__dirname, 'rpg/programs/adventure.dspf') },
+    { name: 'SALESRPT', type: 'DSPF', text: 'Quarterly sales report display file', changed: '08/10/26 00:00:00',
+      srcFile: path.join(__dirname, 'rpg/programs/salesrpt.dspf') },
+  ],
+  'QGPL/QCLSRC': [
+    { name: 'STRSBS', type: 'CLLE', text: 'Start subsystem wrapper', changed: '05/02/26 08:30:00', src: [
+      '             PGM',
+      '             STRSBS    SBSD(QBATCH)',
+      '             MONMSG    MSGID(CPF0000)',
+      '             ENDPGM',
+    ] },
+  ],
+};
+
+// Real, runnable RPGLE programs -- CALL PGM(lib/name) or PDM option
+// 4=Run against a QRPGLESRC member looks a program up here, keyed by
+// "LIB/NAME". Unlike PAYRPT/LEAVCALC above (decorative source-only
+// members), these are parsed once at startup (mock-lpar/rpg/{dds,
+// rpgle,interpreter}.js) and actually executed by the RPG interpreter
+// -- real fixed-form RPG IV + DDS, the same source that should compile
+// and run unmodified on real hardware via CRTBNDRPG/CRTDSPF.
+const PROGRAMS = {
+  'APPLIB/ADVENTURE': {
+    ddsFormats: parseDds(fs.readFileSync(path.join(__dirname, 'rpg/programs/adventure.dspf'), 'utf8')),
+    rpgAst: parseRpgle(fs.readFileSync(path.join(__dirname, 'rpg/programs/adventure.rpgle'), 'utf8')),
+  },
+  'APPLIB/SALESRPT': {
+    ddsFormats: parseDds(fs.readFileSync(path.join(__dirname, 'rpg/programs/salesrpt.dspf'), 'utf8')),
+    rpgAst: parseRpgle(fs.readFileSync(path.join(__dirname, 'rpg/programs/salesrpt.rpgle'), 'utf8')),
+  },
+};
+
+// Mainframe 105 (Book 5) cross-platform token chain, hop 2 of 4: CHKBCN
+// validates the Batch Control Number a student carries over from the
+// z/OS mock's DATACHK job, and on a match issues the Resource Clearance
+// Code they carry into the z/VM mock's VERIFY REXX exec next. Both
+// values are fixed, not derived from anything at runtime, so this mock
+// can validate independently with no shared datastore between mocks —
+// see Bridge_server/ROADMAP.md's "Cross-Platform Token Chain" section.
+const EXPECTED_BCN = 'BCN-7742';
+const ISSUED_RCC    = 'RCC-4419';
+
+// Tables queryable from STRSQL, keyed by "LIB/TABLE". QIWS/QCUSTCDT is IBM's
+// real out-of-box sample customer table -- the same one that ships on every
+// physical IBM i, so `SELECT * FROM QIWS.QCUSTCDT` here is the same command
+// worth trying on real hardware.
+const SQL_TABLES = {
+  'QIWS/QCUSTCDT': {
+    columns: ['CUSNUM', 'LSTNAM', 'INIT', 'STREET', 'CITY', 'STATE', 'ZIPCOD', 'CDTLMT', 'CHGCOD', 'BALDUE', 'CDTDUE'],
+    rows: [
+      ['938472', 'Henning',  'G K', '4859 Elm Ave',     'Dallas',       'TX', '75217', '5000', '3', '37.00',   '.00'],
+      ['839283', 'Jones',    'B D', '21B N Broadway',   'Dallas',       'TX', '75217', '400',  '1', '100.00',  '.00'],
+      ['392859', 'Vine',     'S S', 'PO Box 79',        'Broken Arrow', 'OK', '74011', '700',  '1', '439.00',  '.00'],
+      ['938485', 'Johnson',  'J A', '3 Alpine Way',     'Dallas',       'TX', '75217', '9999', '2', '3987.50', '33.50'],
+      ['397267', 'Tyron',    'W E', '13 Myrtle Dr',     'Hopkins',      'MN', '55343', '1000', '1', '.00',     '.00'],
+    ],
+  },
+  'PAYROLL/EMPMAST': {
+    columns: ['EMPNO', 'NAME', 'DEPT', 'SALARY'],
+    rows: [
+      ['10234', 'J SMITH',  'ACCT', '58400.00'],
+      ['10391', 'R JONES',  'MFG',  '61250.00'],
+      ['10502', 'A GARCIA', 'ACCT', '54900.00'],
+    ],
+  },
+  // Table FUNCTIONS, not tables -- SYSTOOLS.CVE_INFO() and
+  // SYSTOOLS.GROUP_PTF_CURRENCY_LOCAL() are real IBM i built-in SQL services
+  // (DB2 for i), queried the same way on a physical partition. runSql()
+  // strips the trailing () before the LIB/TABLE lookup below.
+  //
+  // IDs here are deliberately fake-looking (CVE-MOCK-NNNN, not a real CVE
+  // format) so nobody mistakes this mock's canned rows for an actual
+  // advisory. The real client tool (as400sec-parse.js) must never ship a
+  // hardcoded CVE list of its own -- it only classifies whatever columns
+  // come back from a live call to these two services. See ROADMAP.md,
+  // Security Tools, "PTF/CVE Currency Checker" for the reasoning.
+  'SYSTOOLS/CVE_INFO': {
+    columns: ['CVE_ID', 'DESCRIPTION', 'CVSS_SCORE', 'PRODUCT', 'PTF_STATUS'],
+    rows: [
+      ['CVE-MOCK-0001', 'Remote code execution in a legacy LPD listener',        '9.8', 'IBM i Base', 'NOT INSTALLED'],
+      ['CVE-MOCK-0002', 'Host Server authentication bypass via client identity', '8.8', 'IBM i Base', 'NOT INSTALLED'],
+      ['CVE-MOCK-0003', 'Debug Server unauthenticated remote manipulation',      '9.1', 'IBM i Base', 'INSTALLED'],
+      ['CVE-MOCK-0004', 'DDM interface out-of-bounds write',                     '7.2', 'IBM i Base', 'INSTALLED'],
+      // Models the weakness class of the real HTTP Server Administration
+      // GUI advisory (CWE-94), not the advisory itself. Follows the same
+      // switch as mock-as400-httpadmin.js, so the two stay consistent.
+      ['CVE-MOCK-0005', 'HTTP Server Administration GUI code injection',         '9.9', 'IBM i Base',
+        process.env.MOCK_AS400_HTTPADMIN_PATCHED === '1' ? 'INSTALLED' : 'NOT INSTALLED'],
+    ],
+  },
+  // QSYS2.NETSTAT_INFO, narrowed to the three real columns the Listening
+  // Services Inventory reads (the real view has about thirty). Rows model a
+  // deliberately loose shop: clear text Telnet and FTP up with no TLS Telnet,
+  // clear host servers (including remote command and file) with only two TLS
+  // ones, TFTP and SNMP over UDP (blank state, as UDP has no TCP state), LPD
+  // bound to loopback only for contrast, and a couple of ESTABLISHED sessions
+  // on 23 that a careless scan would miscount as listeners. Whether the real
+  // view lists UDP at all varies by release, confirm before trusting it.
+  'QSYS2/NETSTAT_INFO': {
+    columns: ['LOCAL_ADDRESS', 'LOCAL_PORT', 'TCP_STATE'],
+    rows: [
+      ['0.0.0.0', '23', 'LISTEN'], ['10.20.30.40', '23', 'ESTABLISHED'], ['10.20.30.40', '23', 'ESTABLISHED'],
+      ['0.0.0.0', '21', 'LISTEN'], ['0.0.0.0', '22', 'LISTEN'],
+      ['0.0.0.0', '80', 'LISTEN'], ['0.0.0.0', '443', 'LISTEN'],
+      ['0.0.0.0', '446', 'LISTEN'],
+      ['0.0.0.0', '8470', 'LISTEN'], ['0.0.0.0', '8471', 'LISTEN'], ['0.0.0.0', '8472', 'LISTEN'],
+      ['0.0.0.0', '8473', 'LISTEN'], ['0.0.0.0', '8474', 'LISTEN'], ['0.0.0.0', '8475', 'LISTEN'],
+      ['0.0.0.0', '8476', 'LISTEN'],
+      ['0.0.0.0', '9471', 'LISTEN'], ['0.0.0.0', '9476', 'LISTEN'],
+      ['0.0.0.0', '69', ''], ['0.0.0.0', '161', ''],
+      ['127.0.0.1', '515', 'LISTEN'],
+      ['0.0.0.0', '137', ''], ['0.0.0.0', '138', ''], ['0.0.0.0', '139', 'LISTEN'], ['0.0.0.0', '445', 'LISTEN'],
+      ['0.0.0.0', '2001', 'LISTEN'], ['0.0.0.0', '2010', 'LISTEN'],
+    ],
+  },
+  // QSYS2.USER_INFO and QSYS2.GROUP_PROFILE_ENTRIES, narrowed to the columns
+  // the Group Profile Review reads, built live from USRPRFS so a CHGUSRPRF
+  // shows up in the next query. A blank cell stands in for NULL (a profile
+  // with no group). The real views have many more columns, and need the
+  // caller to be allowed to read them.
+  'QSYS2/USER_INFO': {
+    columns: ['AUTHORIZATION_NAME', 'STATUS', 'GROUP_PROFILE_NAME', 'SPECIAL_AUTHORITIES'],
+    get rows() {
+      return USRPRFS.map(p => [p.name, p.status, p.group === '*NONE' ? '' : p.group, p.specialAuth.join(' ')]);
+    },
+  },
+  // QSYS2.OBJECT_OWNERSHIP, narrowed to four columns. A deliberately untidy
+  // shop: QSECOFR owns IBM's own objects (expected) and also a pile of
+  // application programs and data in APPLIB, PAYROLL, HRLIB and TOOLLIB, which
+  // is the finding. A dedicated owner profile (APPOWNER) owns the tidy ones.
+  // Whether the real view takes a user or lists everyone, and its column names,
+  // were not run on a live IBM i: confirm, and DSPUSRPRF TYPE(*OBJOWN) is the CL way.
+  'QSYS2/OBJECT_OWNERSHIP': {
+    columns: ['AUTHORIZATION_NAME', 'SYSTEM_OBJECT_SCHEMA', 'SYSTEM_OBJECT_NAME', 'OBJECT_TYPE'],
+    rows: [
+      ['QSECOFR', 'QSYS',    'QSECOFR',  '*USRPRF'], ['QSECOFR', 'QGPL',    'QDFTJOBD', '*JOBD'],
+      ['QSECOFR', 'QGPL',    'QBATCH',   '*JOBQ'],   ['QSECOFR', 'QUSRSYS', 'QSYSMSG',  '*MSGQ'],
+      ['QSECOFR', 'APPLIB',  'PAYUPD',   '*PGM'],    ['QSECOFR', 'APPLIB',  'PAYRPT',   '*PGM'],
+      ['QSECOFR', 'APPLIB',  'LEAVCALC', '*PGM'],    ['QSECOFR', 'APPLIB',  'APPMENU',  '*MENU'],
+      ['QSECOFR', 'PAYROLL', 'PAYHIST',  '*FILE'],   ['QSECOFR', 'PAYROLL', 'PAYAUDIT', '*FILE'],
+      ['QSECOFR', 'HRLIB',   'HRDATA',   '*FILE'],   ['QSECOFR', 'HRLIB',   'HRNOTES',  '*FILE'],
+      ['QSECOFR', 'TOOLLIB', 'UTILITY',  '*PGM'],    ['QSECOFR', 'TOOLLIB', 'CLEANUP',  '*PGM'],
+      ['QSECOFR', 'TOOLLIB', 'SAVALL',   '*PGM'],
+      ['APPADMIN', 'PAYROLL', 'EMPMAST', '*FILE'],   ['APPADMIN', 'APPLIB', 'CONFIG',   '*FILE'],
+      ['APPOWNER', 'APPLIB',  'ORDENTRY', '*PGM'],   ['APPOWNER', 'APPLIB', 'ORDERS',   '*FILE'],
+    ],
+  },
+  // QSYS2.PROGRAM_INFO and QSYS2.OBJECT_PRIVILEGES, narrowed to the columns the
+  // Static Adopted-Authority Scan reads. USER_PROFILE is the program's USRPRF
+  // attribute: '*OWNER' means it runs with its owner's authority added, '*USER'
+  // means it does not. The rows line up with OBJECT_OWNERSHIP above (QSECOFR owns
+  // PAYUPD, PAYRPT, LEAVCALC, UTILITY, CLEANUP and SAVALL) and with the call-stack
+  // scanner's PAYUPD. IBM's own QSYS rows are there so the NOT LIKE 'Q%' read has
+  // something to leave out. The real PROGRAM_INFO is large and slow without a library
+  // filter, and column names were not run on a live IBM i, confirm them.
+  'QSYS2/PROGRAM_INFO': {
+    columns: ['PROGRAM_LIBRARY', 'PROGRAM_NAME', 'PROGRAM_OWNER', 'USER_PROFILE'],
+    rows: [
+      ['APPLIB',  'PAYUPD',   'QSECOFR',  '*OWNER'], ['APPLIB',  'PAYRPT',   'QSECOFR',  '*USER'],
+      ['APPLIB',  'LEAVCALC', 'QSECOFR',  '*OWNER'], ['APPLIB',  'SYNCUSR',  'APPADMIN', '*OWNER'],
+      ['APPLIB',  'ORDENTRY', 'APPOWNER', '*OWNER'], ['APPLIB',  'ORDRPT',   'APPOWNER', '*USER'],
+      ['PAYROLL', 'PAYCALC',  'APPADMIN', '*OWNER'],
+      ['TOOLLIB', 'UTILITY',  'QSECOFR',  '*OWNER'], ['TOOLLIB', 'CLEANUP',  'QSECOFR',  '*USER'],
+      ['TOOLLIB', 'SAVALL',   'QSECOFR',  '*OWNER'],
+      ['MYLIB',   'TESTPGM',  'JSMITH',   '*OWNER'],
+      ['EXITLIB', 'SQLEXITPGM', 'QSECOFR', '*USER'], ['EXITLIB', 'SIGNONEXIT', 'APPADMIN', '*USER'],
+      ['AUDLIB',  'SQLAUDIT', 'AUDOWNER', '*USER'],
+      ['QSYS',    'QCMDEXC',  'QSYS',     '*OWNER'], ['QSYS',    'QSYSMAIN', 'QSYS',     '*OWNER'],
+    ],
+  },
+  'QSYS2/OBJECT_PRIVILEGES': {
+    columns: ['SYSTEM_OBJECT_SCHEMA', 'SYSTEM_OBJECT_NAME', 'OBJECT_TYPE', 'USER_NAME', 'OBJECT_AUTHORITY'],
+    rows: [
+      ['APPLIB',  'PAYUPD',   '*PGM',  '*PUBLIC', '*USE'],     ['APPLIB',  'PAYUPD',   '*PGM',  'JSMITH',   '*USE'],
+      ['APPLIB',  'PAYRPT',   '*PGM',  '*PUBLIC', '*USE'],
+      ['APPLIB',  'LEAVCALC', '*PGM',  '*PUBLIC', '*CHANGE'],
+      ['APPLIB',  'SYNCUSR',  '*PGM',  '*PUBLIC', '*USE'],
+      ['APPLIB',  'ORDENTRY', '*PGM',  '*PUBLIC', '*USE'],     ['APPLIB',  'ORDRPT',   '*PGM',  '*PUBLIC', '*USE'],
+      ['APPLIB',  'CONFIG',   '*FILE', '*PUBLIC', '*USE'],
+      ['PAYROLL', 'PAYCALC',  '*PGM',  '*PUBLIC', '*EXCLUDE'], ['PAYROLL', 'PAYCALC',  '*PGM',  'GRPACCT', '*USE'],
+      ['PAYROLL', 'EMPMAST',  '*FILE', '*PUBLIC', '*ALL'],
+      ['TOOLLIB', 'UTILITY',  '*PGM',  '*PUBLIC', '*ALL'],     ['TOOLLIB', 'CLEANUP',  '*PGM',  '*PUBLIC', '*USE'],
+      ['TOOLLIB', 'SAVALL',   '*PGM',  '*PUBLIC', '*EXCLUDE'],
+      ['MYLIB',   'TESTPGM',  '*PGM',  '*PUBLIC', '*CHANGE'],
+      ['QSYS',    'QCMDEXC',  '*PGM',  '*PUBLIC', '*USE'],
+      ['EXITLIB', 'SQLEXITPGM', '*PGM', '*PUBLIC', '*CHANGE'], ['EXITLIB', 'SIGNONEXIT', '*PGM', '*PUBLIC', '*USE'],
+      ['AUDLIB',  'SQLAUDIT',   '*PGM', '*PUBLIC', '*USE'],
+      ['QSYS', 'EXITLIB', '*LIB', '*PUBLIC', '*CHANGE'], ['QSYS', 'AUDLIB', '*LIB', '*PUBLIC', '*USE'],
+      ['QSYS', 'APPLIB',  '*LIB', '*PUBLIC', '*USE'],    ['QSYS', 'PAYROLL', '*LIB', '*PUBLIC', '*CHANGE'],
+      ['PAYROLL', 'PAYRPTQ',  '*OUTQ', '*PUBLIC', '*CHANGE'],  ['PAYROLL', 'PAYRPTQ',  '*OUTQ', 'GRPACCT', '*CHANGE'],
+      ['HRLIB',   'HRRPTQ',   '*OUTQ', '*PUBLIC', '*EXCLUDE'],
+      ['APPLIB',  'APPOUTQ',  '*OUTQ', '*PUBLIC', '*USE'],     ['APPLIB',  'REMPRT',   '*OUTQ', '*PUBLIC', '*USE'],
+      ['QGPL',    'QPRINT',   '*OUTQ', '*PUBLIC', '*USE'],     ['QUSRSYS', 'QPJOBLOG', '*OUTQ', '*PUBLIC', '*CHANGE'],
+    ],
+  },
+  // QSYS2.OUTPUT_QUEUE_INFO and QSYS2.SYSTEM_VALUE_INFO, narrowed to the columns the
+  // Output Queue and Spool Audit reads. The queues model a shop that spooled
+  // sensitive reports into queues set up for convenience: PAYRPTQ lets anyone with
+  // read authority display any file and is open to *PUBLIC, HRRPTQ is set up right,
+  // APPOUTQ is operator controlled, REMPRT sends spool to another system. Value
+  // formats (YES/NO, *OWNER/*DTAAUT) and column names were not run on a live IBM i,
+  // confirm them.
+  'QSYS2/OUTPUT_QUEUE_INFO': {
+    columns: ['OUTPUT_QUEUE_NAME', 'OUTPUT_QUEUE_LIBRARY_NAME', 'DISPLAY_ANY_FILE', 'AUTHORITY_TO_CHECK', 'OPERATOR_CONTROLLED', 'NUMBER_OF_FILES', 'REMOTE_SYSTEM_NAME'],
+    rows: [
+      ['PAYRPTQ', 'PAYROLL', 'YES', '*OWNER',  'YES', '42', ''],
+      ['HRRPTQ',  'HRLIB',   'NO',  '*DTAAUT', 'NO',  '7',  ''],
+      ['APPOUTQ', 'APPLIB',  'NO',  '*OWNER',  'YES', '15', ''],
+      ['REMPRT',  'APPLIB',  'NO',  '*DTAAUT', 'NO',  '0',  'PRT01.CORP.LAN'],
+      ['QPRINT',    'QGPL',    'NO', '*DTAAUT', 'NO', '2',  ''],
+      ['QPJOBLOG',  'QUSRSYS', 'NO', '*DTAAUT', 'NO', '311', ''],
+    ],
+  },
+  'QSYS2/SYSTEM_VALUE_INFO': {
+    columns: ['SYSTEM_VALUE_NAME', 'CURRENT_NUMERIC_VALUE', 'CURRENT_CHARACTER_VALUE'],
+    get rows() {
+      return Object.entries(SYSVALS).map(([n, s]) => /^\d+$/.test(s.value) ? [n, s.value, ''] : [n, '', s.value]);
+    },
+  },
+  // QSYS2.EXIT_PROGRAM_INFO, narrowed to the columns the Exit Program Integrity and
+  // Authority review reads. It lists the same registered programs the exit point audit
+  // shows (SQLEXITPGM on QZDA_SQL1, SIGNONEXIT on QZSO_SIGNON), plus a second program
+  // on QZDA_SQL1 and an IBM one in QSYS that a NOT LIKE 'Q%' read leaves out. EXITLIB
+  // is the untidy library: *PUBLIC can change it, and one of its programs too.
+  'QSYS2/EXIT_PROGRAM_INFO': {
+    columns: ['EXIT_POINT_NAME', 'EXIT_POINT_FORMAT', 'EXIT_PROGRAM_NAME', 'EXIT_PROGRAM_LIBRARY'],
+    rows: [
+      ['QIBM_QZDA_SQL1',      'ZDAQ0200', 'SQLEXITPGM', 'EXITLIB'],
+      ['QIBM_QZDA_SQL1',      'ZDAQ0200', 'SQLAUDIT',   'AUDLIB'],
+      ['QIBM_QZSO_SIGNON',    'ZSOY0100', 'SIGNONEXIT', 'EXITLIB'],
+      ['QIBM_QJO_DLT_JRNRCV', 'DRCV0100', 'QJOEXIT',    'QSYS'],
+    ],
+  },
+  'QSYS2/GROUP_PROFILE_ENTRIES': {
+    columns: ['GROUP_PROFILE_NAME', 'USER_PROFILE_NAME'],
+    get rows() {
+      return USRPRFS.flatMap(p => (p.supGroups || []).map(g => [g, p.name]));
+    },
+  },
+  // Short column aliases, not the real service's actual (much longer)
+  // column names -- PTF_GROUP_LEVEL_INSTALLED and PTF_GROUP_LEVEL_AVAILABLE
+  // are 25 chars each and collide once truncated to this mock's fixed
+  // SQL_COL_WIDTH, which is itself a simplification of a real 5250 STRSQL
+  // screen that would show the true names and let you ROLL right to see
+  // columns the 80-col width can't fit. A real query against the live
+  // service should alias these explicitly for the same reason an analyst
+  // would on real hardware, e.g.
+  // SELECT PTF_GROUP, PTF_GROUP_LEVEL_INSTALLED AS LVL_INST, ... --
+  // this mock's runSql() only understands SELECT * FROM lib.func() though,
+  // so the alias has to live in the mock table definition instead.
+  'SYSTOOLS/GROUP_PTF_CURRENCY_LOCAL': {
+    columns: ['PTF_GROUP', 'TITLE', 'LVL_INST', 'LVL_AVAIL', 'STALE_DAYS'],
+    rows: [
+      ['SF99738', 'Database Group',   '12', '18', '41'],
+      ['SF99666', 'TCP/IP Group',     '45', '45', '3'],
+      ['SF99704', 'HIPER Group',      '203', '211', '41'],
+      ['SF99115', 'Security Group',   '9',  '14', '90'],
+    ],
+  },
+};
+
+// ── CL command interpreter ─────────────────────────────────────────
+// Parses a command typed on any "Selection or command" / panel command
+// line into a navigation result the connection state machine applies.
+// Recognizes the security-relevant DSP*/WRK* verbs the mock models;
+// anything else yields a realistic CPF/CPD "not found" message.
+function parseParams(str) {
+  const params = {};
+  const re = /(\w+)\(([^)]*)\)/g;
+  let m;
+  while ((m = re.exec(str)) !== null) params[m[1].toUpperCase()] = m[2].trim().toUpperCase();
+  return params;
+}
+
+function runCommand(raw) {
+  const cmd = raw.trim().toUpperCase();
+  if (!cmd) return { type: 'none' };
+  const verb = cmd.split(/[\s(]/)[0];
+  const params = parseParams(cmd);
+
+  switch (verb) {
+    case 'WRKSYSVAL': return { type: 'screen', screen: 'SYSVAL_LIST' };
+    case 'DSPSYSVAL': {
+      const name = params.SYSVAL;
+      if (!name)            return { type: 'error', message: 'CPD0043 - Keyword SYSVAL required for DSPSYSVAL.' };
+      if (!SYSVALS[name])   return { type: 'error', message: `CPF1053 - System value ${name} not found.` };
+      return { type: 'detail', screen: 'SYSVAL_DETAIL', target: name };
+    }
+    case 'WRKUSRPRF': return { type: 'screen', screen: 'USRPRF_LIST' };
+    case 'DSPUSRPRF': {
+      const name = params.USRPRF;
+      if (!name)                                  return { type: 'error', message: 'CPD0043 - Keyword USRPRF required for DSPUSRPRF.' };
+      if (!USRPRFS.find(p => p.name === name))    return { type: 'error', message: `CPF2204 - User profile ${name} not found.` };
+      return { type: 'detail', screen: 'USRPRF_DETAIL', target: name };
+    }
+    case 'CHGUSRPRF': {
+      // Minimal remediation support so the Shipped Profile Audit walkthrough
+      // can harden a profile and re-run. Only PASSWORD(*NONE) and STATUS are
+      // modelled; the change persists for the life of the mock process.
+      const name = params.USRPRF;
+      if (!name)                               return { type: 'error', message: 'CPD0043 - Keyword USRPRF required for CHGUSRPRF.' };
+      const p = USRPRFS.find(u => u.name === name);
+      if (!p)                                  return { type: 'error', message: `CPF2204 - User profile ${name} not found.` };
+      const changed = [];
+      if (params.PASSWORD === '*NONE') { p.pwdNone = true; p.pwdDefault = false; p.pwdChg = '*NA'; changed.push('PASSWORD(*NONE)'); }
+      if (params.STATUS === '*DISABLED') { p.status = '*DISABLED'; changed.push('STATUS(*DISABLED)'); }
+      if (params.STATUS === '*ENABLED')  { p.status = '*ENABLED';  changed.push('STATUS(*ENABLED)'); }
+      if (!changed.length) return { type: 'error', message: `CPD2CB1 - CHGUSRPRF ${name}: the mock models only PASSWORD(*NONE) and STATUS.` };
+      return { type: 'error', message: `Profile ${name} changed — ${changed.join(' ')}.` };
+    }
+    case 'STRSST': return { type: 'detail', screen: 'SST_DETAIL', target: null };
+    case 'ANZDFTPWD': {
+      // Report only. A real ACTION(*DISABLE), *PWDEXP or *BOTH changes profiles,
+      // this mock never does, so say so instead of quietly pretending.
+      if (params.ACTION && params.ACTION !== '*NONE')
+        return { type: 'error', message: `CPD0000 - ANZDFTPWD ACTION(${params.ACTION}) would change profiles, the mock models only ACTION(*NONE).` };
+      return { type: 'detail', screen: 'ANZDFTPWD_DETAIL', target: null };
+    }
+    case 'WRKOBJ': return { type: 'screen', screen: 'OBJ_LIST' };
+    case 'DSPOBJAUT': {
+      const obj = params.OBJ; // LIB/NAME or NAME
+      if (!obj) return { type: 'error', message: 'CPD0043 - Keyword OBJ required for DSPOBJAUT.' };
+      const [lib, name] = obj.includes('/') ? obj.split('/') : ['*LIBL', obj];
+      const idx = OBJECTS.findIndex(o => o.name === name && (lib === '*LIBL' || o.lib === lib));
+      if (idx === -1) return { type: 'error', message: `CPF9801 - Object ${obj} not found.` };
+      return { type: 'detail', screen: 'OBJ_DETAIL', target: idx };
+    }
+    case 'DSPNETA': return { type: 'detail', screen: 'NETA', target: null };
+    case 'WRKREGINF': return { type: 'detail', screen: 'REGINF', target: null };
+    case 'DSPNETSVR': return { type: 'detail', screen: 'NETSVR', target: null };
+    case 'WRKLNK':    return { type: 'screen', screen: 'IFS_LIST' };
+    case 'WRKJOBD': return { type: 'screen', screen: 'JOBD_LIST' };
+    case 'DSPJOBD': {
+      const jobd = params.JOBD;
+      if (!jobd) return { type: 'error', message: 'CPD0043 - Keyword JOBD required for DSPJOBD.' };
+      const nm = jobd.includes('/') ? jobd.split('/')[1] : jobd;
+      if (!JOBDS.find(j => j.name === nm)) return { type: 'error', message: `CPF9801 - Object ${jobd} not found.` };
+      return { type: 'detail', screen: 'JOBD_DETAIL', target: nm };
+    }
+    case 'WRKAUTL': return { type: 'screen', screen: 'AUTL_LIST' };
+    case 'DSPAUTL': {
+      const name = params.AUTL;
+      if (!name) return { type: 'error', message: 'CPD0043 - Keyword AUTL required for DSPAUTL.' };
+      if (!AUTLS.find(a => a.name === name)) return { type: 'error', message: `CPF2289 - Authorization list ${name} not found.` };
+      return { type: 'detail', screen: 'AUTL_DETAIL', target: name };
+    }
+    case 'WRKACTJOB': return { type: 'screen', screen: 'ACTJOB_LIST' };
+    case 'WRKSBS':     return { type: 'screen', screen: 'SBS_LIST' };
+    // Mainframe 403 (400 series) privilege-escalation vector: APPJOBD
+    // (JOBDS above) already specifies USER(QSECOFR) at *PUBLIC *USE, a
+    // detection finding Nuts and Bolts' Job Description Privesc Scanner
+    // already owns (webterm-security-tools-tutorial.md). SBMJOB wasn't
+    // actually a live command before this — this is the exploitation step
+    // 403 owns: the job it queues runs under the JOBD's own USER(), not
+    // whoever submitted it, provable directly in the WRKBCHJOB list's own
+    // User column (screenBchjobList() above already renders j.user
+    // unmodified, no new rendering needed).
+    case 'SBMJOB': {
+      const jobdParam = (params.JOBD || '').split('/').pop();
+      if (!jobdParam) return { type: 'error', message: 'CPD0043 - Keyword JOBD required for SBMJOB.' };
+      const jobd = JOBDS.find(j => j.name === jobdParam);
+      if (!jobd) return { type: 'error', message: `CPF9801 - Job description ${jobdParam} not found.` };
+      const num = String(NEXT_BCHJOB_NUM++);
+      const now = new Date();
+      const submitted = `${String(now.getMonth()+1).padStart(2,'0')}/${String(now.getDate()).padStart(2,'0')}/26 `
+        + `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      BCHJOBS.push({ name: jobd.name, user: jobd.user, number: num, sbs: jobd.jobq, jobq: `QGPL/${jobd.jobq}`, status: '*ACTIVE', submitted });
+      return { type: 'error', message: `CPC1221 - Job ${jobd.name}/${jobd.user}/${num} submitted to job queue ${jobd.jobq} using job description ${jobd.lib}/${jobd.name}.` };
+    }
+    // Wave 3 — everyday operator / PDM / SQL
+    case 'WRKSPLF': return { type: 'screen', screen: 'SPLF_LIST' };
+    case 'WRKOUTQ': return { type: 'screen', screen: 'OUTQ_LIST' };
+    case 'WRKJOB':
+      if (params.OPTION === '*PGMSTK') return { type: 'detail', screen: 'PGMSTK_LIST', target: null };
+      return { type: 'detail', screen: 'JOB_DETAIL', target: '*CURRENT' };
+    case 'DSPPGM': {
+      const pgm = params.PGM;
+      return pgm ? { type: 'detail', screen: 'PGM_DETAIL', target: pgm } : { type: 'error', message: 'CPF9801 - Object not specified.' };
+    }
+    case 'DSPJOB':  return { type: 'screen', screen: 'DSPJOB_OPTS' };
+    case 'WRKUSRJOB': return { type: 'screen', screen: 'USRJOB_LIST' };
+    case 'WRKBCHJOB': return { type: 'screen', screen: 'BCHJOB_LIST' };
+    case 'WRKLIB':  return { type: 'screen', screen: 'LIB_LIST' };
+    case 'DSPLIBD': {
+      const name = params.LIB;
+      if (!name)                                 return { type: 'error', message: 'CPD0043 - Keyword LIB required for DSPLIBD.' };
+      if (!LIBRARIES.find(l => l.name === name)) return { type: 'error', message: `CPF2110 - Library ${name} not found.` };
+      return { type: 'detail', screen: 'LIB_DETAIL', target: name };
+    }
+    case 'DSPLIBL': return { type: 'detail', screen: 'LIBL_DETAIL', target: null };
+    case 'STRPDM':  return { type: 'screen', screen: 'LIB_LIST' };
+    case 'WRKOBJPDM': {
+      const lib = params.LIB;
+      if (!lib) return { type: 'error', message: 'CPD0043 - Keyword LIB required for WRKOBJPDM.' };
+      if (!PDM_OBJECTS[lib]) return { type: 'error', message: `CPF9810 - Library ${lib} not found.` };
+      return { type: 'detail', screen: 'OBJPDM_LIST', target: lib };
+    }
+    case 'WRKMBRPDM': {
+      const file = params.FILE;
+      if (!file) return { type: 'error', message: 'CPD0043 - Keyword FILE required for WRKMBRPDM.' };
+      if (!SRCMEMBERS[file]) return { type: 'error', message: `CPF9801 - Object ${file} not found.` };
+      return { type: 'detail', screen: 'MBRPDM_LIST', target: file };
+    }
+    case 'CALL': {
+      const pgm = params.PGM;
+      if (!pgm) return { type: 'error', message: 'CPD0043 - Keyword PGM required for CALL.' };
+      if (!PROGRAMS[pgm]) return { type: 'error', message: `CPF9801 - Object ${pgm} not found.` };
+      return { type: 'call', pgm };
+    }
+    case 'SNDMSG': return { type: 'screen', screen: 'SNDMSG_COMPOSE' };
+    case 'CHKBCN': {
+      const bcn = params.BCN;
+      if (!bcn) return { type: 'error', message: 'CPD0043 - Keyword BCN required for CHKBCN.' };
+      if (bcn !== EXPECTED_BCN) return { type: 'error', message: `CPF9899 - Batch Control Number ${bcn} not recognized.` };
+      return { type: 'error', message: `RESOURCE CLEARANCE CODE ${ISSUED_RCC} ISSUED FOR ${bcn}.` };
+    }
+    case 'STRSQL': return { type: 'screen', screen: 'SQL' };
+    case 'DSPMSG':  return { type: 'messages' };
+    case 'SIGNOFF': return { type: 'signoff' };
+    default:
+      return { type: 'error', message: `CPD0030 - Command ${verb} not found in library *LIBL.` };
+  }
+}
+
+// On a "Work with" panel, find the first list row whose Opt input is
+// non-blank and map it back to an index into that panel's data array.
+function pickOption(runs, startRow, count) {
+  for (const r of runs) {
+    if (r.row >= startRow && r.row < startRow + count && r.text.trim()) {
+      return { index: r.row - startRow, opt: r.text.trim() };
+    }
+  }
+  return null;
+}
+
+// Shared panel geometry: list rows begin at LIST_START_ROW (one per
+// line), the panel command line sits at LIST_CMD_ROW.
+const LIST_START_ROW = 6;
+const LIST_CMD_ROW   = 21;
+// WRKUSRPRF is the only list panel long enough to need paging (the full
+// IBM-supplied Q* set puts it well past one screen). Rows 6..19 = 14/page.
+const USRPRF_PAGE_SIZE = 14;
+
+// Which "Work with" list panels exist, how many rows each has, and (if the
+// panel supports 5=Display) how a picked row maps to a detail screen + target.
+// list-only panels set detail:null. The connection state machine drives all of
+// this generically, so a new panel is just an entry here + a screen builder.
+//
+// count/detail both take the panel's current cmdTarget as an argument (most
+// panels ignore it and show the whole table; a couple of the Wave 3 panels
+// are scoped to a library/file picked via the CL command that opened them).
+const LIST_META = {
+  // SYSVAL_LIST / USRPRF_LIST / DSPLIB_OBJS are handled by their own paged branches, not here.
+  DSPJOB_LIBL: { count: () => LIBL.length,          detail: i => ['DSPLIB_OBJS', LIBL[i].name] },
+  OBJ_LIST:    { count: () => OBJECTS.length,      detail: i => ['OBJ_DETAIL', i] },
+  JOBD_LIST:   { count: () => JOBDS.length,        detail: i => ['JOBD_DETAIL', JOBDS[i].name] },
+  AUTL_LIST:   { count: () => AUTLS.length,        detail: i => ['AUTL_DETAIL', AUTLS[i].name] },
+  ACTJOB_LIST: { count: () => ACTJOBS.length,      detail: null },
+  SBS_LIST:    { count: () => SBS.length,           detail: null },
+  IFS_LIST:    { count: () => IFS_OBJECTS.length,   detail: null },
+  // Wave 3
+  SPLF_LIST:   { count: () => SPLFILES.length,     detail: i => ['SPLF_DETAIL', i] },
+  OUTQ_LIST:   { count: () => OUTQS.length,        detail: null },
+  USRJOB_LIST: { count: () => 2,                   detail: i => ['JOB_DETAIL', buildUserJobs('*')[i].name] },
+  BCHJOB_LIST: { count: () => BCHJOBS.length,      detail: i => ['JOB_DETAIL', BCHJOBS[i].name] },
+  LIB_LIST:    { count: () => LIBRARIES.length,    detail: i => ['LIB_DETAIL', LIBRARIES[i].name] },
+  OBJPDM_LIST: { count: (t) => (PDM_OBJECTS[t] || []).length, detail: null },
+  MBRPDM_LIST: { count: (t) => (SRCMEMBERS[t] || []).length,  detail: (i, t) => ['MBR_DETAIL', `${t}|${SRCMEMBERS[t][i].name}`] },
+};
+// Detail/display screens where Enter/F3/F12 all navigate back one level.
+const DETAIL_SCREENS = new Set([
+  'SYSVAL_DETAIL', 'USRPRF_DETAIL', 'OBJ_DETAIL', 'NETA', 'REGINF', 'NETSVR', 'PGMSTK_LIST', 'PGM_DETAIL', 'JOBD_DETAIL', 'AUTL_DETAIL',
+  'SPLF_DETAIL', 'JOB_DETAIL', 'LIB_DETAIL', 'LIBL_DETAIL', 'MBR_DETAIL',
+  'SST_DETAIL', 'ANZDFTPWD_DETAIL',
+]);
+
+const AID_F3   = 0x33;
+const AID_F12  = 0x3C;
+const AID_PGUP = 0xF4;   // 5250 Roll Down
+const AID_PGDN = 0xF5;   // 5250 Roll Up
+
+function screenMenu(menuId, ctx) {
+  const menu = MENUS[menuId];
+  const fields = [
+    { row: 0, col: Math.max(0, 40 - Math.floor(menu.title.length / 2)), text: menu.title, input: false },
+    { row: 0, col: 65, text: 'MOCKMENU', input: false },
+    { row: 2, col: 2, text: `System:   ${SYSNAME}`, input: false },
+    { row: 4, col: 2, text: 'Select one of the following:', input: false },
+  ];
+  menu.options.forEach((opt, idx) => {
+    fields.push({ row: 6 + idx, col: 5, text: `${opt.num}. ${opt.label}`, input: false });
+  });
+  fields.push({ row: 6 + menu.options.length, col: 5, text: '90. Sign off', input: false });
+
+  if (menu.parent) {
+    fields.push({ row: 16, col: 2, text: 'F3=Exit   F12=Cancel', input: false });
+  }
+  fields.push({ row: 18, col: 2, text: `Signed on as: ${ctx.user || 'UNKNOWN'}`, input: false });
+  if (ctx.unreadCount > 0) {
+    fields.push({
+      row: 19, col: 2,
+      text: `*** You have ${ctx.unreadCount} new message${ctx.unreadCount === 1 ? '' : 's'} — option 9 to view ***`,
+      input: false, attr: ATTR_RED,
+    });
+  }
+  if (ctx.message) {
+    fields.push({ row: 20, col: 2, text: ctx.message, input: false, attr: ATTR_RED });
+  }
+  fields.push({ row: 22, col: 2, text: 'Selection or command', input: false });
+  fields.push({ row: 22, col: 25, text: '', input: true, length: 40 });
+
+  const clearUnit = Buffer.from([ESC, CMD_CLEAR_UNIT]);
+  const wtd = wrapEsc(CMD_WRITE_TO_DISPLAY, buildScreen(80, fields, { row: 22, col: 25 }));
+  const readCmd = Buffer.from([ESC, CMD_READ_INPUT_FIELDS]);
+  return Buffer.concat([clearUnit, wtd, readCmd]);
+}
+
+function screenMessages(ctx) {
+  const fields = [
+    { row: 0, col: 30, text: 'Display Messages', input: false },
+    { row: 1, col: 2,  text: `Queue: ${(ctx.user || 'QSYSOPR')}`, input: false },
+    { row: 1, col: 40, text: `System: ${SYSNAME}`, input: false },
+  ];
+  ctx.messages.forEach((m, idx) => {
+    const row = 3 + idx;
+    if (row > 19) return; // don't overflow the screen — a real DSPMSG pages
+    fields.push({
+      row, col: 2,
+      text: `${m.date} ${m.time}  ${m.from.padEnd(10, ' ')} ${m.text}`.slice(0, 78),
+      input: false,
+    });
+  });
+  if (ctx.messages.length === 0) {
+    fields.push({ row: 3, col: 2, text: '(No messages)', input: false });
+  }
+  fields.push({ row: 22, col: 2, text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2, text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+
+  const clearUnit = Buffer.from([ESC, CMD_CLEAR_UNIT]);
+  const wtd = wrapEsc(CMD_WRITE_TO_DISPLAY, buildScreen(80, fields, { row: 22, col: 44 }));
+  const readCmd = Buffer.from([ESC, CMD_READ_INPUT_FIELDS]);
+  return Buffer.concat([clearUnit, wtd, readCmd]);
+}
+
+function screenStub(label, ctx) {
+  const fields = [
+    { row: 0, col: Math.max(0, 40 - Math.floor(label.length / 2)), text: label, input: false },
+    { row: 2, col: 2, text: `User:     ${ctx.user || 'UNKNOWN'}`, input: false },
+    { row: 4, col: 2, text: 'This function is not implemented in the mock — extend', input: false },
+    { row: 5, col: 2, text: 'mock-as400.js (MENUS table) to add real content here.', input: false },
+    { row: 22, col: 2, text: 'Press Enter to return', input: false },
+    { row: 23, col: 2, text: 'F3=Exit   F12=Cancel', input: false },
+    { row: 22, col: 44, text: '', input: true, length: 1 },
+  ];
+  const clearUnit = Buffer.from([ESC, CMD_CLEAR_UNIT]);
+  const wtd = wrapEsc(CMD_WRITE_TO_DISPLAY, buildScreen(80, fields, { row: 22, col: 44 }));
+  const readCmd = Buffer.from([ESC, CMD_READ_INPUT_FIELDS]);
+  return Buffer.concat([clearUnit, wtd, readCmd]);
+}
+
+// ── Security panels (WRKSYSVAL/WRKUSRPRF/WRKOBJ + their DSP details) ──
+// Red = a weak/privileged value a security tool should flag; green = OK.
+function authAttr(weak) { return weak ? ATTR_RED : ATTR_GREEN; }
+
+function wrapPanel(fields, cursor) {
+  const clearUnit = Buffer.from([ESC, CMD_CLEAR_UNIT]);
+  const wtd = wrapEsc(CMD_WRITE_TO_DISPLAY, buildScreen(80, fields, cursor));
+  const readCmd = Buffer.from([ESC, CMD_READ_INPUT_FIELDS]);
+  return Buffer.concat([clearUnit, wtd, readCmd]);
+}
+
+// Command line + F-key footer shared by every "Work with" list panel.
+function listTrailer(fields, message) {
+  if (message) fields.push({ row: 20, col: 2, text: message, input: false, attr: ATTR_RED });
+  fields.push({ row: LIST_CMD_ROW, col: 2,  text: 'Command', input: false });
+  fields.push({ row: LIST_CMD_ROW, col: 10, text: '===>',    input: false });
+  fields.push({ row: LIST_CMD_ROW, col: 15, text: '', input: true, length: 50 });
+  fields.push({ row: 23, col: 2, text: 'F3=Exit   F12=Cancel', input: false });
+}
+
+function screenSysvalList(ctx) {
+  const fields = [
+    { row: 0, col: 26, text: 'Work with System Values', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  System Value    Current value', input: false },
+  ];
+  // 33 system values no longer fit one screen: Roll Up/Down, 14 a page, and the
+  // same "More..." / "Bottom" marker the User Profile list uses (the client
+  // scanner keys on that literal text).
+  const pageCount = Math.max(1, Math.ceil(SYSVAL_KEYS.length / USRPRF_PAGE_SIZE));
+  const page = Math.min(Math.max(ctx.page || 0, 0), pageCount - 1);
+  SYSVAL_KEYS.slice(page * USRPRF_PAGE_SIZE, (page + 1) * USRPRF_PAGE_SIZE).forEach((name, idx) => {
+    const sv = SYSVALS[name];
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: name.padEnd(13, ' '), input: false });
+    fields.push({ row, col: 20, text: sv.value, input: false, attr: authAttr(sv.weak) });
+  });
+  fields.push({ row: 20, col: 60, text: page < pageCount - 1 ? 'More...' : 'Bottom', input: false });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenSysvalDetail(name) {
+  const sv = SYSVALS[name] || { value: '', text: '', weak: false, note: '' };
+  const fields = [
+    { row: 0, col: 28, text: 'Display System Value', input: false },
+    { row: 2, col: 2,  text: `System value . . . . . . . :   ${name}`, input: false },
+    { row: 3, col: 2,  text: `Description  . . . . . . . :   ${sv.text}`, input: false },
+    { row: 6, col: 2,  text: 'Current value  . . . . . . :', input: false },
+    { row: 6, col: 33, text: sv.value, input: false, attr: authAttr(sv.weak) },
+  ];
+  if (sv.note) {
+    const words = sv.note.split(' ');
+    let line = '', r = 9;
+    for (const w of words) {
+      if ((line + ' ' + w).trim().length > 72) { fields.push({ row: r++, col: 4, text: line.trim(), input: false }); line = ''; }
+      line += ' ' + w;
+    }
+    if (line.trim()) fields.push({ row: r, col: 4, text: line.trim(), input: false });
+  }
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+// System Service Tools (SST) — the shipped service-tools user IDs. On a
+// factory box these all carry their default password and are enabled. A real
+// STRSST needs *SERVICE and walks a menu tree; the mock renders the
+// "Work with service tools user IDs" list (STRSST option 8) directly.
+const SST_IDS = [
+  { id: 'QSECOFR',  status: '*ENABLED',  factory: true  },
+  { id: '22222222', status: '*ENABLED',  factory: true  },
+  { id: 'QSRV',     status: '*ENABLED',  factory: true  },
+  { id: '11111111', status: '*DISABLED', factory: false },
+];
+function screenSstDetail() {
+  const fields = [
+    { row: 0,  col: 24, text: 'System Service Tools (SST)', input: false },
+    { row: 2,  col: 2,  text: 'Work with service tools user IDs        (STRSST option 8)', input: false },
+    { row: 4,  col: 2,  text: 'Service tools user ID     Status        Password', input: false },
+    { row: 5,  col: 2,  text: '---------------------     ----------    ---------', input: false },
+  ];
+  SST_IDS.forEach((s, i) => {
+    fields.push({ row: 6 + i, col: 2,  text: s.id.padEnd(24, ' '), input: false });
+    fields.push({ row: 6 + i, col: 28, text: s.status.padEnd(12, ' '), input: false, attr: s.status === '*DISABLED' ? ATTR_GREEN : ATTR_WHITE });
+    fields.push({ row: 6 + i, col: 42, text: '*DEFAULT', input: false, attr: s.factory ? ATTR_RED : ATTR_WHITE });
+    if (s.factory) fields.push({ row: 6 + i, col: 54, text: '<= shipped default', input: false, attr: ATTR_RED });
+  });
+  const n = SST_IDS.filter(s => s.factory).length;
+  fields.push({ row: 6 + SST_IDS.length + 1, col: 2,
+    text: `*** ${n} service tools user ID(s) still hold the shipped default password ***`, input: false, attr: ATTR_RED });
+  fields.push({ row: 6 + SST_IDS.length + 2, col: 2,
+    text: 'Remediate: STRSST -> 8 -> option 2 to change; disable IDs not in use.', input: false });
+  fields.push({ row: 6 + SST_IDS.length + 3, col: 2,
+    text: 'If SST itself is disabled, do this from DST at the console instead.', input: false });
+  fields.push({ row: 22, col: 2, text: 'Press Enter to return', input: false });
+  fields.push({ row: 23, col: 2, text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+// ANZDFTPWD — Analyze Default Passwords. Reads live from USRPRFS, so after a
+// CHGUSRPRF ... PASSWORD(*NONE) the offending profile drops off on a re-run.
+function screenAnzdftpwdDetail() {
+  const hits = USRPRFS.filter(p => p.pwdDefault);
+  const fields = [
+    { row: 0,  col: 26, text: 'Analyze Default Passwords', input: false },
+    { row: 2,  col: 2,  text: 'Profiles whose password is the same as the profile name:', input: false },
+    { row: 4,  col: 2,  text: 'Profile      Status        Special authority', input: false },
+    { row: 5,  col: 2,  text: '----------   ----------    -----------------', input: false },
+  ];
+  hits.forEach((p, i) => {
+    const priv = p.specialAuth.includes('*ALLOBJ') || p.specialAuth.includes('*SECADM');
+    fields.push({ row: 6 + i, col: 2,  text: p.name.padEnd(13, ' '), input: false, attr: ATTR_RED });
+    fields.push({ row: 6 + i, col: 15, text: p.status.padEnd(12, ' '), input: false, attr: p.status === '*DISABLED' ? ATTR_GREEN : ATTR_WHITE });
+    fields.push({ row: 6 + i, col: 29, text: priv ? '*ALLOBJ / *SECADM' : '(none notable)', input: false, attr: priv ? ATTR_RED : ATTR_WHITE });
+  });
+  fields.push({ row: 6 + Math.max(hits.length, 1) + 1, col: 2,
+    text: hits.length
+      ? `*** ${hits.length} profile(s) have a default password — see QPRTANLPWD spooled file ***`
+      : 'No profiles have a default password.', input: false, attr: hits.length ? ATTR_RED : ATTR_GREEN });
+  if (!hits.length) fields.push({ row: 7, col: 2, text: '(none)', input: false, attr: ATTR_GREEN });
+  fields.push({ row: 20, col: 2, text: 'ACTION(*NONE) was used — no profiles were changed or disabled.', input: false });
+  fields.push({ row: 22, col: 2, text: 'Press Enter to return', input: false });
+  fields.push({ row: 23, col: 2, text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenUsrprfList(ctx) {
+  const pageCount = Math.max(1, Math.ceil(USRPRFS.length / USRPRF_PAGE_SIZE));
+  const page = Math.min(Math.max(ctx.page || 0, 0), pageCount - 1);
+  const start = page * USRPRF_PAGE_SIZE;
+  const slice = USRPRFS.slice(start, start + USRPRF_PAGE_SIZE);
+  const fields = [
+    { row: 0, col: 28, text: 'Work with User Profiles', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  Profile     Text                      Special authority', input: false },
+  ];
+  slice.forEach((p, idx) => {
+    const row = LIST_START_ROW + idx;
+    const priv = p.specialAuth.includes('*ALLOBJ') || p.specialAuth.includes('*SECADM');
+    let sa = p.specialAuth.length ? p.specialAuth.join(' ') : '*NONE';
+    if (sa.length > 30) sa = sa.slice(0, 27) + '...';
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: p.name.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 17, text: p.text.slice(0, 24).padEnd(24, ' '), input: false });
+    fields.push({ row, col: 42, text: sa, input: false, attr: authAttr(priv) });
+  });
+  // Real WRKUSRPRF shows "More..." bottom-right while pages remain, "Bottom"
+  // on the last. The Shipped Profile Audit client keys on the literal text.
+  fields.push({ row: 20, col: 60,
+    text: page < pageCount - 1 ? 'More...' : 'Bottom', input: false });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenUsrprfDetail(name) {
+  const p = USRPRFS.find(u => u.name === name);
+  if (!p) return screenStub(`USER ${name} NOT FOUND`, { user: name });
+  const fields = [
+    { row: 0,  col: 26, text: 'Display User Profile - Basic', input: false },
+    { row: 2,  col: 2,  text: `User profile . . . . . . . . . :   ${p.name}`, input: false },
+    { row: 3,  col: 2,  text: `Text . . . . . . . . . . . . . :   ${p.text}`, input: false },
+    { row: 4,  col: 2,  text: `Status . . . . . . . . . . . . :   ${p.status}`, input: false, attr: p.status === '*DISABLED' ? ATTR_RED : ATTR_WHITE },
+    { row: 5,  col: 2,  text: `Group profile  . . . . . . . . :   ${p.group}`, input: false },
+    { row: 6,  col: 2,  text: `Limit capabilities . . . . . . :   ${p.lmtcpb}`, input: false, attr: p.lmtcpb === '*NO' ? ATTR_RED : ATTR_WHITE },
+    { row: 7,  col: 2,  text: `Password expiration interval . :   ${p.pwdExpiry}`, input: false, attr: p.pwdExpiry === '*NOMAX' ? ATTR_RED : ATTR_WHITE },
+    { row: 8,  col: 2,  text: `No password (*NONE)  . . . . . :   ${p.pwdNone ? '*YES' : '*NO'}`, input: false, attr: p.pwdNone ? ATTR_GREEN : ATTR_WHITE },
+    { row: 9,  col: 2,  text: `Date password last changed . . :   ${p.pwdChg || '*NA'}`, input: false },
+    { row: 10, col: 2,  text: `Last sign-on . . . . . . . . . :   ${p.lastSignon}`, input: false },
+    { row: 12, col: 2,  text: 'Special authority  . . . . . . :', input: false },
+  ];
+  const sa = p.specialAuth.length ? p.specialAuth : ['*NONE'];
+  sa.forEach((a, i) => {
+    const priv = a === '*ALLOBJ' || a === '*SECADM' || a === '*SERVICE';
+    fields.push({ row: 13 + i, col: 36, text: a, input: false, attr: priv ? ATTR_RED : ATTR_GREEN });
+  });
+  if (p.pwdDefault) {
+    fields.push({ row: 21, col: 2, text: '*** WARNING: password matches profile name (default) ***', input: false, attr: ATTR_RED });
+  }
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenObjList(ctx) {
+  const fields = [
+    { row: 0, col: 30, text: 'Work with Objects', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display authority', input: false },
+    { row: 5, col: 2,  text: 'Opt  Object     Library    Type       Owner      *PUBLIC', input: false },
+  ];
+  OBJECTS.forEach((o, idx) => {
+    const row = LIST_START_ROW + idx;
+    const weak = o.publicAuth === '*ALL' || o.publicAuth === '*CHANGE';
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: o.name.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 17, text: o.lib.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 28, text: o.type.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 39, text: o.owner.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 50, text: o.publicAuth, input: false, attr: authAttr(weak) });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenObjDetail(idx) {
+  const o = OBJECTS[idx];
+  if (!o) return screenStub('OBJECT NOT FOUND', { user: '' });
+  const weak = o.publicAuth === '*ALL' || o.publicAuth === '*CHANGE';
+  const fields = [
+    { row: 0, col: 28, text: 'Display Object Authority', input: false },
+    { row: 2, col: 2,  text: `Object . . . . . . :   ${o.lib}/${o.name}`, input: false },
+    { row: 2, col: 48, text: `Type . :   ${o.type}`, input: false },
+    { row: 3, col: 2,  text: `Owner  . . . . . . :   ${o.owner}`, input: false },
+    { row: 4, col: 2,  text: `Authorization list :   ${o.authList}`, input: false },
+    { row: 5, col: 2,  text: '*PUBLIC authority  :', input: false },
+    { row: 5, col: 24, text: o.publicAuth, input: false, attr: authAttr(weak) },
+    { row: 7, col: 2,  text: 'User          Authority', input: false },
+  ];
+  o.priv.forEach((a, i) => {
+    const w = a.user === '*PUBLIC' && (a.auth === '*ALL' || a.auth === '*CHANGE');
+    fields.push({ row: 8 + i, col: 2,  text: a.user.padEnd(12, ' '), input: false });
+    fields.push({ row: 8 + i, col: 16, text: a.auth, input: false, attr: w ? ATTR_RED : ATTR_GREEN });
+  });
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+// ── Wave 2 panels ────────────────────────────────────────────────────
+function screenNetaDetail() {
+  const fields = [
+    { row: 0, col: 27, text: 'Display Network Attributes', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+  ];
+  let r = 2;
+  for (const [name, a] of Object.entries(NETA)) {
+    fields.push({ row: r, col: 2,  text: `${name.padEnd(11, ' ')}. . . . . . . :`, input: false });
+    fields.push({ row: r, col: 33, text: a.value, input: false, attr: authAttr(a.weak) });
+    r++;
+  }
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenReginfDetail() {
+  const fields = [
+    { row: 0, col: 24, text: 'Work with Registration Information', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+  ];
+  let r = 2;
+  for (const [name, a] of Object.entries(EXIT_POINTS)) {
+    const weak = a.value === '*NONE';
+    fields.push({ row: r, col: 2,  text: `${name.padEnd(22, ' ')}. . :`, input: false });
+    fields.push({ row: r, col: 30, text: a.value, input: false, attr: authAttr(weak) });
+    r++;
+  }
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenNetsvrDetail() {
+  const fields = [
+    { row: 0, col: 25, text: 'Display NetServer Attributes', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+  ];
+  let r = 2;
+  for (const [name, a] of Object.entries(NETSVR)) {
+    const weak = (name === 'GUESTUSRPRF' && a.value && a.value !== '*NONE') ||
+                 (name === 'SIGNEDSMB' && a.value === '*NO');
+    fields.push({ row: r, col: 2,  text: `${name.padEnd(11, ' ')}. . . . . . . :`, input: false });
+    fields.push({ row: r, col: 33, text: a.value, input: false, attr: authAttr(weak) });
+    r++;
+  }
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenIfsList(ctx) {
+  const fields = [
+    { row: 0, col: 26, text: 'Work with Object Links', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  Object link                         Type   Owner      *PUBLIC', input: false },
+  ];
+  IFS_OBJECTS.forEach((o, idx) => {
+    const row = LIST_START_ROW + idx;
+    const weak = /W/.test(o.auth) || (/R/.test(o.auth) && /\.ssh|id_rsa|\.conf$|\.env$|passwd/i.test(o.path));
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: o.path.padEnd(35, ' '), input: false });
+    fields.push({ row, col: 42, text: o.type.padEnd(6, ' '), input: false });
+    fields.push({ row, col: 48, text: o.owner.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 60, text: o.auth, input: false, attr: authAttr(weak) });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenPgmstkDetail() {
+  const fields = [
+    { row: 0, col: 29, text: 'Display Call Stack', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Program     Library    Activation group     Statement  Adopt', input: false },
+  ];
+  CALL_STACK.forEach((e, idx) => {
+    const row = 4 + idx;
+    fields.push({ row, col: 2,  text: e.program.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 14, text: e.lib.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 25, text: e.actgrp.padEnd(20, ' '), input: false });
+    fields.push({ row, col: 47, text: e.stmt, input: false });
+    fields.push({ row, col: 58, text: e.adopt ? '*YES' : '*NO', input: false, attr: authAttr(e.adopt) });
+  });
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenPgmDetail(target) {
+  const [lib, name] = (target || '').split('/');
+  const info = PGM_OWNERS[target] || { owner: lib === 'QSYS' ? 'QSYS' : 'QPGMR', usrprf: '*USER', useAdoptedAuth: '*NO' };
+  const fields = [
+    { row: 0, col: 30, text: 'Display Program', input: false },
+    { row: 2, col: 2,  text: `Program  . . . . . . . . . :   ${name || ''}`, input: false },
+    { row: 3, col: 2,  text: `Library  . . . . . . . . . :   ${lib || ''}`, input: false },
+    { row: 5, col: 2,  text: `User profile . . . . . . . :   ${info.usrprf}`, input: false },
+    { row: 6, col: 2,  text: 'Owner  . . . . . . . . . . :', input: false },
+    { row: 6, col: 33, text: info.owner, input: false },
+    { row: 7, col: 2,  text: 'Use adopted authority  . . :', input: false },
+    { row: 7, col: 33, text: info.useAdoptedAuth, input: false, attr: authAttr(info.useAdoptedAuth === '*YES') },
+  ];
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenJobdList(ctx) {
+  const fields = [
+    { row: 0, col: 27, text: 'Work with Job Descriptions', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  Job Desc    Library    User         *PUBLIC', input: false },
+  ];
+  JOBDS.forEach((j, idx) => {
+    const row = LIST_START_ROW + idx;
+    const runsAs = j.user !== '*RQD';
+    const weak = runsAs && ['*USE', '*CHANGE', '*ALL'].includes(j.publicAuth);
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: j.name.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 17, text: j.lib.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 28, text: j.user.padEnd(11, ' '), input: false, attr: authAttr(runsAs) });
+    fields.push({ row, col: 40, text: j.publicAuth, input: false, attr: authAttr(weak) });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenJobdDetail(name) {
+  const j = JOBDS.find(x => x.name === name);
+  if (!j) return screenStub('JOB DESCRIPTION NOT FOUND', { user: '' });
+  const runsAs = j.user !== '*RQD';
+  const usable = ['*USE', '*CHANGE', '*ALL'].includes(j.publicAuth);
+  const fields = [
+    { row: 0,  col: 28, text: 'Display Job Description', input: false },
+    { row: 2,  col: 2,  text: `Job description  . . . . . :   ${j.name}`, input: false },
+    { row: 3,  col: 2,  text: `Library  . . . . . . . . . :   ${j.lib}`, input: false },
+    { row: 4,  col: 2,  text: `Text . . . . . . . . . . . :   ${j.text}`, input: false },
+    { row: 6,  col: 2,  text: 'User . . . . . . . . . . . :', input: false },
+    { row: 6,  col: 33, text: j.user, input: false, attr: authAttr(runsAs) },
+    { row: 7,  col: 2,  text: `Job queue  . . . . . . . . :   ${j.jobq}`, input: false },
+    { row: 8,  col: 2,  text: `Routing data . . . . . . . :   ${j.rtgdta}`, input: false },
+    { row: 10, col: 2,  text: '*PUBLIC authority  :', input: false },
+    { row: 10, col: 24, text: j.publicAuth, input: false, attr: authAttr(runsAs && usable) },
+  ];
+  if (runsAs && usable) {
+    fields.push({ row: 12, col: 2, text: `*** WARNING: *PUBLIC can SBMJOB this JOBD to run as ${j.user} ***`, input: false, attr: ATTR_RED });
+  }
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenAutlList(ctx) {
+  const fields = [
+    { row: 0, col: 28, text: 'Work with Authorization Lists', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  Auth List   Owner      *PUBLIC    Text', input: false },
+  ];
+  AUTLS.forEach((a, idx) => {
+    const row = LIST_START_ROW + idx;
+    const weak = a.publicAuth === '*ALL' || a.publicAuth === '*CHANGE';
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: a.name.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 17, text: a.owner.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 28, text: a.publicAuth.padEnd(10, ' '), input: false, attr: authAttr(weak) });
+    fields.push({ row, col: 39, text: a.text.slice(0, 30), input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenAutlDetail(name) {
+  const a = AUTLS.find(x => x.name === name);
+  if (!a) return screenStub('AUTHORIZATION LIST NOT FOUND', { user: '' });
+  const weak = a.publicAuth === '*ALL' || a.publicAuth === '*CHANGE';
+  const fields = [
+    { row: 0, col: 28, text: 'Display Authorization List', input: false },
+    { row: 2, col: 2,  text: `Authorization list :   ${a.name}`, input: false },
+    { row: 3, col: 2,  text: `Owner  . . . . . . :   ${a.owner}`, input: false },
+    { row: 4, col: 2,  text: '*PUBLIC authority  :', input: false },
+    { row: 4, col: 24, text: a.publicAuth, input: false, attr: authAttr(weak) },
+    { row: 6, col: 2,  text: 'User          Authority', input: false },
+  ];
+  a.users.forEach((u, i) => {
+    const w = u.user === '*PUBLIC' && (u.auth === '*ALL' || u.auth === '*CHANGE');
+    fields.push({ row: 7 + i, col: 2,  text: u.user.padEnd(12, ' '), input: false });
+    fields.push({ row: 7 + i, col: 16, text: u.auth, input: false, attr: w ? ATTR_RED : ATTR_GREEN });
+  });
+  let sr = 7 + a.users.length + 1;
+  fields.push({ row: sr++, col: 2, text: 'Secured objects:', input: false });
+  a.secured.forEach(obj => fields.push({ row: sr++, col: 4, text: obj, input: false, attr: weak ? ATTR_RED : ATTR_WHITE }));
+  if (weak) fields.push({ row: sr + 1, col: 2, text: `*** *PUBLIC ${a.publicAuth} cascades to all secured objects ***`, input: false, attr: ATTR_RED });
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenActjobList(ctx) {
+  const fields = [
+    { row: 0, col: 30, text: 'Work with Active Jobs', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 5, col: 2,  text: 'Opt  Job         Subsystem   User         Type  Function      Status', input: false },
+  ];
+  ACTJOBS.forEach((j, idx) => {
+    const row = LIST_START_ROW + idx;
+    const priv = PRIV_USERS.has(j.user);
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: j.job.slice(0, 10).padEnd(10, ' '), input: false });
+    fields.push({ row, col: 17, text: j.sbs.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 28, text: j.user.padEnd(11, ' '), input: false, attr: authAttr(priv) });
+    fields.push({ row, col: 40, text: j.type.padEnd(5, ' '), input: false });
+    fields.push({ row, col: 46, text: j.func.padEnd(13, ' '), input: false });
+    fields.push({ row, col: 60, text: j.status, input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenSbsList(ctx) {
+  const fields = [
+    { row: 0, col: 30, text: 'Work with Subsystems', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 5, col: 2,  text: 'Opt  Subsystem   Status     Max Active   Text', input: false },
+  ];
+  SBS.forEach((s, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: s.name.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 17, text: s.status.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 28, text: s.maxJobs.padEnd(12, ' '), input: false });
+    fields.push({ row, col: 41, text: s.text.slice(0, 30), input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function seedMessages(user) {
+  const now = new Date();
+  const date = now.toLocaleDateString('en-US');
+  const time = now.toLocaleTimeString('en-US', { hour12: false });
+  return [
+    { from: 'QSYSOPR', date, time, text: `Welcome to ${SYSNAME}, ${user}.` },
+    { from: 'QSYSOPR', date, time, text: 'System backup scheduled for 23:00 tonight.' },
+    // Mainframe 202 vignette: the real explanation for MTHCLOSE's MSGW
+    // status in ACTJOBS above, a program-issued inquiry message, the
+    // same reason a real batch job goes MSGW, waiting on a human, not
+    // a crash and not a hang.
+    { from: 'MTHCLOSE', date, time, text: 'Prior period totals unbalanced. Reply Y or N.' },
+    // Mainframe 205 (200 series capstone) vignette: the actual origin of
+    // the whole cross-platform incident. MAINTJOB (ACTJOBS above) is
+    // genuinely still running, no timestamp field exists on that table,
+    // so this message is where the honest "since when, and why" detail
+    // actually lives, discoverable via DSPMSG. CYC-0826 is the shared
+    // run label independently hardcoded into z/OS, z/VM, and z/TPF's own
+    // mocks too, see Bridge_server/ROADMAP.md's "Mainframe 205" section.
+    { from: 'MAINTJOB', date, time, text: 'CYC-0826 running since 22:00, high volume.' },
+  ];
+}
+
+// ── Wave 3 panels (everyday operator / PDM / SQL) ────────────────────
+// Neutral/realistic data — no red/green weak-value flagging like Waves 1-2.
+
+function screenSplfList(ctx) {
+  const fields = [
+    { row: 0, col: 30, text: 'Work with Spooled Files', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  File         User        Status  Pages  Copies  Output queue', input: false },
+  ];
+  SPLFILES.forEach((s, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: s.file.padEnd(12, ' '), input: false });
+    fields.push({ row, col: 19, text: s.user.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 31, text: s.status.padEnd(7, ' '), input: false });
+    fields.push({ row, col: 39, text: String(s.pages).padStart(4, ' '), input: false });
+    fields.push({ row, col: 46, text: String(s.copies).padStart(5, ' '), input: false });
+    fields.push({ row, col: 54, text: s.outq, input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenSplfDetail(idx) {
+  const s = SPLFILES[idx];
+  if (!s) return screenStub('SPOOLED FILE NOT FOUND', { user: '' });
+  const fields = [
+    { row: 0, col: 25, text: 'Display Spooled File Attributes', input: false },
+    { row: 2, col: 2,  text: `Spooled file . . . :   ${s.file}`, input: false },
+    { row: 2, col: 48, text: `Number . . :   ${s.number}`, input: false },
+    { row: 3, col: 2,  text: `Job  . . . . . . . :   ${s.job}`, input: false },
+    { row: 4, col: 2,  text: `User . . . . . . . :   ${s.user}`, input: false },
+    { row: 5, col: 2,  text: `Status . . . . . . :   ${s.status}`, input: false },
+    { row: 6, col: 2,  text: `Pages  . . . . . . :   ${s.pages}`, input: false },
+    { row: 6, col: 40, text: `Copies . . :   ${s.copies}`, input: false },
+    { row: 7, col: 2,  text: `Form type  . . . . :   ${s.formtype}`, input: false },
+    { row: 7, col: 40, text: `Priority . :   ${s.priority}`, input: false },
+    { row: 8, col: 2,  text: `Output queue . . . :   ${s.outq}`, input: false },
+    { row: 10, col: 2, text: 'Content preview:', input: false },
+  ];
+  s.content.forEach((line, i) => {
+    if (11 + i > 19) return;
+    fields.push({ row: 11 + i, col: 2, text: line.slice(0, 76), input: false });
+  });
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenOutqList(ctx) {
+  const fields = [
+    { row: 0, col: 30, text: 'Work with Output Queues', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 5, col: 2,  text: 'Opt  Output queue  Library    Files  Status', input: false },
+  ];
+  OUTQS.forEach((o, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: o.name.padEnd(13, ' '), input: false });
+    fields.push({ row, col: 19, text: o.lib.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 29, text: String(o.files).padStart(5, ' '), input: false });
+    fields.push({ row, col: 36, text: o.status, input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+// Looks up a job by name for JOB_DETAIL, whichever source it came from:
+// '*CURRENT' (bare WRKJOB, built live from the signed-on user), the
+// system-wide BCHJOBS table, or the signed-on user's own jobs.
+function findJob(name, ctxUser) {
+  if (name === '*CURRENT') {
+    return { name: 'QPADEV0001', user: ctxUser || 'UNKNOWN', number: '041823', sbs: 'QINTER', jobq: null, type: 'INT', status: '*ACTIVE' };
+  }
+  return BCHJOBS.find(j => j.name === name) || buildUserJobs(ctxUser || 'UNKNOWN').find(j => j.name === name);
+}
+
+function screenJobDetail(name, ctxUser) {
+  const j = findJob(name, ctxUser);
+  if (!j) return screenStub('JOB NOT FOUND', { user: ctxUser });
+  const isBatch = j.type === 'BCH' || !!j.jobq;
+  const fields = [
+    { row: 0,  col: 25, text: 'Display Job Status Attributes', input: false },
+    { row: 2,  col: 2,  text: `Job name . . . . . . . . . :   ${j.name}`, input: false },
+    { row: 3,  col: 2,  text: `User . . . . . . . . . . . :   ${j.user}`, input: false },
+    { row: 4,  col: 2,  text: `Number . . . . . . . . . . :   ${j.number}`, input: false },
+    { row: 5,  col: 2,  text: `Subsystem  . . . . . . . . :   ${j.sbs}`, input: false },
+    { row: 6,  col: 2,  text: `Status . . . . . . . . . . :   ${j.status}`, input: false },
+    { row: 7,  col: 2,  text: `Type . . . . . . . . . . . :   ${isBatch ? '*BATCH' : '*INTERACT'}`, input: false },
+  ];
+  let r = 8;
+  if (j.jobq) fields.push({ row: r++, col: 2, text: `Job queue  . . . . . . . . :   ${j.jobq}`, input: false });
+  r++;
+  fields.push({ row: r++, col: 2, text: 'Job log:', input: false });
+  const joblog = j.submitted
+    ? [`Job ${j.number}/${j.user}/${j.name} submitted ${j.submitted}.`, `Job ${j.number}/${j.user}/${j.name} status is ${j.status}.`]
+    : [`Job ${j.number}/${j.user}/${j.name} active in subsystem ${j.sbs}.`];
+  joblog.forEach(line => fields.push({ row: r++, col: 4, text: line.slice(0, 74), input: false }));
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenUsrjobList(ctx) {
+  const jobs = buildUserJobs(ctx.user || 'UNKNOWN');
+  const fields = [
+    { row: 0, col: 29, text: 'Work with User Jobs', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  Job          User        Number  Type  Status', input: false },
+  ];
+  jobs.forEach((j, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: j.name.padEnd(12, ' '), input: false });
+    fields.push({ row, col: 19, text: j.user.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 31, text: j.number, input: false });
+    fields.push({ row, col: 39, text: j.type.padEnd(5, ' '), input: false });
+    fields.push({ row, col: 46, text: j.status, input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenBchjobList(ctx) {
+  const fields = [
+    { row: 0, col: 28, text: 'Work with Batch Jobs', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  Job          User        Number  Status   Submitted', input: false },
+  ];
+  BCHJOBS.forEach((j, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: j.name.padEnd(12, ' '), input: false });
+    fields.push({ row, col: 19, text: j.user.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 31, text: j.number, input: false });
+    fields.push({ row, col: 39, text: j.status.padEnd(8, ' '), input: false });
+    fields.push({ row, col: 48, text: j.submitted, input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenLibList(ctx) {
+  const fields = [
+    { row: 0, col: 32, text: 'Work with Libraries', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display', input: false },
+    { row: 5, col: 2,  text: 'Opt  Library     Type    Objects  Text', input: false },
+  ];
+  LIBRARIES.forEach((l, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: l.name.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 17, text: l.type.padEnd(8, ' '), input: false });
+    fields.push({ row, col: 25, text: String(l.objects).padStart(7, ' '), input: false });
+    fields.push({ row, col: 34, text: l.text.slice(0, 40), input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenLibDetail(name) {
+  const l = LIBRARIES.find(x => x.name === name);
+  if (!l) return screenStub('LIBRARY NOT FOUND', { user: '' });
+  const fields = [
+    { row: 0, col: 26, text: 'Display Library Description', input: false },
+    { row: 2, col: 2,  text: `Library  . . . . . . . . . :   ${l.name}`, input: false },
+    { row: 3, col: 2,  text: `Type . . . . . . . . . . . :   ${l.type}`, input: false },
+    { row: 4, col: 2,  text: `Auxiliary storage pool  . . :  ${l.asp}`, input: false },
+    { row: 5, col: 2,  text: `Number of objects  . . . . :   ${l.objects}`, input: false },
+    { row: 6, col: 2,  text: `Text . . . . . . . . . . . :   ${l.text}`, input: false },
+    { row: 7, col: 2,  text: `Create authority . . . . . :   ${l.crtaut}`, input: false,
+      attr: (l.crtaut === '*ALL' || l.crtaut === '*CHANGE') ? ATTR_RED : ATTR_WHITE },
+    { row: 22, col: 2,  text: 'Press Enter to continue', input: false },
+    { row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false },
+    { row: 22, col: 44, text: '', input: true, length: 1 },
+  ];
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+function screenLiblDetail() {
+  const fields = [
+    { row: 0, col: 28, text: 'Display Library List', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Library     Type', input: false },
+  ];
+  LIBL.forEach((l, idx) => {
+    fields.push({ row: 3 + idx, col: 2, text: l.name.padEnd(12, ' '), input: false });
+    fields.push({ row: 3 + idx, col: 14, text: l.type, input: false });
+  });
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+// ── DSPJOB → library list → Display Library object enumeration ──────────
+// Carmel Ch.2.3, "no command line necessary": a restricted user reaches the
+// full user-profile list via System Request -> 3 (Display current job) -> 13
+// (Display library list) -> 5 on QSYS, then pages the *USRPRF objects. The
+// mock's entry is the DSPJOB command or USER menu option 6 (System Request
+// itself is not modelled as a 5250 AID).
+
+// A few real QSYS objects for texture, then every user profile as a *USRPRF
+// object -- the section the book's Figure 9 pages down to. Other libraries
+// map from PDM_OBJECTS where the mock has them.
+function libraryObjects(lib) {
+  if (lib === 'QSYS') {
+    const base = [
+      { obj: 'QCMD',    type: '*CMD', text: 'Command entry' },
+      { obj: 'QCMDEXC', type: '*PGM', text: 'Execute command API' },
+      { obj: 'QINTER',  type: '*SBSD', text: 'Interactive subsystem description' },
+      { obj: 'QSYS',    type: '*LIB', text: 'System library' },
+    ];
+    const prf = USRPRFS.map(p => ({ obj: p.name, type: '*USRPRF', text: p.text }));
+    return [...base, ...prf].sort((a, b) => a.obj.localeCompare(b.obj));
+  }
+  return (PDM_OBJECTS[lib] || []).map(o => ({ obj: o.name, type: o.type, text: o.text }));
+}
+
+function screenDspjobOpts(ctx) {
+  const j = findJob('*CURRENT', ctx.user);
+  const opts = [
+    '1. Display job status attributes',
+    '2. Display job definition attributes',
+    '3. Display job run attributes, if active',
+    '4. Display spooled files',
+    '10. Display job log, if active or on job queue',
+    '11. Display call stack, if active',
+    '12. Display locks, if active',
+    '13. Display library list, if active',
+    '14. Display open files, if active',
+    '15. Display file overrides, if active',
+    '16. Display commitment control status, if active',
+  ];
+  const fields = [
+    { row: 0, col: 34, text: 'Display Job', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: `Job:  ${j.name.padEnd(10)} User:  ${j.user.padEnd(10)} Number:  ${j.number}`, input: false },
+    { row: 4, col: 2,  text: 'Select one of the following:', input: false },
+  ];
+  opts.forEach((o, i) => fields.push({ row: 6 + i, col: 5, text: o, input: false }));
+  fields.push({ row: 20, col: 2,  text: 'Selection', input: false });
+  fields.push({ row: 20, col: 14, text: '', input: true, length: 2 });
+  if (ctx.message) fields.push({ row: 21, col: 2, text: ctx.message.slice(0, 76), input: false, attr: ATTR_RED });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  return wrapPanel(fields, { row: 20, col: 14 });
+}
+
+function screenDspjobLibl(ctx) {
+  const fields = [
+    { row: 0, col: 26, text: 'Display Job Library List', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '5=Display objects in library', input: false },
+    { row: 5, col: 2,  text: 'Opt  Library     Type', input: false },
+  ];
+  LIBL.forEach((l, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: l.name.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 18, text: l.type, input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenDsplibObjs(ctx) {
+  const objs = libraryObjects(ctx.lib);
+  const pageCount = Math.max(1, Math.ceil(objs.length / USRPRF_PAGE_SIZE));
+  const page = Math.min(Math.max(ctx.page || 0, 0), pageCount - 1);
+  const slice = objs.slice(page * USRPRF_PAGE_SIZE, page * USRPRF_PAGE_SIZE + USRPRF_PAGE_SIZE);
+  const fields = [
+    { row: 0, col: 30, text: 'Display Library', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: `Library  . . . . . :   ${ctx.lib}`, input: false },
+    { row: 3, col: 2,  text: 'Type options, press Enter.   5=Display full attributes', input: false },
+    { row: 5, col: 2,  text: 'Opt  Object      Type       Text', input: false },
+  ];
+  if (!objs.length) {
+    fields.push({ row: LIST_START_ROW, col: 2, text: '(No objects modelled for this library.)', input: false });
+  } else {
+    slice.forEach((o, idx) => {
+      const row = LIST_START_ROW + idx;
+      const isPrf = o.type === '*USRPRF';
+      fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+      fields.push({ row, col: 6,  text: o.obj.padEnd(11, ' '), input: false });
+      fields.push({ row, col: 18, text: o.type.padEnd(10, ' '), input: false, attr: isPrf ? ATTR_GREEN : ATTR_WHITE });
+      fields.push({ row, col: 29, text: (o.text || '').slice(0, 45), input: false });
+    });
+    fields.push({ row: 20, col: 60, text: page < pageCount - 1 ? 'More...' : 'Bottom', input: false });
+  }
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenObjpdmList(lib, ctx) {
+  const objs = PDM_OBJECTS[lib] || [];
+  const fields = [
+    { row: 0, col: 26, text: 'Work with Objects Using PDM', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 2,  text: `Library  . . . . . :   ${lib}`, input: false },
+    { row: 5, col: 2,  text: 'Opt  Object      Type     Attribute  Size    Text', input: false },
+  ];
+  objs.forEach((o, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: o.name.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 18, text: o.type.padEnd(9, ' '), input: false });
+    fields.push({ row, col: 28, text: o.attr.padEnd(10, ' '), input: false });
+    fields.push({ row, col: 39, text: o.size.padEnd(7, ' '), input: false });
+    fields.push({ row, col: 47, text: o.text.slice(0, 30), input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenMbrpdmList(fileKey, ctx) {
+  const mbrs = SRCMEMBERS[fileKey] || [];
+  const fields = [
+    { row: 0, col: 26, text: 'Work with Members Using PDM', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
+    { row: 3, col: 4,  text: '4=Run   5=Display', input: false },
+    { row: 4, col: 2,  text: `File . . . . . . . :   ${fileKey}`, input: false },
+    { row: 5, col: 2,  text: 'Opt  Member      Type     Text                       Changed', input: false },
+  ];
+  mbrs.forEach((m, idx) => {
+    const row = LIST_START_ROW + idx;
+    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
+    fields.push({ row, col: 6,  text: m.name.padEnd(11, ' '), input: false });
+    fields.push({ row, col: 18, text: m.type.padEnd(9, ' '), input: false });
+    fields.push({ row, col: 28, text: m.text.slice(0, 26).padEnd(26, ' '), input: false });
+    fields.push({ row, col: 55, text: m.changed, input: false });
+  });
+  listTrailer(fields, ctx.message);
+  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+}
+
+function screenMbrDetail(compositeKey) {
+  const [fileKey, mbrName] = (compositeKey || '').split('|');
+  const m = (SRCMEMBERS[fileKey] || []).find(x => x.name === mbrName);
+  if (!m) return screenStub('MEMBER NOT FOUND', { user: '' });
+  const fields = [
+    { row: 0, col: 25, text: 'Display Physical File Member', input: false },
+    { row: 2, col: 2,  text: `File . . . . . . . . . . . :   ${fileKey}`, input: false },
+    { row: 3, col: 2,  text: `Member . . . . . . . . . . :   ${m.name}`, input: false },
+    { row: 4, col: 2,  text: `Type . . . . . . . . . . . :   ${m.type}`, input: false },
+    { row: 5, col: 2,  text: `Text . . . . . . . . . . . :   ${m.text}`, input: false },
+    { row: 6, col: 2,  text: `Source last changed . . . . :  ${m.changed}`, input: false },
+    { row: 8, col: 2,  text: 'Source (preview):', input: false },
+  ];
+  const srcLines = m.srcFile ? fs.readFileSync(m.srcFile, 'utf8').split('\n') : m.src;
+  srcLines.forEach((line, i) => {
+    if (9 + i > 19) return;
+    fields.push({ row: 9 + i, col: 2, text: line.slice(0, 76), input: false });
+  });
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
+  return wrapPanel(fields, { row: 22, col: 44 });
+}
+
+// SNDMSG compose panel — bespoke handleRecord logic (not an Opt-column list).
+function screenSndmsgCompose(ctx) {
+  const fields = [
+    { row: 0, col: 30, text: 'Send a Message', input: false },
+    { row: 2, col: 2,  text: 'To user  . . . . . . . . . . . :', input: false },
+    { row: 2, col: 36, text: '', input: true, length: 10 },
+    { row: 4, col: 2,  text: 'Message text:', input: false },
+    { row: 5, col: 2,  text: '', input: true, length: 74 },
+  ];
+  if (ctx.message) fields.push({ row: 20, col: 2, text: ctx.message, input: false });
+  fields.push({ row: 22, col: 2,  text: 'Press Enter to send', input: false });
+  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
+  return wrapPanel(fields, { row: 2, col: 36 });
+}
+// Row layout screenSndmsgCompose relies on -- kept as named constants so the
+// handleRecord field-read matches the field-write above.
+const SNDMSG_TOUSER_ROW = 2;
+const SNDMSG_TEXT_ROW   = 5;
+
+// Interactive SQL — bespoke handleRecord logic. Understands exactly one
+// statement shape (`SELECT * FROM lib.table`, no WHERE/JOIN) against
+// SQL_TABLES; anything else is a realistic-looking SQL error. QIWS/QCUSTCDT
+// is IBM's real sample table, so this is the same command worth trying on
+// real hardware.
+const SQL_CMD_ROW = 5;
+// 15 rather than a tighter width because CVE_ID ("CVE-MOCK-0001") and
+// PTF_STATUS ("NOT INSTALLED") both run to 13 chars -- the client's
+// parseSqlResultTable() (as400sec-parse.js) must use the same width.
+const SQL_COL_WIDTH = 15;
+// Rows a STRSQL result screen shows before Roll Up. A knob so a short page can prove the
+// client really pages, MOCK_AS400_SQL_PAGE=3 turns every query into several pages.
+const SQL_PAGE = Math.max(1, parseInt(process.env.MOCK_AS400_SQL_PAGE || '10', 10));
+// QAUDJRN as QSYS2.DISPLAY_JOURNAL() returns it, narrowed to four columns. The story:
+// auditing WAS on, and was switched off nine days ago (QAUDCTL is *NONE above), so the
+// journal holds entries up to then and nothing after. Rows are [days ago, type, user,
+// object], timestamps are built from today so the window arithmetic is honest. A
+// restore of a program QSECOFR owns (RP), routine changes made as QSECOFR, and a
+// pile of program changes (two pages of them) are in there on purpose.
+const JOURNAL_ROWS = [
+  [30, 'OR', 'APPADMIN', 'APPLIB/ORDENTRY'],
+  [12, 'OR', 'QSECOFR',  'TOOLLIB/UTILITY'], [12, 'OR', 'QSECOFR', 'TOOLLIB/SAVALL'], [12, 'RP', 'QSECOFR', 'TOOLLIB/UTILITY'],
+  [9,  'OR', 'APPADMIN', 'APPLIB/PAYUPD'],   [9, 'OR', 'APPADMIN', 'APPLIB/PAYRPT'],  [9, 'OR', 'APPADMIN', 'APPLIB/LEAVCALC'],
+  [9,  'RO', 'APPADMIN', 'APPLIB/PAYUPD'],
+  [14, 'CO', 'QSECOFR',  'APPLIB/NEWRPT'],   [14, 'CO', 'QSECOFR',  'APPLIB/NEWMNU'],
+  [11, 'CO', 'JSMITH',   'MYLIB/TESTPF'],    [11, 'CO', 'JSMITH',   'MYLIB/TESTLF'],
+  [10, 'CO', 'JSMITH',   'MYLIB/TESTPGM'],   [10, 'CO', 'JSMITH',   'MYLIB/TESTDTA'],
+  ...['PAYUPD', 'PAYUPD', 'PAYUPD', 'PAYUPD', 'PAYUPD', 'PAYUPD', 'PAYUPD', 'LEAVCALC', 'LEAVCALC', 'LEAVCALC', 'LEAVCALC'].map((n, i) => [16 - Math.floor(i / 2), 'ZC', 'APPADMIN', `APPLIB/${n}`]),
+  [10, 'ZC', 'JSMITH', 'MYLIB/TESTPGM'], [10, 'ZC', 'JSMITH', 'MYLIB/TESTPGM'],
+  // somebody changed the SQL exit program shortly before auditing went off, and a
+  // restore of the signon exit before that, both as an account nobody else uses
+  [10, 'ZC', 'OPSADMIN', 'EXITLIB/SQLEXITPGM'], [10, 'ZC', 'OPSADMIN', 'EXITLIB/SQLEXITPGM'],
+  [20, 'OR', 'OPSADMIN', 'EXITLIB/SIGNONEXIT'],
+];
+function journalRows({ types, days }) {
+  const want = new Set(types.split(',').map(s => s.trim().toUpperCase()).filter(Boolean));
+  const all = want.has('*ALL');
+  const pad = n => String(n).padStart(2, '0');
+  return JOURNAL_ROWS
+    .filter(([ago, t]) => (all || want.has(t)) && ago <= days)
+    .sort((a, b) => b[0] - a[0])
+    .map(([ago, t, user, obj], i) => {
+      const d = new Date(Date.now() - ago * 86400000);
+      // time of day climbs with the row, so entries from one day read in order
+      const sec = 8 * 3600 + (i % 20) * 1700 + (i * 13) % 60;
+      const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(Math.floor(sec / 3600))}.${pad(Math.floor(sec % 3600 / 60))}.${pad(sec % 60)}`;
+      return [ts, t, user, obj];
+    });
+}
+
+function runSql(stmt) {
+  // TABLE(QSYS2.DISPLAY_JOURNAL('QSYS','QAUDJRN', JOURNAL_ENTRY_TYPES=>'OR,RA',
+  // STARTING_TIMESTAMP=>CURRENT TIMESTAMP - 30 DAYS)) AS J becomes a plain read of a
+  // virtual table, keeping only the entry types and the day window. Anything else
+  // in the argument list is accepted and ignored.
+  let journalOpts = null;
+  const jm = /FROM\s+TABLE\s*\(\s*QSYS2\.DISPLAY_JOURNAL\s*\(([^)]*)\)\s*\)\s*(?:AS\s+\w+|(?!WHERE\b)\w+)?/i.exec(stmt);
+  if (jm) {
+    const ty = /JOURNAL_ENTRY_TYPES\s*=>\s*'([^']*)'/i.exec(jm[1]);
+    const dy = /-\s*(\d+)\s*DAYS?/i.exec(jm[1]);
+    journalOpts = { types: ty ? ty[1] : '*ALL', days: dy ? parseInt(dy[1], 10) : 365 };
+    stmt = stmt.replace(jm[0], 'FROM QSYS2.DISPLAY_JOURNAL');
+  }
+  // SELECT <* | col, col> FROM lib.table [()] [WHERE col = n | IN (n, n) |
+  // BETWEEN n AND m]. Trailing (...)? covers table FUNCTIONS like
+  // SYSTOOLS.CVE_INFO() -- real IBM i services take no args in their simplest
+  // form, same as here. One predicate only, no AND/OR/JOIN: that is all the
+  // Listening Services Inventory needs, and anything else is a realistic error.
+  const m = /^SELECT\s+(.+?)\s+FROM\s+([A-Z0-9_]+)\.([A-Z0-9_]+)\s*(\([^)]*\))?\s*(?:WHERE\s+(.+?))?\s*;?$/i.exec(stmt.trim());
+  if (!m) return { error: 'SQL0104 - Statement not understood by this mock (try: SELECT * FROM library.table).' };
+  const key = `${m[2].toUpperCase()}/${m[3].toUpperCase()}`;
+  const table = key === 'QSYS2/DISPLAY_JOURNAL' && journalOpts
+    ? { columns: ['ENTRY_TIMESTAMP', 'JOURNAL_ENTRY_TYPE', 'JOB_USER', 'OBJECT'], rows: journalRows(journalOpts) }
+    : SQL_TABLES[key];
+  if (!table) return { error: `SQL0204 - ${key.replace('/', '.')} in *LIBL type *FILE not found.` };
+
+  let idxs = table.columns.map((_, i) => i);
+  let aliases = table.columns.slice();
+  if (m[1].trim() !== '*') {
+    // col, col AS alias, col alias. The alias becomes the result header, which is how
+    // a real statement keeps wide column names inside the 76-column grid.
+    idxs = [];
+    aliases = [];
+    for (const item of m[1].split(',')) {
+      const am = /^([A-Z0-9_]+)(?:\s+(?:AS\s+)?([A-Z0-9_]+))?$/i.exec(item.trim());
+      if (!am) return { error: 'SQL0104 - Select list not understood by this mock (col, col AS alias).' };
+      const n = am[1].toUpperCase();
+      const i = table.columns.indexOf(n);
+      if (i === -1) return { error: `SQL0206 - Column ${n} not in table ${key.replace('/', '.')}.` };
+      idxs.push(i);
+      aliases.push((am[2] || n).toUpperCase());
+    }
+  }
+
+  let rows = table.rows;
+  if (m[5]) {
+    // Predicates joined by AND (OR, parentheses and JOIN are not understood).
+    // Each is: col = n | col = 'text' | col IN (n or 'text', ...) | col BETWEEN n
+    // AND m | col [NOT] LIKE 'x%' | col IS [NOT] NULL. BETWEEN's own AND is
+    // consumed inside its predicate, so it is not mistaken for a separator.
+    const PRED = /^([A-Z0-9_]+)\s*(?:=\s*(?:(\d+)|'([^']*)')|IN\s*\(([^)]*)\)|BETWEEN\s+(\d+)\s+AND\s+(\d+)|(NOT\s+)?LIKE\s+'([^']*)'|IS\s+(NOT\s+)?NULL)\s*/i;
+    const unq = s => { const x = s.trim(); return /^'.*'$/.test(x) ? x.slice(1, -1) : x; };
+    let rest = m[5].trim();
+    while (rest) {
+      const w = PRED.exec(rest);
+      if (!w) return { error: "SQL0104 - WHERE not understood by this mock (predicates joined by AND: col = n or 'x', col IN (..), col BETWEEN n AND m, col [NOT] LIKE '%x%', col IS [NOT] NULL)." };
+      const ci = table.columns.indexOf(w[1].toUpperCase());
+      if (ci === -1) return { error: `SQL0206 - Column ${w[1].toUpperCase()} not in table ${key.replace('/', '.')}.` };
+      let keep;
+      if (w[2] !== undefined)      keep = v => Number(v) === Number(w[2]);
+      else if (w[3] !== undefined) keep = v => String(v) === w[3];
+      else if (w[4] !== undefined) { const set = new Set(w[4].split(',').map(unq)); keep = v => set.has(String(v)); }
+      else if (w[5] !== undefined) keep = v => Number(v) >= Number(w[5]) && Number(v) <= Number(w[6]);
+      else if (w[8] !== undefined) {
+        const re = new RegExp('^' + w[8].replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$', 'i');
+        keep = v => re.test(String(v)) === !w[7];
+      } else                       keep = v => (String(v) === '') === !w[9];   // IS NULL keeps blanks, IS NOT NULL keeps the rest
+      rows = rows.filter(r => keep(r[ci]));
+      rest = rest.slice(w[0].length);
+      if (!rest) break;
+      const and = /^AND\s+/i.exec(rest);
+      if (!and) return { error: 'SQL0104 - Expected AND between WHERE predicates.' };
+      rest = rest.slice(and[0].length);
+    }
+  }
+  return { cols: aliases, rows: rows.map(r => idxs.map(i => r[i])) };
+}
+function screenSql(ctx) {
+  const fields = [
+    { row: 0, col: 33, text: 'Interactive SQL', input: false },
+    { row: 0, col: 68, text: SYSNAME, input: false },
+    { row: 2, col: 2,  text: 'Type SQL statement, press Enter to run.', input: false },
+    { row: 3, col: 2,  text: '(Mock SQL: SELECT cols FROM lib.table [WHERE col IN (n, n)])', input: false },
+    { row: SQL_CMD_ROW, col: 2, text: '===>', input: false },
+    { row: SQL_CMD_ROW, col: 7, text: '', input: true, length: 72 },
+    // Continuation lines: a long statement wraps onto these rows, same as a real
+    // STRSQL statement area. The handler joins the three rows with a space.
+    { row: SQL_CMD_ROW + 1, col: 7, text: '', input: true, length: 72 },
+    { row: SQL_CMD_ROW + 2, col: 7, text: '', input: true, length: 72 },
+  ];
+  if (ctx.message) fields.push({ row: 8, col: 2, text: ctx.message, input: false });
+  if (ctx.resultCols) {
+    // Fixed-width columns, SQL_COL_WIDTH wide each. padEnd alone doesn't
+    // truncate a value already >= the width (CVE_ID values like
+    // "CVE-MOCK-0001" and PTF_STATUS's "NOT INSTALLED" both run past 10),
+    // which silently shifted every later column out of alignment -- the
+    // .slice(0, SQL_COL_WIDTH) after padEnd is what actually enforces the
+    // fixed width per field, not just the join()'s overall .slice(0, 76).
+    // Each column is as wide as its name needs (a real STRSQL grid shows full
+    // names, GROUP_PROFILE_NAME is 18 characters), never below SQL_COL_WIDTH. If
+    // that overflows the 76-column grid, fall back to the fixed width, as before.
+    const widths = ctx.resultCols.map((c, i) => Math.max(SQL_COL_WIDTH, c.length + 2,
+      ...ctx.resultRows.map(r => String(r[i] ?? '').length + 2)));
+    const fit = widths.reduce((a, b) => a + b, 0) <= 76 ? widths : ctx.resultCols.map(() => SQL_COL_WIDTH);
+    const cell = (v, i) => String(v).padEnd(fit[i], ' ').slice(0, fit[i]);
+    const header = ctx.resultCols.map(cell).join('').slice(0, 76);
+    fields.push({ row: 9, col: 2, text: header, input: false });
+    // Ten rows a screen, Roll Up/Down for the rest, and the same More... /
+    // Bottom marker the other lists use (the client scanner keys on it).
+    const page = ctx.resultPage || 0;
+    ctx.resultRows.slice(page * SQL_PAGE, (page + 1) * SQL_PAGE).forEach((rvals, idx) => {
+      const line = rvals.map(cell).join('').slice(0, 76);
+      fields.push({ row: 10 + idx, col: 2, text: line, input: false });
+    });
+    fields.push({ row: 20, col: 60, text: (page + 1) * SQL_PAGE < ctx.resultRows.length ? 'More...' : 'Bottom', input: false });
+  }
+  fields.push({ row: 22, col: 2, text: 'F3=Exit', input: false });
+  return wrapPanel(fields, { row: SQL_CMD_ROW, col: 7 });
+}
+
+// ── Connection handling ───────────────────────────────────────────
+let connCount = 0;
+
+function handleConnection(socket) {
+  const id = ++connCount;
+  log(`[${id}] Connected from ${socket.remoteAddress}:${socket.remotePort}`);
+
+  let recvBuf = Buffer.alloc(0);
+  let currentRecord = null;
+  let negotiated = { ttype: false, newenv: false, binary: false, eor: false };
+  let screen = 'signon';   // 'signon' | a MENUS key | 'MESSAGES' | 'STUB'
+  let user = null;
+  let menuMessage = '';
+  let signonMessage = '';  // CPF error shown on the Sign On screen after a bad attempt
+  let messages = [];
+  let unreadCount = 0;
+  let returnTo = 'MAIN';   // menu to go back to from MESSAGES/STUB
+  let stubLabel = '';      // which option led to the current STUB screen
+  let cmdTarget = null;    // detail target: sysval name / profile name / object index
+  let usrprfPage = 0;      // WRKUSRPRF paging (Roll Up/Down); reset on entry
+  let sysvalPage = 0;      // WRKSYSVAL paging, same shape
+  let dsplibPage = 0;      // DSPJOB → library list → Display Library object paging
+  let navStack = [];       // back-navigation stack for the WRK/DSP security panels
+  let sqlResult = null;    // last STRSQL result: { cols, rows } or null
+  let sqlPage = 0;         // which ten-row page of it is showing
+  let rpgGen = null;       // running RPG program's generator (screen === 'RPG_RUN')
+  let rpgYield = null;     // its last-yielded { fields, cursor, inputMap }
+  let rpgPgmName = '';     // for the completion message once it ends
+
+  // Navigate one level deeper (remember where we came from), back up one
+  // level, or apply a parsed CL command's navigation result.
+  // Each stack frame remembers both the screen AND its cmdTarget, since a
+  // few Wave 3 panels (e.g. MBRPDM_LIST) are themselves scoped by cmdTarget
+  // and also drill into a detail screen that overwrites it — plain screen-id
+  // stacking would lose the scope on the way back out.
+  function goTo(next, target = null) { navStack.push({ screen, cmdTarget }); screen = next; cmdTarget = target; menuMessage = ''; if (next === 'USRPRF_LIST') usrprfPage = 0; if (next === 'SYSVAL_LIST') sysvalPage = 0; if (next === 'DSPLIB_OBJS') dsplibPage = 0; }
+  function goBack() {
+    const prev = navStack.pop();
+    screen = prev ? prev.screen : 'MAIN';
+    cmdTarget = prev ? prev.cmdTarget : null;
+    menuMessage = '';
+  }
+  function applyCommand(res) {
+    switch (res.type) {
+      case 'screen':   if (res.screen === 'SQL') sqlResult = null; goTo(res.screen); break;
+      case 'detail':   goTo(res.screen, res.target); break;
+      case 'messages': returnTo = screen; screen = 'MESSAGES'; break;
+      case 'signoff':  screen = 'signon'; user = null; messages = []; unreadCount = 0; navStack = []; break;
+      case 'error':    menuMessage = res.message; break;
+      case 'none':     break;
+      case 'call':     goTo('RPG_RUN'); startRpgProgram(res.pgm); break;
+    }
+  }
+
+  // Starts a real RPGLE program's interpreter generator and drives it
+  // to its first EXFMT yield. A program that ends (RETURN) before its
+  // first EXFMT -- not possible for ADVENTURE, but generically
+  // possible -- just returns immediately with a completion message.
+  function startRpgProgram(pgm) {
+    rpgPgmName = pgm;
+    const prog = PROGRAMS[pgm];
+    rpgGen = runProgram(prog.rpgAst, prog.ddsFormats);
+    const r = rpgGen.next();
+    if (r.done) { rpgGen = null; rpgYield = null; goBack(); menuMessage = `Program ${pgm} ended normally.`; return; }
+    rpgYield = r.value;
+  }
+
+  socket.on('data', chunk => { recvBuf = Buffer.concat([recvBuf, chunk]); processBuffer(); });
+  socket.on('end',   () => log(`[${id}] Disconnected`));
+  socket.on('error', err => log(`[${id}] Error: ${err.message}`));
+
+  // Initial negotiation, per RFC 4777 §3: NEW-ENVIRON + TERMINAL-TYPE
+  // before EOR/BINARY.
+  socket.write(Buffer.from([
+    IAC, DO, OPT_NEWENV,
+    IAC, DO, OPT_TTYPE,
+  ]));
+  debug(`[${id}] -> DO NEW-ENVIRON, DO TERMINAL-TYPE`);
+
+  function processBuffer() {
+    let i = 0;
+    while (i < recvBuf.length) {
+      const b = recvBuf[i];
+      if (b !== IAC) { accum(b); i++; continue; }
+
+      const cmd = recvBuf[i + 1];
+      if (cmd === undefined) break;
+      if (cmd === NOP) { i += 2; continue; }
+
+      if (cmd === EOR) {
+        i += 2;
+        if (currentRecord && currentRecord.length > 0) {
+          handleRecord(Buffer.from(currentRecord));
+          currentRecord = null;
+        }
+        continue;
+      }
+
+      if ([DO, DONT, WILL, WONT].includes(cmd)) {
+        if (i + 2 >= recvBuf.length) break;
+        const opt = recvBuf[i + 2];
+        handleTelnetCmd(cmd, opt);
+        i += 3;
+        continue;
+      }
+
+      if (cmd === SB) {
+        const seIdx = findSE(i + 2);
+        if (seIdx === -1) break;
+        handleSubneg(recvBuf.slice(i + 2, seIdx));
+        i = seIdx + 2;
+        continue;
+      }
+
+      if (cmd === IAC) { accum(0xFF); i += 2; continue; }
+      i += 2;
+    }
+    recvBuf = recvBuf.slice(i);
+  }
+
+  function accum(byte) { if (!currentRecord) currentRecord = []; currentRecord.push(byte); }
+
+  function findSE(start) {
+    for (let j = start; j < recvBuf.length - 1; j++) {
+      if (recvBuf[j] === IAC && recvBuf[j + 1] === SE) return j;
+    }
+    return -1;
+  }
+
+  function handleTelnetCmd(cmd, opt) {
+    debug(`[${id}] <- ${cmd === DO ? 'DO' : cmd === DONT ? 'DONT' : cmd === WILL ? 'WILL' : 'WONT'} 0x${opt.toString(16)}`);
+
+    if (opt === OPT_TTYPE && cmd === WILL) {
+      socket.write(Buffer.from([IAC, SB, OPT_TTYPE, ENV_SEND, IAC, SE]));
+      return;
+    }
+    if (opt === OPT_NEWENV && cmd === WILL) {
+      socket.write(Buffer.from([IAC, SB, OPT_NEWENV, ENV_SEND, IAC, SE]));
+      return;
+    }
+    if (opt === OPT_BINARY && cmd === WILL) { negotiated.binary = true; socket.write(Buffer.from([IAC, DO, OPT_BINARY])); }
+    if (opt === OPT_EOR    && cmd === WILL) { negotiated.eor = true;    socket.write(Buffer.from([IAC, DO, OPT_EOR])); }
+    maybeStart();
+  }
+
+  function handleSubneg(data) {
+    const opt = data[0];
+    if (opt === OPT_TTYPE && data[1] === ENV_IS) {
+      const ttype = data.slice(2).toString('ascii');
+      debug(`[${id}] <- TERMINAL-TYPE IS ${ttype}`);
+      negotiated.ttype = true;
+      // Ask for BINARY/EOR next, matching RFC 4777's recommended order.
+      socket.write(Buffer.from([IAC, DO, OPT_BINARY]));
+      socket.write(Buffer.from([IAC, DO, OPT_EOR]));
+      maybeStart();
+      return;
+    }
+    if (opt === OPT_NEWENV && data[1] === ENV_IS) {
+      debug(`[${id}] <- NEW-ENVIRON IS (${data.length} bytes)`);
+      negotiated.newenv = true;
+      maybeStart();
+    }
+  }
+
+  function maybeStart() {
+    if (negotiated.ttype && negotiated.newenv && negotiated.binary && negotiated.eor && !negotiated.started) {
+      negotiated.started = true;
+      setImmediate(() => sendScreen());
+    }
+  }
+
+  function sendScreen() {
+    let ds;
+    if (screen === 'signon') {
+      ds = screenSignon(signonMessage);
+    } else if (screen === 'MESSAGES') {
+      ds = screenMessages({ user, messages });
+    } else if (screen === 'STUB') {
+      ds = screenStub(stubLabel, { user });
+    } else if (screen === 'SYSVAL_LIST') {
+      ds = screenSysvalList({ message: menuMessage, page: sysvalPage });
+    } else if (screen === 'SYSVAL_DETAIL') {
+      ds = screenSysvalDetail(cmdTarget);
+    } else if (screen === 'SST_DETAIL') {
+      ds = screenSstDetail();
+    } else if (screen === 'ANZDFTPWD_DETAIL') {
+      ds = screenAnzdftpwdDetail();
+    } else if (screen === 'USRPRF_LIST') {
+      ds = screenUsrprfList({ message: menuMessage, page: usrprfPage });
+    } else if (screen === 'USRPRF_DETAIL') {
+      ds = screenUsrprfDetail(cmdTarget);
+    } else if (screen === 'OBJ_LIST') {
+      ds = screenObjList({ message: menuMessage });
+    } else if (screen === 'OBJ_DETAIL') {
+      ds = screenObjDetail(cmdTarget);
+    } else if (screen === 'NETA') {
+      ds = screenNetaDetail();
+    } else if (screen === 'REGINF') {
+      ds = screenReginfDetail();
+    } else if (screen === 'NETSVR') {
+      ds = screenNetsvrDetail();
+    } else if (screen === 'IFS_LIST') {
+      ds = screenIfsList({ message: menuMessage });
+    } else if (screen === 'PGMSTK_LIST') {
+      ds = screenPgmstkDetail();
+    } else if (screen === 'PGM_DETAIL') {
+      ds = screenPgmDetail(cmdTarget);
+    } else if (screen === 'JOBD_LIST') {
+      ds = screenJobdList({ message: menuMessage });
+    } else if (screen === 'JOBD_DETAIL') {
+      ds = screenJobdDetail(cmdTarget);
+    } else if (screen === 'AUTL_LIST') {
+      ds = screenAutlList({ message: menuMessage });
+    } else if (screen === 'AUTL_DETAIL') {
+      ds = screenAutlDetail(cmdTarget);
+    } else if (screen === 'ACTJOB_LIST') {
+      ds = screenActjobList({ message: menuMessage });
+    } else if (screen === 'SBS_LIST') {
+      ds = screenSbsList({ message: menuMessage });
+    } else if (screen === 'SPLF_LIST') {
+      ds = screenSplfList({ message: menuMessage });
+    } else if (screen === 'SPLF_DETAIL') {
+      ds = screenSplfDetail(cmdTarget);
+    } else if (screen === 'OUTQ_LIST') {
+      ds = screenOutqList({ message: menuMessage });
+    } else if (screen === 'JOB_DETAIL') {
+      ds = screenJobDetail(cmdTarget, user);
+    } else if (screen === 'USRJOB_LIST') {
+      ds = screenUsrjobList({ message: menuMessage, user });
+    } else if (screen === 'BCHJOB_LIST') {
+      ds = screenBchjobList({ message: menuMessage });
+    } else if (screen === 'LIB_LIST') {
+      ds = screenLibList({ message: menuMessage });
+    } else if (screen === 'LIB_DETAIL') {
+      ds = screenLibDetail(cmdTarget);
+    } else if (screen === 'LIBL_DETAIL') {
+      ds = screenLiblDetail();
+    } else if (screen === 'DSPJOB_OPTS') {
+      ds = screenDspjobOpts({ user, message: menuMessage });
+    } else if (screen === 'DSPJOB_LIBL') {
+      ds = screenDspjobLibl({ message: menuMessage });
+    } else if (screen === 'DSPLIB_OBJS') {
+      ds = screenDsplibObjs({ lib: cmdTarget, page: dsplibPage, message: menuMessage });
+    } else if (screen === 'OBJPDM_LIST') {
+      ds = screenObjpdmList(cmdTarget, { message: menuMessage });
+    } else if (screen === 'MBRPDM_LIST') {
+      ds = screenMbrpdmList(cmdTarget, { message: menuMessage });
+    } else if (screen === 'MBR_DETAIL') {
+      ds = screenMbrDetail(cmdTarget);
+    } else if (screen === 'SNDMSG_COMPOSE') {
+      ds = screenSndmsgCompose({ message: menuMessage });
+    } else if (screen === 'SQL') {
+      ds = screenSql({ message: menuMessage, resultCols: sqlResult && sqlResult.cols, resultRows: sqlResult && sqlResult.rows, resultPage: sqlPage });
+    } else if (screen === 'RPG_RUN') {
+      ds = wrapPanel(rpgYield.fields, rpgYield.cursor);
+    } else if (MENUS[screen]) {
+      ds = screenMenu(screen, { user, unreadCount, message: menuMessage });
+    } else {
+      screen = 'MAIN';
+      ds = screenMenu(screen, { user, unreadCount, message: '' });
+    }
+    sendRecord(ds, OPCODE_PUT_GET);
+    log(`[${id}] -> Screen: ${screen}`);
+  }
+
+  function sendRecord(data, opcode) {
+    const totalLen = data.length + 10;
+    const header = Buffer.from([
+      (totalLen >> 8) & 0xFF, totalLen & 0xFF,
+      GDS_HI, GDS_LO,
+      (FLOW_DISPLAY >> 8) & 0xFF, FLOW_DISPLAY & 0xFF,
+      4, 0x00, 0x00, opcode,
+    ]);
+    const payload = Buffer.concat([header, data]);
+    const escaped = [];
+    for (const b of payload) { escaped.push(b); if (b === IAC) escaped.push(IAC); }
+    escaped.push(IAC, EOR);
+    socket.write(Buffer.from(escaped));
+  }
+
+  function handleRecord(record) {
+    if (record.length < 10 || record[2] !== GDS_HI || record[3] !== GDS_LO) {
+      debug(`[${id}] Non-GDS or short record (${record.length} bytes) — ignoring`);
+      return;
+    }
+    const body = record.slice(10);
+    // Per lib5250 session.c tn5250_session_send_fields: cursor row+1,
+    // cursor col+1, THEN the AID byte, then SBA-prefixed field data.
+    if (body.length < 3) return;
+    const aid = body[2];
+    const fieldData = body.slice(3);
+    const runs = parseFieldRuns(fieldData);
+
+    debug(`[${id}] <- AID=0x${aid.toString(16)} screen=${screen} runs=${JSON.stringify(runs)}`);
+
+    if (screen === 'signon') {
+      // Field rows match screenSignon()'s layout: User at row 7, Password
+      // at row 8. A password is only validated when one is actually typed;
+      // a blank password still signs on as any user (long-standing mock
+      // convenience the IBM i walkthroughs rely on). With a password
+      // present the mock enforces it so the RACF PROBE has a real target.
+      const typedUser = fieldAt(runs, 7).toUpperCase();
+      const typedPass = fieldAt(runs, 8);
+
+      const accept = () => {
+        user = typedUser;
+        messages = seedMessages(user);
+        unreadCount = messages.length;
+        returnTo = 'MAIN';
+        screen = 'MAIN';
+        menuMessage = '';
+        signonMessage = '';
+      };
+
+      if (!typedUser) {
+        // Blank Enter just redraws the Sign On screen.
+      } else if (!typedPass) {
+        accept();
+      } else {
+        // Order mirrors a real IBM i Sign On: no-password first, then
+        // existence, then the password itself, then profile status. A
+        // pre-disabled profile yields CPF1394 (probe: FAILURE, keep going);
+        // only CPF1393 — disabled *by* failed attempts — would be a real
+        // lockout, which the mock does not model.
+        const prf = USRPRFS.find(p => p.name === typedUser);
+        if (prf && prf.pwdNone) {
+          signonMessage = `CPF1118 - No password associated with user ${typedUser}.`;
+        } else if (!(typedUser in CREDENTIALS)) {
+          signonMessage = `CPF1120 - User ${typedUser} does not exist.`;
+        } else if (CREDENTIALS[typedUser] !== typedPass) {
+          signonMessage = 'CPF1107 - Password not correct for user profile.';
+        } else if (prf && prf.status === '*DISABLED') {
+          signonMessage = `CPF1394 - User profile ${typedUser} cannot sign on.`;
+        } else {
+          accept();
+        }
+      }
+    } else if (screen === 'MESSAGES') {
+      // Viewing the messages marks them read, like real DSPMSG.
+      unreadCount = 0;
+      screen = returnTo;
+      menuMessage = '';
+    } else if (screen === 'STUB') {
+      screen = returnTo;
+      menuMessage = '';
+    } else if (screen === 'SNDMSG_COMPOSE') {
+      if (aid === AID_F3 || aid === AID_F12) {
+        goBack();
+      } else {
+        const toUser = fieldAt(runs, SNDMSG_TOUSER_ROW);
+        const text = fieldAt(runs, SNDMSG_TEXT_ROW);
+        if (!toUser || !text) {
+          menuMessage = 'Message text and To user are both required.';
+        } else {
+          const now = new Date();
+          messages.push({
+            from: user, date: now.toLocaleDateString('en-US'), time: now.toLocaleTimeString('en-US', { hour12: false }),
+            text: `(sent to ${toUser}): ${text}`,
+          });
+          unreadCount++;
+          goBack();
+          menuMessage = `Message sent to ${toUser}.`;
+        }
+      }
+    } else if (screen === 'SQL') {
+      if (aid === AID_F3 || aid === AID_F12) {
+        sqlResult = null;
+        goBack();
+      } else if (aid === AID_PGDN || aid === AID_PGUP) {
+        if (sqlResult) {
+          const last = Math.max(0, Math.ceil(sqlResult.rows.length / SQL_PAGE) - 1);
+          sqlPage = aid === AID_PGDN ? Math.min(sqlPage + 1, last) : Math.max(sqlPage - 1, 0);
+        }
+      } else {
+        const stmt = [fieldAt(runs, SQL_CMD_ROW), fieldAt(runs, SQL_CMD_ROW + 1), fieldAt(runs, SQL_CMD_ROW + 2)].filter(Boolean).join(' ');
+        if (stmt) {
+          const res = runSql(stmt);
+          if (res.error) { sqlResult = null; menuMessage = res.error; }
+          else { sqlResult = { cols: res.cols, rows: res.rows }; sqlPage = 0; menuMessage = `${res.rows.length} rows selected.`; }
+        }
+        // blank Enter just redraws the panel with whatever's already there
+      }
+    } else if (screen === 'RPG_RUN') {
+      const key = aid === AID_F3 ? 'F3' : aid === AID_F12 ? 'F12' : 'ENTER';
+      const values = {};
+      for (const [row, fieldName] of Object.entries(rpgYield.inputMap)) {
+        values[fieldName] = fieldAt(runs, parseInt(row, 10));
+      }
+      const r = rpgGen.next({ key, values });
+      if (r.done) {
+        rpgGen = null; rpgYield = null;
+        goBack();
+        menuMessage = `Program ${rpgPgmName} ended normally.`;
+      } else {
+        rpgYield = r.value;
+      }
+    } else if (screen === 'SYSVAL_LIST') {
+      const cmdLine = fieldAt(runs, LIST_CMD_ROW);
+      const pageCount = Math.max(1, Math.ceil(SYSVAL_KEYS.length / USRPRF_PAGE_SIZE));
+      if (aid === AID_F3 || aid === AID_F12) {
+        goBack();
+      } else if (cmdLine) {
+        applyCommand(runCommand(cmdLine));
+      } else if (aid === AID_PGDN) {
+        if (sysvalPage < pageCount - 1) sysvalPage++;
+      } else if (aid === AID_PGUP) {
+        if (sysvalPage > 0) sysvalPage--;
+      } else {
+        const pick = pickOption(runs, LIST_START_ROW, USRPRF_PAGE_SIZE);
+        if (pick) {
+          const name = SYSVAL_KEYS[sysvalPage * USRPRF_PAGE_SIZE + pick.index];
+          if (name) goTo('SYSVAL_DETAIL', name);
+        }
+      }
+    } else if (screen === 'USRPRF_LIST') {
+      // Paged list — own handler so Roll Up/Down work and a picked Opt maps
+      // through the page offset to the absolute USRPRFS index.
+      const cmdLine = fieldAt(runs, LIST_CMD_ROW);
+      const pageCount = Math.max(1, Math.ceil(USRPRFS.length / USRPRF_PAGE_SIZE));
+      if (aid === AID_F3 || aid === AID_F12) {
+        goBack();
+      } else if (cmdLine) {
+        applyCommand(runCommand(cmdLine));
+      } else if (aid === AID_PGDN) {
+        if (usrprfPage < pageCount - 1) usrprfPage++;
+      } else if (aid === AID_PGUP) {
+        if (usrprfPage > 0) usrprfPage--;
+      } else {
+        const pick = pickOption(runs, LIST_START_ROW, USRPRF_PAGE_SIZE);
+        if (pick) {
+          const absIdx = usrprfPage * USRPRF_PAGE_SIZE + pick.index;
+          if (USRPRFS[absIdx]) goTo('USRPRF_DETAIL', USRPRFS[absIdx].name);
+        }
+        // bare Enter with no option typed → redraw as-is
+      }
+    } else if (screen === 'DSPJOB_OPTS') {
+      // Display Job options screen (also the System Request -> 3 landing).
+      // Options 11 (call stack) and 13 (library list) are wired.
+      if (aid === AID_F3 || aid === AID_F12) {
+        goBack();
+      } else {
+        const sel = fieldAt(runs, 20).trim();
+        if (sel === '13')      goTo('DSPJOB_LIBL');
+        else if (sel === '11') goTo('PGMSTK_LIST');
+        else if (sel)          menuMessage = `Option ${sel} is not modelled — use 11 (call stack) or 13 (library list).`;
+        // blank → redraw
+      }
+    } else if (screen === 'DSPLIB_OBJS') {
+      // Paged object list for the library picked on DSPJOB_LIBL. 5 on a
+      // *USRPRF object drills into the same detail screen WRKUSRPRF uses.
+      const objs = libraryObjects(cmdTarget);
+      const cmdLine = fieldAt(runs, LIST_CMD_ROW);
+      const pageCount = Math.max(1, Math.ceil(objs.length / USRPRF_PAGE_SIZE));
+      if (aid === AID_F3 || aid === AID_F12) {
+        goBack();
+      } else if (cmdLine) {
+        applyCommand(runCommand(cmdLine));
+      } else if (aid === AID_PGDN) {
+        if (dsplibPage < pageCount - 1) dsplibPage++;
+      } else if (aid === AID_PGUP) {
+        if (dsplibPage > 0) dsplibPage--;
+      } else {
+        const pick = pickOption(runs, LIST_START_ROW, USRPRF_PAGE_SIZE);
+        if (pick) {
+          const o = objs[dsplibPage * USRPRF_PAGE_SIZE + pick.index];
+          if (o && o.type === '*USRPRF' && USRPRFS.some(p => p.name === o.obj)) {
+            goTo('USRPRF_DETAIL', o.obj);
+          }
+        }
+      }
+    } else if (LIST_META[screen]) {
+      const meta = LIST_META[screen];
+      const cmdLine = fieldAt(runs, LIST_CMD_ROW);
+      if (aid === AID_F3 || aid === AID_F12) {
+        goBack();
+      } else if (cmdLine) {
+        applyCommand(runCommand(cmdLine));
+      } else if (meta.detail) {
+        // Any non-blank Opt acts as 5=Display in the mock, except on
+        // WRKMBRPDM: 4=Run actually CALLs the member's backing program
+        // (if it has one -- runCommand's CPF9801 covers the rest, same
+        // as PAYRPT/LEAVCALC which are still source-preview-only).
+        const pick = pickOption(runs, LIST_START_ROW, meta.count(cmdTarget));
+        if (pick && screen === 'MBRPDM_LIST' && pick.opt === '4') {
+          const mbrs = SRCMEMBERS[cmdTarget] || [];
+          const mbr = mbrs[pick.index];
+          const pgmKey = `${cmdTarget.split('/')[0]}/${mbr ? mbr.name : ''}`;
+          applyCommand(runCommand(`CALL PGM(${pgmKey})`));
+        } else if (pick) {
+          const [scr, tgt] = meta.detail(pick.index, cmdTarget);
+          goTo(scr, tgt);
+        }
+        // bare Enter with no option typed → redraw as-is
+      }
+      // list-only panels (no meta.detail) ignore Opt and just redraw
+    } else if (DETAIL_SCREENS.has(screen)) {
+      // Enter, F3, or F12 all return to the panel we came from.
+      goBack();
+    } else if (MENUS[screen]) {
+      const menu = MENUS[screen];
+      const sel = fieldAt(runs, 22);
+
+      if ((aid === AID_F3 || aid === AID_F12) && menu.parent) {
+        screen = menu.parent;
+        menuMessage = '';
+      } else if (sel === '') {
+        // bare Enter — redraw the menu as-is
+      } else if (sel === '90') {
+        screen = 'signon';
+        user = null;
+        messages = [];
+        unreadCount = 0;
+        navStack = [];
+      } else if (/^\d+$/.test(sel)) {
+        const opt = menu.options.find(o => o.num === sel);
+        if (!opt) {
+          menuMessage = `Selection ${sel} is not valid.`;
+        } else if (opt.action === 'messages') {
+          returnTo = screen;
+          screen = 'MESSAGES';
+        } else if (opt.run) {
+          applyCommand(runCommand(opt.run));
+        } else if (opt.goto) {
+          screen = opt.goto;
+          menuMessage = '';
+        } else {
+          returnTo = screen;
+          stubLabel = opt.label.toUpperCase();
+          screen = 'STUB';
+        }
+      } else {
+        // Non-numeric input on the command line — run it as a CL command.
+        applyCommand(runCommand(sel));
+      }
+    }
+    sendScreen();
+  }
+}
+
+function log(msg)   { console.log(`${new Date().toISOString()} [INFO ] ${msg}`); }
+function debug(msg) { if (LOG) console.log(`${new Date().toISOString()} [DEBUG] ${msg}`); }
+
+const server = net.createServer(handleConnection);
+server.listen(PORT, '0.0.0.0', () => {
+  log(`Mock AS/400 (TN5250) listening on 0.0.0.0:${PORT}`);
+});
+
+// The ADMIN HTTP instance (ports 2001/2010), sharing this box's profiles.
+require('./mock-as400-httpadmin').start({
+  sysname: SYSNAME, usrprfs: USRPRFS, credentials: CREDENTIALS, log,
+});
+
+// The FTP server (21 and 990 on a real box, 2121 and 2990 here), same profiles.
+require('./mock-as400-ftp').start({
+  sysname: SYSNAME, usrprfs: USRPRFS, credentials: CREDENTIALS, log,
+});
+
+// The server mapper (449 on a real box, 4449 here) and the sign-on server
+// (8476, and 9476 over TLS when a cert is present), for the IBM i Host Server
+// Recon probe. Nothing else a host server does is modelled.
+// It reports this box's own QPWDLVL, so the sign-on server and WRKSYSVAL agree.
+require('./mock-as400-hostsvr').start({ log, pwdLevel: parseInt(SYSVALS.QPWDLVL.value, 10) });
+

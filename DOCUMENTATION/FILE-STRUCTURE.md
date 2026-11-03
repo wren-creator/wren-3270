@@ -1,0 +1,289 @@
+# WebTerm/3270 — File Structure
+
+```
+Bridge_server/
+│
+│  ── GitHub ────────────────────────────────────────────────────────
+│
+├── .github/
+│   ├── workflows/
+│   │   └── ci.yml                        CI — syntax check + Docker build on push
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.yml
+│   │   └── feature_request.yml
+│   └── pull_request_template.md
+│
+├── .gitignore                            Excludes: node_modules, .env, certs, logs
+├── .dockerignore
+├── .env.example                          Copy to .env and configure
+│
+│  ── Documentation ─────────────────────────────────────────────────
+│
+├── README.md                             Overview, quick start, architecture
+├── INSTALL.md                            Docker Desktop setup: prebuilt images or build from source
+├── AI-notes.md                           AI provider options and approval guidance
+├── FILE-STRUCTURE.md                     This file
+├── MOCK-SERVERS.md                       Mock LPAR daemon reference
+├── SBOM.md                               Software bill of materials
+├── TROUBLESHOOTING.md                    Known issues and diagnostic procedures
+│
+│  ── Bridge server ──────────────────────────────────────────────────
+│
+├── server.js                             WebSocket + HTTP server entry point
+│                                           · http://localhost:8080  → tn3270-client.html
+│                                           · http://localhost:8080/demo  → demo page
+│                                           · http://localhost:8080/copilot → standalone copilot
+│                                           · ws://localhost:8080  → WebSocket bridge
+│                                           · GET/POST/DELETE /api/profiles (lpars.txt CRUD)
+│                                           · GET/POST/DELETE /api/macros (macros.json CRUD)
+│                                           · GET/POST /api/ssh-hosts (ssh-hosts.txt CRUD)
+│                                           · WS first-message type:"ssh.connect" → handleSshConnect()
+├── routes/
+│   ├── traffic.js                        GET /api/traffic, DELETE /api/traffic/csv — traffic log CRUD
+│   ├── logs.js                           GET /api/logs — bridge log tail
+│   ├── profiles.js                       GET/POST/DELETE /api/profiles — lpars.txt CRUD
+│   ├── ssh-hosts.js                      GET/POST /api/ssh-hosts — ssh-hosts.txt CRUD
+│   ├── macros.js                         GET/POST/DELETE /api/macros — macros.json CRUD + library guard (403)
+│   ├── recording.js                      GET/POST /api/recordings — session recording files
+│   ├── security.js                       POST /api/security — security tool server-side helpers
+│   ├── scope.js                          GET /api/scope, POST /api/scope/check — RoE scope guard status and gate
+│   ├── smapi-audit.js                    POST /api/smapi-audit — z/VM SMAPI exposure probe (scope-gated)
+│   ├── negotiate.js                      GET /api/negotiate — TLS cipher, cert chain, LU fixation, TN3270E log per session
+│   └── sessions.js                       GET /api/sessions, POST /api/session-kill — Session Manager: list/terminate running sessions
+├── config.js                             Profile loaders: lpars.txt (loadLparFile) + ssh-hosts.txt (loadSshHostsFile)
+├── logger.js                             Structured logger (LOG_LEVEL env var)
+├── package.json                          Deps: ws, ssh2 (production); nodemon (dev)
+│
+│  ── Startup scripts ─────────────────────────────────────────────
+│
+├── start.sh                              Linux/Mac start script
+├── start.ps1                             Windows PowerShell start script
+│
+│  ── TN3270 protocol engine ─────────────────────────────────────────
+│
+├── tn3270/
+│   ├── session.js                        Full TN3270(E) protocol implementation
+│   │                                       · Telnet negotiation (DO/WILL/WONT/DONT)
+│   │                                       · TN3270E sub-negotiation + LU binding
+│   │                                       · tn3270eLog[] — decoded trace of every DEVICE-TYPE/FUNCTIONS exchange
+│   │                                       · WSF QueryReply handshake (z/VM)
+│   │                                       · 3270 datastream parser (SF/SBA/IC/RA/EUA/SFE)
+│   │                                       · 14-bit SBA address decode/encode
+│   │                                       · IND$FILE WSF transfer (upload + download)
+│   │                                       · Screen buffer → JSON, AID key encoding
+│   │                                       · NONDISPLAY field detection
+│   └── ebcdic.js                         EBCDIC ↔ ASCII (CP037 full table)
+│
+│  ── Macro engine ───────────────────────────────────────────────────
+│
+├── macros/
+│   ├── engine.js                         Record + replay state machine
+│   │                                       · Screen-synchronised (waits for kbd unlock)
+│   │                                       · Ops: aid / type / wait / branch / comment
+│   │                                       · Pause / resume / stop
+│   ├── handler.js                        WebSocket router for macro.* messages
+│   ├── store.js                          Read/write macros.json
+│   ├── macro-client.js                   Browser-side macro UI (legacy — see public/js/macros.js)
+│   ├── server-integration.js             Snippet: wiring into server.js
+│   ├── library/                          Saved macro definitions (gitignored personal macros)
+│   ├── TSO ISPF Login.macro.json         Example macro
+│   └── SDSF Job Query.macro.json         Example macro
+│
+│  ── AI Copilot ─────────────────────────────────────────────────────
+│
+├── copilot/
+│   │
+│   ├── router.js                         Reads COPILOT_PROVIDER, loads provider module
+│   ├── copilot-handler.js                WebSocket handler for copilot.chat messages
+│   │
+│   ├── default/                          ← ACTIVE BY DEFAULT
+│   │   └── anthropic-default.js          Anthropic API (Claude Sonnet/Opus/Haiku)
+│   │                                       Requires: ANTHROPIC_API_KEY
+│   │
+│   └── auxiliary/                        ← REQUIRES IT APPROVAL OR EXTRA SETUP
+│       ├── README.md                     Setup guide for all providers
+│       ├── github-models.js              GitHub Models API (Claude via GitHub Copilot licence)
+│       ├── azure-openai.js               Azure OpenAI (data stays in corporate tenant)
+│       ├── openai.js                     OpenAI direct API
+│       ├── gemini.js                     Google Gemini API
+│       └── ollama.js                     Local Ollama (fully on-premises, zero external calls)
+│
+│  ── Runtime config (bind-mounted — no Docker rebuild needed) ────────
+│
+├── lpars.txt                             LPAR profiles: id, name, host, port, tls, type, model
+├── lpars.txt.bak                         Backup of lpars.txt
+├── macros.json                           Saved macros (CRUD via /api/macros)
+├── ssh-hosts.txt                         SSH host profiles: id, name, host/IP, port, user
+│                                           · Password is never stored — prompted at connect time
+│                                           · Hot-reloaded by POST /api/ssh-hosts (no restart needed)
+│                                           · Same format/pattern as lpars.txt
+│
+│  ── Browser client ─────────────────────────────────────────────────
+│
+├── public/
+│   │
+│   ├── tn3270-client.html                Main UI shell (~550 lines HTML only)
+│   │                                       · 3270 terminal (80×24 / 132×27)
+│   │                                       · Multi-session tabs
+│   │                                       · LPAR dropdown (all profiles + status)
+│   │                                       · Left sidebar: LPAR Profiles / Macros / Screen History
+│   │                                       · Right panel — 5 tabs:
+│   │                                           Settings · Keys · Transfer · ⚙ AI · ⬡ Assist
+│   │                                       · PF1–PF12, PA1–PA2, SysReq, Clear, Reset, Home toolbar
+│   │                                       · 5 colour themes (green/blue/amber/white/teal)
+│   │                                       · OIA status bar with BH watermark
+│   │                                       · Connect modal (host/port/TLS/TN3270E/model)
+│   │                                       · Ctrl+K → AI Assist tab
+│   │                                       · Ctrl+T → New Session
+│   │                                       · Ctrl+B → Toggle Sidebar
+│   │
+│   ├── css/
+│   │   └── terminal.css                  All styles: layout, themes, CRT effects, OIA, panels
+│   │
+│   └── js/                              Modular client JS (loaded in order by HTML)
+│       ├── state.js                      Shared globals: session map, cursor, xfer state,
+│       │                                   activeSshSession, secUnlocked, AI provider constants, BRIDGE_URL
+│       ├── copilot.js                    AI Assist panel: chat, provider config, model list
+│       ├── xfer.js                       File transfer: IND$FILE (z/VM), TSO EDIT upload,
+│       │                                   dataset listing, local file browser (File System API)
+│       ├── macros.js                     Macro CRUD UI, import/export JSON, run from sidebar
+│       │                                   · Security macros filtered from list when panel locked
+│       │                                   · Recorder save dialog: 🔒 checkbox routes to macros-security.json
+│       ├── profiles.js                   LPAR profile CRUD, sidebar list, management panel
+│       ├── terminal.js                   Screen rendering, keyboard handler, cursor, field tracking
+│       ├── settings.js                   Theme, zoom, scanlines, cursor blink, password masking
+│       ├── ui.js                         Layout: sidebar toggle, panel tabs, menu, modals
+│       ├── ssh.js                        SSH terminal integration
+│       │                                   · sshSessions registry (Map<sid, session>)
+│       │                                   · xterm.js Terminal instance per session
+│       │                                   · openSshConnect() modal with host dropdown (ssh-hosts.txt)
+│       │                                   · sshConnect() → WebSocket → type:"ssh.connect"
+│       │                                   · sshActivateTab() / sshCloseTab() — tab lifecycle
+│       │                                   · sshSaveHost() — saves new entry via POST /api/ssh-hosts
+│       │                                   · Resize (FitAddon) on window resize
+│       │                                   · Split-screen helpers: sshRenderSplitPane / sshClearSplitPane
+│       ├── zlinux.js                     Z/LINUX ON Z/VM panel driver: CP privilege check, console + #CP escape,
+│       │                                   virtual network audit, directory review, SMAPI check
+│       ├── zlinux-parse.js               Pure classifiers + findings for the z/Linux checks (unit-tested)
+│       ├── zlinux-directory.js           Pure z/VM directory export review: IUCV, LOGONBY, passwords (unit-tested)
+│       ├── probe.js                      RACF Auto-Probe: wordlist credential enumeration against TSO/z/VM/CICS logon screens
+│       ├── fuzz.js                       Protocol Fuzzer: AID Sweep, Field Overflow, Order Injection, SBA Mutation
+│       ├── db2.js                        DB2 Security Tools (Wave 10):
+│       │                                   · Subsystem Scanner — DSN SYSTEM() wordlist probe, version from banner
+│       │                                   · RACF-DB2 Auth Scan — SEARCH CLASS for DSNR/MDSNPN/MDSNTB/MDSNSP
+│       │                                   · Permission Probe — RLIST DSNR BATCH/DB2CALL/DDF/SPACENAM, PUBLIC flagging
+│       ├── recon.js                      RACF Recon Tools (Wave 11):
+│       │                                   · RACF Settings Analyzer — SETROPTS LIST, password policy + class gap analysis
+│       │                                   · RACF User/Group Enumerator — SEARCH CLASS(USER/GROUP), paginates MORE
+│       │                                   · Dataset Recon Scanner — LISTCAT LEVEL() wordlist, sensitivity flagging
+│       │                                   · Encryption At Rest Audit Scanner — LISTCAT ENT() ALL, DFSMS key label detection
+│       ├── transit.js                    In-Transit Encryption Monitor (Wave 12):
+│       │                                   · Session TLS banner (PLAIN/TLSv1.2/TLSv1.3)
+│       │                                   · Traffic log with per-entry TLS state, plaintext exposed bytes
+│       │                                   · IND$FILE transfer entries tagged with TLS state
+│       ├── syscheck.js                   System Access Checks (Wave 13):
+│       │                                   · APF Library Scanner — LISTAPF + LISTDSD, unprotected = CRITICAL
+│       │                                   · PARMLIB Access Check — ALLOC SHR per member, non-destructive
+│       ├── cics.js                       CICS Transaction Scanner (Wave 13):
+│       │                                   · Probes transaction IDs via DFHAC2001 side-channel
+│       │                                   · ACCESSIBLE / DENIED (exists, blocked) / NOT_FOUND classification
+│       ├── negotiate.js                  TN3270E Negotiation Analyzer (Waves 14–15):
+│       │                                   · Fetches /api/negotiate — cipher, TLS version, cert chain, session reuse
+│       │                                   · LU Name Fixation — compares requested vs granted LU (MEDIUM if ACCEPTED)
+│       │                                   · TN3270E Handshake Trace — decoded DEVICE-TYPE + FUNCTIONS exchanges
+│       ├── sdsf.js                       SDSF & STC Tools (Wave 14):
+│       │                                   · SDSF Job Scanner — passive screen parse, flags system STCs visible from low-priv
+│       │                                   · STC Profile Scanner — RLIST STARTED per STC, ICH10006I = HIGH
+│       ├── walkthrough.js                Guided scenario walkthroughs (security + general), overlay engine
+│       ├── session-manager.js            Session Manager popup (Session menu → Session Manager…):
+│       │                                   · Lists every session the bridge holds — host, profile, duration, idle, state
+│       │                                   · Per-row Kill → POST /api/session-kill; flags rows owned by this browser
+│       │                                   · Auto-refreshes every 3s while open
+│       └── main.js                       App init, WebSocket lifecycle, session tab management
+│
+│  ── Mock LPAR daemons ──────────────────────────────────────────────
+│
+└── mock-lpar/
+    ├── mock-lpar.js                      TN3270 mock z/OS server (port 3270)
+    │                                       · Screens: Logon → ISPF → Edit / SDSF
+    ├── mock-zvm.js                       TN3270 mock z/VM server (port 3271)
+    │                                       · Screens: CP Logon → CP → CMS → FILELIST / RDRLIST / XEDIT
+    ├── zvm-linux.js                      Mock z/VM Linux guests (LNXGST01 class G, LNXGST02 class ABEG), #CP escape,
+    │                                       gated CP queries, VSWITCH/VMLAN (called from mock-zvm.js, unit-tested)
+    ├── Dockerfile                        Container for mock z/OS LPAR
+    ├── Dockerfile.mock-zvm               Container for mock z/VM LPAR
+    └── README.md                         Mock daemon setup + demo script
+```
+
+---
+
+## Copilot provider selection
+
+```
+.env                          router.js loads...
+─────────────────────────────────────────────────────────────────────
+COPILOT_PROVIDER=anthropic    copilot/default/anthropic-default.js  ← DEFAULT
+COPILOT_PROVIDER=github       copilot/auxiliary/github-models.js
+COPILOT_PROVIDER=azure        copilot/auxiliary/azure-openai.js
+COPILOT_PROVIDER=openai       copilot/auxiliary/openai.js
+COPILOT_PROVIDER=gemini       copilot/auxiliary/gemini.js
+COPILOT_PROVIDER=ollama       copilot/auxiliary/ollama.js
+```
+
+One line in `.env`, restart the bridge — the browser UI is unaffected.
+
+---
+
+## Full data flow
+
+```
+Browser  (public/tn3270-client.html + public/js/*.js)
+    │  WebSocket JSON  ws://localhost:8081
+    │
+    │  type:"connect"    ─────────────────────────────────────────────────┐
+    │  type:"ssh.connect" ─────────────────────────────────────┐         │
+    ▼                                                           │         │
+server.js  (HTTP :8080 / WS :8081)                             │         │
+    ├── handleSshConnect() ─── ssh2 Client ── TCP :22 ──► SSH host       │
+    │       (xterm PTY pipe; one WS per SSH session)           │         │
+    ├── tn3270/session.js ──────────────────────── TCP :23/:992 ──► LPAR ┘
+    │                                               (or mock-lpar/*.js)
+    ├── macros/handler.js
+    │       └── macros/engine.js
+    │               └── macros/store.js  (macros.json)
+    └── copilot/copilot-handler.js
+            └── copilot/router.js
+                    ├── copilot/default/anthropic-default.js   ──► api.anthropic.com
+                    ├── copilot/auxiliary/github-models.js     ──► models.inference.ai.azure.com
+                    ├── copilot/auxiliary/azure-openai.js      ──► your-resource.openai.azure.com
+                    ├── copilot/auxiliary/openai.js            ──► api.openai.com
+                    ├── copilot/auxiliary/gemini.js            ──► generativelanguage.googleapis.com
+                    └── copilot/auxiliary/ollama.js            ──► localhost:11434
+```
+
+---
+
+## Files not committed to Git
+
+| Path | Reason |
+|------|--------|
+| `.env` | Real credentials and LPAR IPs — use `.env.example` as template |
+| `node_modules/` | Regenerated by `npm install` |
+| `macros/library/*.macro.json` | Personal macros (example macros are kept at root of macros/) |
+| `certs/` | TLS certificates — never commit private keys |
+| `*.log` | Runtime logs |
+| `backup-files/` | Local dev backups — not tracked |
+
+---
+
+## Bind-mounted files (Docker)
+
+These files are mounted directly into the container — changes take effect immediately without a rebuild:
+
+| File | Purpose |
+|------|---------|
+| `lpars.txt` | LPAR profiles |
+| `macros.json` | Saved macros |
+| `ssh-hosts.txt` | SSH host profiles (created automatically if missing) |
+
+> All three files must exist as files on the host before `docker compose up` or Docker will create them as directories, breaking the bind mount.

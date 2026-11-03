@@ -1,0 +1,4522 @@
+import { esc } from './utils.js';
+
+// Wave 9 — Guided Scenario Walkthroughs
+// Option B: narrated steps with optional one-click auto-actions.
+// Each scenario is self-contained; steps reference element IDs to highlight
+// and optional JS function names to call via the "Do it for me" button.
+
+const _WALKTHROUGHS = [
+
+  // ════════════════════════════════════════════════════════════════════
+  // GENERAL — accessible from Help menu, no password required
+  // ════════════════════════════════════════════════════════════════════
+
+  // ── General 1: First Connection ────────────────────────────────────
+  {
+    id:       'first-connection',
+    category: 'general',
+    title:    'First Connection to a Session',
+    desc:     'Add a session profile and connect to a mainframe for the first time.',
+    steps: [
+      {
+        title: 'Open the connection menu',
+        body:  'Click ⊕ Connect in the top-right status area. A dropdown shows saved profiles. For a new system choose "New session / manual connect…" at the bottom.',
+        highlight: 'sessionDropdownBtn',
+        autoFn: 'toggleSessionDropdown',
+        autoLabel: 'Open menu for me',
+      },
+      {
+        title: 'Enter the host details',
+        body:  'In the connection dialog, fill in: Hostname/IP (or container name if using Docker), Port (23 for standard TN3270, 992 for TLS), and a Session Name you will recognise. LU Name is optional — leave blank unless your LPAR requires a specific terminal binding.',
+        highlight: 'connHost',
+        autoFn: null,
+      },
+      {
+        title: 'Save as a profile',
+        body:  'Check "Save as profile" before connecting. This writes the LPAR to lpars.txt and adds it to the sidebar and the ⊕ dropdown for future use. Profiles survive restarts — no re-entering connection details each time.',
+        highlight: 'sidebarSessionList',
+        autoFn: null,
+      },
+      {
+        title: 'Connect',
+        body:  'Click Connect. The OIA bar at the bottom of the terminal updates: the connection dot turns green, the LU field fills in, and the host\'s welcome screen or logon prompt appears. If you see "NOT CONNECTED" after a few seconds, check that the host is reachable on the configured port.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Reconnect quickly next time',
+        body:  'Saved profiles appear in the ⊕ dropdown and in the sidebar under Session Profiles. Click any profile to open a new session directly — no dialog required. You can edit or delete profiles from the sidebar context menu.',
+        highlight: 'sidebarSessionList',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── General 2: Multi-Session Tabs ──────────────────────────────────
+  {
+    id:       'multi-session',
+    category: 'general',
+    title:    'Multi-Session Tabs',
+    desc:     'Open and manage multiple simultaneous 3270 sessions in the same browser window.',
+    steps: [
+      {
+        title: 'Open a second session',
+        body:  'Click the ＋ button in the session tab bar (or File → New Session). A new tab appears labelled "Not connected". Each tab is a completely independent TN3270 session — different LPARs, different LU names, different screen state.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Connect the new tab',
+        body:  'With the new tab active, click ⊕ Connect and choose a profile (or enter details manually). You can connect two tabs to the same LPAR — they negotiate separate LU bindings.',
+        highlight: 'sessionDropdownBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Switch between sessions',
+        body:  'Click any session tab to bring it forward. The terminal, OIA bar, and keyboard focus all switch to that session. The other sessions remain connected and continue receiving host data in the background.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Close a session',
+        body:  'Click the ✕ on a tab to close it. This disconnects the TN3270 session cleanly. The remaining tabs are unaffected.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── General 3: Split-Screen Mode ───────────────────────────────────
+  {
+    id:       'split-screen',
+    category: 'general',
+    title:    'Split-Screen Mode',
+    desc:     'View two live sessions side by side to compare screens or coordinate actions.',
+    steps: [
+      {
+        title: 'Open two sessions',
+        body:  'Split-screen requires at least two connected sessions. If you only have one, open a second tab (＋ in the tab bar) and connect it. Both sessions must be connected for split mode to be useful.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Enable split-screen',
+        body:  'Click the ⊞ icon in the session tab bar. The terminal area divides into two panes side by side. The active session appears on the left; the most recently used other session appears on the right.',
+        highlight: 'tabSplitBtn',
+        autoFn: 'toggleSplitMode',
+        autoLabel: 'Enable split for me',
+      },
+      {
+        title: 'Interact with each pane',
+        body:  'Click inside either pane to give it keyboard focus. The OIA bar at the bottom reflects the focused pane\'s connection status. Keystrokes go to whichever pane is focused.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Exit split-screen',
+        body:  'Click ⊞ again to return to single-pane mode. The active pane\'s session becomes the foreground session. Both sessions remain connected.',
+        highlight: 'tabSplitBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── General 4: Macro Recording + Playback ──────────────────────────
+  {
+    id:       'macros',
+    category: 'general',
+    title:    'Macro Recording + Playback',
+    desc:     'Record a sequence of terminal interactions and replay it on demand.',
+    steps: [
+      {
+        title: 'Start recording',
+        body:  'In the sidebar under Macros, click the red ● REC button. A floating indicator appears at the bottom of the screen showing a step counter. Every keystroke, field edit, and AID key you send is now being recorded.',
+        highlight: 'sidebarMacroList',
+        autoFn: null,
+      },
+      {
+        title: 'Perform your workflow',
+        body:  'Use the terminal normally — type, press PF keys, navigate screens. The recorder captures each action as a step. The step counter in the floating indicator updates in real time.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Stop and save',
+        body:  'Click STOP in the floating indicator. A dialog asks for a name and optional description. Enter them and click Save — the macro is immediately added to the sidebar macro list and written to macros.json.',
+        highlight: 'macroRecIndicator',
+        autoFn: null,
+      },
+      {
+        title: 'Play back the macro',
+        body:  'Click the macro name in the sidebar. Playback is screen-synchronised — it waits for the keyboard to unlock after each step before sending the next, so it adapts to host response time rather than using fixed timers.',
+        highlight: 'sidebarMacroList',
+        autoFn: null,
+      },
+      {
+        title: 'Edit or export',
+        body:  'Click ＋ in the Macros header (or Macros menu) to open the macro editor. You can fine-tune step text, add wait conditions, or branch on screen content. Use Import/Export JSON to share macros between instances.',
+        highlight: 'sidebarMacroList',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── General 5: File Transfer (IND$FILE) ────────────────────────────
+  {
+    id:       'file-transfer',
+    category: 'general',
+    title:    'File Transfer (IND$FILE)',
+    desc:     'Upload or download files between the browser and the mainframe using IND$FILE.',
+    steps: [
+      {
+        title: 'Open the Transfer panel',
+        body:  'Click the Transfer tab in the right panel (or Transfer menu → Send/Receive File). The panel shows upload and download sections for both z/OS and z/VM.',
+        highlight: null,
+        autoFn: '_wtOpenXfer',
+        autoLabel: 'Open Transfer panel for me',
+      },
+      {
+        title: 'Uploading to z/OS (TSO)',
+        body:  'In the Upload section, select your local file and enter the target TSO dataset name (e.g. USER.DATA.TXT). Click Upload. The bridge uses TSO EDIT to write the file. The host must be at a TSO READY prompt — not inside ISPF.',
+        highlight: 'panelXfer',
+        autoFn: null,
+      },
+      {
+        title: 'Uploading to z/VM (CMS)',
+        body:  'For z/VM, enter the target filename in CMS format (FILENAME FILETYPE A). The bridge uses IND$FILE WSF commands. The host must be at the CMS READY prompt.',
+        highlight: 'panelXfer',
+        autoFn: null,
+      },
+      {
+        title: 'Downloading from z/VM',
+        body:  'Enter the CMS filename you want to retrieve and click Download. The file is streamed back through the TN3270 session and downloaded directly in the browser. z/OS download uses INDFILE GET.',
+        highlight: 'panelXfer',
+        autoFn: null,
+      },
+      {
+        title: 'Troubleshooting',
+        body:  'If transfer hangs: confirm the host is at a READY prompt (not inside an application). Check the Proxy Viewer (Security panel → Proxy Viewer) for bridge-side errors. TLS sessions on port 992 work identically to port 23 for file transfer.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── General 6: AI Assist ───────────────────────────────────────────
+  {
+    id:       'ai-assist',
+    category: 'general',
+    title:    'AI Assist',
+    desc:     'Get screen-aware AI help while working in the terminal.',
+    steps: [
+      {
+        title: 'Configure a provider',
+        body:  'Click the ⚙ AI tab in the right panel. Select your provider (Anthropic, OpenAI, Gemini, GitHub Models, or Ollama) and enter the corresponding API key. The model list loads automatically once the key is accepted.',
+        highlight: null,
+        autoFn: '_wtOpenAIConfig',
+        autoLabel: 'Open AI config for me',
+      },
+      {
+        title: 'Open the Assist panel',
+        body:  'Click the ⬡ Assist tab or press Ctrl+K. The panel shows a chat input at the bottom. The AI has access to the current screen text — you do not need to paste it manually.',
+        highlight: null,
+        autoFn: 'menuOpenCopilot',
+        autoLabel: 'Open AI Assist for me',
+      },
+      {
+        title: 'Ask a question',
+        body:  'Type any question about what you see on screen: "What does this ISPF menu option do?", "Write a JCL job to copy this dataset", "What does ICH70002I mean?". Press Enter or click the send button.',
+        highlight: 'copilot-input',
+        autoFn: null,
+      },
+      {
+        title: 'Screen context is automatic',
+        body:  'Every message you send includes the current screen text as context. You do not need to describe what you are looking at — just ask. If you navigate to a new screen and ask a follow-up, the updated screen is included.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Switch providers',
+        body:  'Return to ⚙ AI at any time to switch providers or models. Ollama runs locally with zero external API calls — useful for air-gapped environments or when you need to keep mainframe screen content off external services.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ════════════════════════════════════════════════════════════════════
+  // SECURITY — shown in Security panel, requires password
+  // ════════════════════════════════════════════════════════════════════
+
+  // ── Scenario 1: RACF Credential Discovery ─────────────────────────
+  {
+    id:       'racf-probe',
+    category: 'security',
+    title:    'RACF Credential Discovery',
+    desc:     'Iterates a credential wordlist against a TSO, z/VM, CICS, z/TPF, or IBM i (TN5250) logon screen and classifies each response.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a host and navigate to the logon screen — TSO/E LOGON, z/VM CP LOGON, CICS CESN, the z/TPF operator logon (OPER ID ==>), or the IBM i Sign On screen (User / Password). Do not log in yet. The probe needs the logon screen to be the active screen when it starts.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar at the bottom of the terminal. Enter the security password (default: 2970) to reveal the Security tab and its tools.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the RACF PROBE section',
+        body:  'Scroll down in the Security panel to the RACF PROBE section. The probe auto-detects which subsystem logon screen is active — you do not need to select TSO vs z/VM manually.',
+        highlight: 'probeWordlist',
+        autoFn: null,
+      },
+      {
+        title: 'Load the wordlist',
+        body:  'Two buttons above the box. "Load defaults" fills it with the built-in default credential pairs for the detected subsystem. "Load list" reads ~/mainframe/default-accounts.txt on the bridge host (one userid:pass per line, # comments allowed) and uses it verbatim. Either way each line ends up as USER,PASS in the box — edit it freely or paste your own. On the z/TPF logon screen there is also a "Load default-account list" button in the z/TPF CONSOLE section that does the same as "Load list".',
+        highlight: 'probeWordlist',
+        autoFn: 'probeLoadDefaults',
+        autoLabel: 'Load defaults for me',
+      },
+      {
+        title: 'Set the inter-attempt delay',
+        body:  'Keep the delay at 1500 ms or higher. RACF enforces attempt thresholds — going too fast risks locking out accounts before you find valid credentials. On a production system, 3000 ms or more is safer.',
+        highlight: 'probeDelay',
+        autoFn: null,
+      },
+      {
+        title: 'Keep going after a match (optional)',
+        body:  'By default the probe stops at the first SUCCESS. Check "Keep going after a match" to have it sign that account off instead (LOGOFF HOLD / SIGNOFF / #CP LOGOFF / CESF LOGOFF / PF3, per subsystem), wait to land back on the logon screen, and continue the wordlist in order — enumerating every valid default credential rather than just the first. On z/OS the probe sends LOGOFF HOLD, not bare LOGOFF, so the terminal stays on VTAM and the logon panel redisplays on the same session; bare LOGOFF would drop to VTAM or an installation session manager and stall the sweep. LOCKOUT still stops the run.',
+        highlight: 'probeEnumAll',
+        autoFn: null,
+      },
+      {
+        title: 'Start the probe',
+        body:  'Click ▶ START. For each credential pair the probe types the username, tabs to the password field, types the password, and presses Enter. It waits for the screen to update and then classifies the response as SUCCESS, EXISTS, FAILURE, or LOCKOUT.',
+        highlight: 'probeStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the live results',
+        body:  'Each row appears as responses arrive. SUCCESS (green) — credentials accepted. EXISTS (amber) — the userid is real but this password did not work (a user-enumeration hit); the probe records it and keeps going. FAILURE (grey) — no such userid. LOCKOUT (red) — RACF suspended the user; the probe stops immediately. A plain run stops at the first SUCCESS; with "Keep going after a match" checked, every valid pair shows green and the final status lists both the valid credentials and every profile the run confirmed exists. On the mock fleet: mock z/OS accepts IBMUSER/SYS1 (and locks the account after 3 misses); mock z/VM accepts OPERATOR/OPERATOR, MAINT/MAINT and MAINT730/MAINT730 while the other z/VM defaults come back FAILURE and base CP has no attempt lockout; z/TPF (TPFOP01/TPF1) succeeds on the first try; IBM i accepts QSECOFR/QSECOFR and QYSPJ/QYSPJ (a planted backdoor), and against the full Q* list every real profile shows EXISTS even when no password works — the Sign On CPF codes (CPF1120 = no such user, CPF1107/CPF1118/CPF1394 = user exists) are the oracle.',
+        highlight: 'probeResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Export the results',
+        body:  'Click ↓ Export CSV to download the full result log. The CSV includes the credential pair, classification, and a timestamp — ready to paste into a pentest report.',
+        highlight: 'probeResultsTable',
+        autoFn: 'probeExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Scenario 2: MITM Credential Intercept ─────────────────────────
+  {
+    id:       'mitm-intercept',
+    category: 'security',
+    title:    'MITM Credential Intercept',
+    desc:  'Hold an outbound AID record mid-flight, read plaintext credentials from nondisplay fields, then release or modify before forwarding to the host.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN3270 host and navigate to the TSO/E LOGON screen. Have a test username and password ready. Do NOT press Enter yet — you will intercept the keystroke.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password. The Security tab appears in the right panel.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Enable MITM intercept',
+        body:  'In the INTERCEPT section, click ⚡ MITM Intercept. The button turns amber — every outbound AID record (Enter, PF key, PA key) is now held before it reaches the host. The keyboard remains unlocked so you can type normally.',
+        highlight: 'mitmBtn',
+        autoFn: 'toggleMitm',
+        autoLabel: 'Enable MITM for me',
+      },
+      {
+        title: 'Type credentials and press Enter',
+        body:  'Click on the terminal, type a username and password into the logon screen, then press Enter. The keyboard will lock immediately — the AID record is intercepted. You will see a floating MITM panel appear over the terminal.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Inspect the held record',
+        body:  'The MITM panel shows: the AID byte (ENTER), cursor position, and every modified field. Nondisplay fields — where passwords live — are shown in plain text here. This is the credential in transit before it reaches the host.',
+        highlight: 'mitmBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Edit a field (optional)',
+        body:  'The field values in the MITM panel are editable. Change the username or password to anything you want and click ▶ RELEASE — the modified version reaches the host, not the original. This demonstrates protocol-level injection without touching any client software.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Release or drop',
+        body:  'Click ▶ RELEASE to forward the record (original or modified) to the host and unlock the keyboard. Click ⊠ DROP to discard it — the host receives nothing and the keyboard stays locked until you take action.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Replay the last record',
+        body:  'After releasing, the ↺ REPLAY badge appears. Clicking it re-transmits the exact same AID record — same field values, same AID byte — demonstrating a session replay attack at the 3270 protocol layer.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Disable MITM',
+        body:  'Click ⚡ MITM Intercept again to turn it off. Keystrokes now flow through normally. The Credential Harvest Log (🔐) retains every nondisplay field captured during the session.',
+        highlight: 'mitmBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 3: Field Mutation Attack ─────────────────────────────
+  {
+    id:       'field-mutation',
+    category: 'security',
+    title:    'Field Mutation Attack',
+    desc:  'Flip a protected field to unprotected at the session-buffer level, type into it, and transmit — bypassing 3270 field protection without touching the application.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a host and reach a data-entry screen that has protected fields — any screen with grayed-out or un-enterable cells. Command fields, header text, and labels are typically protected.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Enable the Field Map Overlay',
+        body:  'In the INSPECT section at the top of the Security panel, click "Field Map Overlay". Every field attribute byte (FA) appears on screen as a coloured tag: P = protected, U = unprotected. Protected fields are the targets.',
+        highlight: 'fmoBtn',
+        autoFn: 'toggleFieldMap',
+        autoLabel: 'Enable FMO for me',
+      },
+      {
+        title: 'Click a protected field',
+        body:  'Click any cell that sits inside a protected field (a P-tagged region). The Attribute Byte Inspector opens in the Security panel and shows the raw FA byte value plus its decoded flags: PROTECTED, INTENSITY, MDT, NUMERIC.',
+        highlight: 'fmoBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Mutate PROTECTED → UNPROTECTED',
+        body:  'In the FA Mutation controls, click UNPROTECT. The bridge writes the new FA byte directly into the session buffer — the change is local, not sent to the host yet. The field should now accept keyboard input on screen.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Type into the unlocked field',
+        body:  'Click the field on the terminal and type your data. The field now behaves like a normal input. The 3270 emulator tracks it as modified (MDT bit set) so it will be included in the next AID transmission.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Transmit',
+        body:  'Press Enter (or any PF key). The modified field data travels to the host alongside the AID record. Whether the application server validates field protection server-side determines the impact — many legacy CICS and IMS applications trust the terminal entirely.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Restore the field',
+        body:  'In the FA Mutation controls, click PROTECT to write the original FA byte back. The field returns to read-only. Tip: toggling MDT SET on a protected field forces it to appear in the AID record even without being edited — useful for probing batch input paths.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 5: Field Map Overlay ─────────────────────────────────
+  {
+    id:       'fmo-standalone',
+    category: 'security',
+    title:    'Field Map Overlay',
+    desc:     'Visualise every field attribute byte on screen — colour-coded by type with hover tooltips.',
+    steps: [
+      {
+        title: 'What the FMO shows',
+        body:  'Every 3270 screen is divided into fields by Field Attribute (FA) bytes. Each FA byte encodes: protected vs unprotected, display intensity, numeric-only flag, and Modified Data Tag (MDT). The FMO makes these invisible bytes visible.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Enable the overlay',
+        body:  'Click "▸ Field Map Overlay" in the FIELD ANALYSIS section. The button turns amber. Every FA byte cell on screen is now highlighted with a coloured tag: P = protected, U = unprotected, N = non-display (password). Regular cells are tinted by their field type.',
+        highlight: 'fmoBtn',
+        autoFn: 'toggleFieldMap',
+        autoLabel: 'Enable FMO for me',
+      },
+      {
+        title: 'Hover for details',
+        body:  'Hover over any highlighted FA cell. A tooltip shows the raw hex value of the attribute byte and its decoded flags: PROT/UNPROT, NUMERIC, MDT SET/CLR, INTENSIFIED/NONDISPLAY/NORMAL.',
+        highlight: 'fmoBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the layout',
+        body:  'Protected fields (P) are read-only — labels, headers, command prompts. Unprotected fields (U) accept input. Non-display fields (N) are password fields — content is masked. MDT-set fields (MDT) will be included in the next AID transmission even if unchanged.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Disable the overlay',
+        body:  'Click the button again to remove the overlay and return the screen to normal rendering. FMO state is local — it does not send anything to the host.',
+        highlight: 'fmoBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 6: Attribute Byte Inspector ──────────────────────────
+  {
+    id:       'abi-standalone',
+    category: 'security',
+    title:    'Attribute Byte Inspector (ABI)',
+    desc:     'Click any cell to decode its governing FA byte bit-by-bit, then mutate individual flags live.',
+    steps: [
+      {
+        title: 'Enable the inspector',
+        body:  'Click "⬡ Attribute Byte Inspector" in the FIELD ANALYSIS section. The button turns amber. The terminal is now in inspect mode — clicks decode cells instead of moving the cursor.',
+        highlight: 'abiBtn',
+        autoFn: 'toggleInspector',
+        autoLabel: 'Enable ABI for me',
+      },
+      {
+        title: 'Click a cell',
+        body:  'Click any character cell on the terminal. The ABI panel in the Security section updates to show: the raw FA byte (hex), its governing field\'s buffer address, and a bit-by-bit breakdown — PROT bit, NUMERIC bit, both DISPLAY bits, and MDT bit.',
+        highlight: 'abiBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the bit flags',
+        body:  'The display intensity bits decode to: 00 = normal, 01 = intensified (bright), 10 = non-display (password), 11 = non-display. The MDT bit tells you whether the field will be sent in the next AID record — 1 = it will be included, 0 = only if the user edits it.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Mutate a flag',
+        body:  'The FA Mutation controls below the inspector let you flip individual bits: PROTECT/UNPROTECT, ALPHA/NUMERIC, REVEAL/HIDE nondisplay, SET/CLEAR MDT. Changes write directly to the session buffer — no AID is sent yet. The field reflects the change immediately.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Disable the inspector',
+        body:  'Click the ABI button again to return to normal terminal mode. Any FA mutations you made remain in effect until the next screen update from the host repaints the buffer.',
+        highlight: 'abiBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 7: Color Reveal ───────────────────────────────────────
+  {
+    id:       'color-reveal',
+    category: 'security',
+    title:    'Color Reveal',
+    desc:     'Strip all 3270 extended color attributes to expose text hidden via same-color-as-background tricks.',
+    steps: [
+      {
+        title: 'What color hiding is',
+        body:  'Some mainframe applications store sensitive data on screen by setting the text color the same as the background (e.g. white text on a white field). The data is transmitted to the terminal but invisible until you change the color. This is a common technique to pre-populate fields without user visibility.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Enable Color Reveal',
+        body:  'Click "🎨 Color Reveal" in the FIELD ANALYSIS section. All 3270 extended color attributes (SFE/SA color codes) are stripped — every cell renders in the terminal\'s default color regardless of what the host specified. Hidden same-color text becomes visible.',
+        highlight: 'colorRevealBtn',
+        autoFn: 'toggleColorReveal',
+        autoLabel: 'Enable Color Reveal for me',
+      },
+      {
+        title: 'Inspect the screen',
+        body:  'Scan the screen for text that was not visible before. Pre-populated credentials, hidden status fields, and concealed data all appear at the default color. Compare with a screenshot taken before enabling — the difference is the hidden content.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Disable Color Reveal',
+        body:  'Click the button again to restore original extended color rendering. Color Reveal is purely client-side — no data is sent to the host and the host application cannot detect it.',
+        highlight: 'colorRevealBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 8: Traffic Recorder ──────────────────────────────────
+  {
+    id:       'traffic-recorder',
+    category: 'security',
+    title:    'Traffic Recorder',
+    desc:     'Record the live 3270 datastream to a timestamped .rec.json file for offline analysis or replay.',
+    steps: [
+      {
+        title: 'What is recorded',
+        body:  'The Traffic Recorder captures every screen update received from the host and every AID record sent from the client, with timestamps. The output is a .rec.json file readable by the Replay Viewer and importable for analysis.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Start recording',
+        body:  'Click "● Traffic Recorder" in the TRAFFIC section. The button turns red — recording is active. Use the terminal normally: log in, navigate screens, run commands. Every inbound screen and outbound AID is captured.',
+        highlight: 'recBtn',
+        autoFn: 'toggleRecording',
+        autoLabel: 'Start recording for me',
+      },
+      {
+        title: 'Generate traffic',
+        body:  'Perform the workflow you want to capture — log in, navigate, run the commands that matter for your analysis. The recorder captures everything including nondisplay (password) field values in the AID records.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Stop recording',
+        body:  'Click "● Traffic Recorder" again to stop. A .rec.json file is written to the Bridge_server directory (or /app inside Docker) with a timestamp in the filename, e.g. session-2026-06-22T14-30-00.rec.json.',
+        highlight: 'recBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Use the recording',
+        body:  'Open the Replay Viewer at /replay (or TRAFFIC → Replay Viewer) to play the recording back frame by frame. The JSON file also contains the raw screen text at each step — useful for scripting analysis without replay.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 9: Replay Viewer ──────────────────────────────────────
+  {
+    id:       'replay-viewer',
+    category: 'security',
+    title:    'Replay Viewer',
+    desc:     'Play back a recorded .rec.json session frame by frame — step through screens exactly as they appeared.',
+    steps: [
+      {
+        title: 'Prerequisite: a recording',
+        body:  'You need a .rec.json file produced by the Traffic Recorder. If you do not have one, run the Traffic Recorder walkthrough first to create one.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Open the Replay Viewer',
+        body:  'Click "▶ Replay Viewer" in the TRAFFIC section. It opens /replay in a new browser tab — a standalone page separate from the live terminal.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Load a recording',
+        body:  'In the Replay Viewer, click "Load Recording" and select your .rec.json file. The first frame appears — showing the initial screen state at the moment recording started.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Step through frames',
+        body:  'Use the Previous / Next buttons (or arrow keys) to move frame by frame. Each frame shows the full screen as it appeared to the user at that moment, along with the timestamp and the event that triggered it (screen update or AID sent).',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Analyse the session',
+        body:  'Look for: credentials typed into nondisplay fields (shown in the AID record data), screen state before and after each command, timing between screens. The replay is a complete audit trail of the session at the protocol level.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 10: Session Viewer ───────────────────────────────────
+  {
+    id:       'session-viewer',
+    category: 'security',
+    title:    'Session Viewer',
+    desc:     'Floating table of every AID key sent and screen received — with direction filter, screen expand, and CSV export.',
+    steps: [
+      {
+        title: 'Open the Session Viewer',
+        body:  'Click "⇄ Session Viewer" in the TRAFFIC section. A floating popup appears listing every event in the current session: outbound AID records (→ host) and inbound screen updates (← host), in chronological order.',
+        highlight: 'sessionViewerBtn',
+        autoFn: 'openTrafficViewer',
+        autoLabel: 'Open Session Viewer for me',
+      },
+      {
+        title: 'Filter by direction',
+        body:  'Use the direction filter at the top to show only outbound (AID keys you sent) or only inbound (screens received). This helps when tracing a specific command-response pair.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Expand a screen',
+        body:  'Click any screen row to expand it and see the full screen text at that moment. For AID rows, you see the key name (ENTER, PF3, etc.) and any modified field data that was sent.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Export to CSV',
+        body:  'Click ↓ Export CSV to download the full session log. Each row includes: timestamp, direction, AID name (for outbound rows), and screen text (for inbound rows). Useful for post-session analysis or pentest reporting.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 11: Proxy Viewer ─────────────────────────────────────
+  {
+    id:       'proxy-viewer',
+    category: 'security',
+    title:    'Proxy Viewer',
+    desc:     'Live SSE stream of the bridge log — with level filter, hex toggle, and auto-scroll.',
+    steps: [
+      {
+        title: 'Open the Proxy Viewer',
+        body:  'Click "≡ Proxy Viewer" in the TRAFFIC section. A floating popup streams the bridge server log in real time using Server-Sent Events (SSE). You see the same output as the server terminal, formatted and filterable.',
+        highlight: 'proxyViewerBtn',
+        autoFn: 'openLogsViewer',
+        autoLabel: 'Open Proxy Viewer for me',
+      },
+      {
+        title: 'Filter by log level',
+        body:  'Use the level filter to show only INFO, WARN, ERROR, or DEBUG entries. DEBUG reveals the raw TN3270 negotiation, EBCDIC-decoded field values, and AID outbound byte sequences — useful for diagnosing unexpected host behaviour.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Enable HEX mode',
+        body:  'Toggle HEX to show the raw byte representation of each log entry. This is most useful for inbound datastream entries — you can see the exact bytes the host sent before they were parsed into a screen model.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'TAIL mode',
+        body:  'Click TAIL to enable auto-scroll — the viewer follows the latest log entries as they arrive. Scroll up to pause auto-scroll and read a specific entry; scroll back to the bottom to resume. Useful when monitoring a long-running operation.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'What to look for',
+        body:  'For security analysis: look for AID outbound lines to see exactly what field data was sent (nondisplay fields are masked in the log). Look for WARN entries flagging unusual host responses. The proxy viewer shows the bridge\'s view of the session — a second perspective beyond what the terminal renders.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 12: Anomaly Detector ────────────────────────────────
+  {
+    id:       'anomaly-detector',
+    category: 'security',
+    title:    'Anomaly Detector',
+    desc:     'Automatically flags suspicious screen patterns — RACF lockouts, unexpected field changes, WCC anomalies.',
+    steps: [
+      {
+        title: 'Enable anomaly tracking',
+        body:  'Click "⚠ Anomaly Tracking" in the MONITOR section. The button turns amber — the detector is now watching every screen update from the host and applying pattern rules.',
+        highlight: 'anomBtn',
+        autoFn: 'toggleAnomalyEnabled',
+        autoLabel: 'Enable anomaly tracking for me',
+      },
+      {
+        title: 'What it detects',
+        body:  'The detector flags: RACF authentication failures and lockouts (ICH error codes), screens with unexpected WCC (Write Control Character) bytes that could indicate a misconfigured host or unusual application state, and field protection changes between screens that were not initiated by the user.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Reading alerts',
+        body:  'When an anomaly is detected, a red flash bar appears at the top of the terminal with a short description. The badge on the ⚠ button shows a running count of anomalies in the session. Click the ▾ icon next to the button to expand the session log.',
+        highlight: 'anomBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Session log',
+        body:  'The anomaly log lists every flagged event with a timestamp and description. It persists for the duration of the session — scroll through to build a picture of unusual host behaviour over time. Click the ✕ icon to clear the log.',
+        highlight: 'anomViewBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Pair with RACF probe',
+        body:  'Run the Anomaly Detector alongside the RACF Auto-Probe. The detector will flag lockout events independently, giving you a second signal if the probe misses a lockout due to an unusual RACF error code variant.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 13: Screen Watch ────────────────────────────────────
+  {
+    id:       'screen-watch',
+    category: 'security',
+    title:    'Screen Watch',
+    desc:     'Trigger an alert the moment a specific string appears on screen — useful for monitoring long-running operations.',
+    steps: [
+      {
+        title: 'Enable Screen Watch',
+        body:  'Click "🔔 Screen Watch" in the MONITOR section. A text input appears below the button. Type the string you want to watch for and press Enter (or just start typing — the watch activates immediately).',
+        highlight: 'watchBtn',
+        autoFn: 'toggleWatch',
+        autoLabel: 'Enable Screen Watch for me',
+      },
+      {
+        title: 'Set the watch string',
+        body:  'Enter any string that should appear on screen to trigger the alert — e.g. "READY" to detect TSO completion, "LOCKOUT" to catch a RACF lockout, "IKJ56421I" for a specific RACF error code, or any application-specific success/failure string.',
+        highlight: 'watchInput',
+        autoFn: null,
+      },
+      {
+        title: 'Let the session run',
+        body:  'Continue working normally — or leave the session idle while a long job runs. Every time the host sends a new screen, Screen Watch scans the full screen text for your string.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Alert fires',
+        body:  'When the string is found, a flash alert appears at the top of the terminal with the matched text highlighted. The browser tab title also changes to draw attention if you have switched to another tab.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Disable Watch',
+        body:  'Click "🔔 Screen Watch" again to turn it off and hide the input. The watch string is cleared. You can set a different string by enabling it again.',
+        highlight: 'watchBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 14: Screen Fingerprinting ───────────────────────────
+  {
+    id:       'screen-fingerprint',
+    category: 'security',
+    title:    'Screen Fingerprinting',
+    desc:     'Auto-detects the active mainframe application from screen content and displays it in the OIA bar.',
+    steps: [
+      {
+        title: 'What fingerprinting does',
+        body:  'On every screen update, WebTerm/3270 scans the screen text against a rule set and identifies the active application: ISPF, SDSF, CICS, IMS, RACF, TSO READY, z/VM, or LOGON screen. The result appears in the APP field of the OIA status bar.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Read the APP field',
+        body:  'Look at the OIA bar at the bottom of the terminal. The APP field (between LU and ROW) shows the detected application name in colour. Green = TSO READY, amber = z/VM, red = RACF or LOGON screen, blue = ISPF, orange = CICS.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate screens',
+        body:  'Move through different application screens. The APP field updates on every screen change. Enter ISPF from TSO — APP changes from TSO to ISPF. Enter SDSF from ISPF — APP changes to SDSF.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Use with RACF probe',
+        body:  'The RACF Auto-Probe uses the same fingerprinting logic to auto-detect which logon screen type to target. When you open the RACF PROBE section and the APP field shows LOGON or RACF, the probe knows which field layout to use for the credential attempt.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 15: Session Broadcast ──────────────────────────────
+  {
+    id:       'session-broadcast',
+    category: 'security',
+    title:    'Session Broadcast',
+    desc:     'Fan out every AID keystroke to all open sessions simultaneously — run the same command on multiple LPARs at once.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Open two or more sessions (＋ in the tab bar) and connect each to a different LPAR or the same one. Navigate all sessions to a screen that accepts the same input — e.g. a TSO READY prompt or ISPF menu.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Enable broadcast',
+        body:  'Click "📡 Session Broadcast" in the INJECT section. The button turns amber. All outbound AID records are now fanned out to every connected session simultaneously.',
+        highlight: 'broadcastBtn',
+        autoFn: 'toggleBroadcast',
+        autoLabel: 'Enable broadcast for me',
+      },
+      {
+        title: 'Send a command',
+        body:  'Type a command and press Enter in the active session. The same AID record — including all field data — is sent to every other connected session. Each session receives an identical copy of the outbound record.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Watch all sessions respond',
+        body:  'Switch between session tabs to see each session\'s screen after the broadcast. All sessions should show the same response if they were at equivalent screens. If screens diverge, the field positions may differ between sessions.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Disable broadcast',
+        body:  'Click "📡 Session Broadcast" again to turn it off. Keystrokes return to the active session only. Broadcast is useful for demonstrating that a single intercepted AID record can be replayed across multiple sessions simultaneously.',
+        highlight: 'broadcastBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 16: Credential Harvest Log ─────────────────────────
+  {
+    id:       'harvest-log',
+    category: 'security',
+    title:    'Credential Harvest Log',
+    desc:     'View all nondisplay field values captured during MITM intercepts — plaintext credentials in one place.',
+    steps: [
+      {
+        title: 'What the harvest log captures',
+        body:  'Every time MITM intercepts an AID record that contains a nondisplay (password) field, it adds an entry to the Credential Harvest Log. The entry includes the session LU name, timestamp, AID type, field buffer address, and the plaintext value of the nondisplay field.',
+        highlight: 'harvestBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisite: MITM intercepts',
+        body:  'You need to have intercepted at least one logon attempt with MITM enabled. If the log is empty, run the "MITM Credential Intercept" walkthrough first to capture a credential.',
+        highlight: 'mitmBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Open the harvest log',
+        body:  'Click "🔐 Credential Harvest Log" in the INTERCEPT section. A floating popup lists every captured credential entry from the current session.',
+        highlight: 'harvestBtn',
+        autoFn: 'openHarvestLog',
+        autoLabel: 'Open harvest log for me',
+      },
+      {
+        title: 'Read the entries',
+        body:  'Each entry shows: the LU name that intercepted the record, the timestamp, the AID type (usually ENTER), the field address, and the plaintext field value. Multiple nondisplay fields in one AID record appear as separate entries — e.g. username field and password field from a TSO logon.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Use the CSV export in the harvest log to download all captured credentials. The log persists for the duration of the browser session — refreshing the page clears it.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Scenario 17: Protocol Fuzzer — Full Tour ─────────────────────
+  {
+    id:       'fuzzer-full',
+    category: 'security',
+    title:    'Protocol Fuzzer — Full Tour',
+    desc:     'Walk through all four fuzz modes: AID Sweep, Field Overflow, Order Injection, and SBA Mutation.',
+    steps: [
+      {
+        title: 'What the fuzzer does',
+        body:  'The Protocol Fuzzer sends intentionally malformed or mutated 3270 AID records directly to the host, bypassing the normal encoding pipeline. You observe which mutations produce a screen response, which are silently ignored, and which disconnect the session.',
+        highlight: 'fuzzMode',
+        autoFn: null,
+      },
+      {
+        title: 'AID Sweep',
+        body:  'Select "AID Sweep" from the mode dropdown. Set start=00, end=FF and click ▶ START to iterate every possible AID byte. Standard AIDs (0x7D ENTER, 0x6D CLEAR, PF keys) produce screens. Unknown bytes produce no-response. A disconnect suggests the host validates the AID byte strictly.',
+        highlight: 'fuzzMode',
+        autoFn: null,
+      },
+      {
+        title: 'Field Overflow',
+        body:  'Select "Field Overflow". Enter the buffer address of a known input field (default 415 = TSO USERID). Set length to 100 and pattern to "EBCDIC A–Z repeat", then click ▶ START. A host that truncates cleanly returns a screen; one that crashes or disconnects has a buffer handling bug.',
+        highlight: 'fuzzFieldAddr',
+        autoFn: null,
+      },
+      {
+        title: 'Order Injection',
+        body:  'Select "Order Injection". Leave order byte as "Sweep all orders" to iterate all 11 known 3270 order bytes. The fuzzer injects each order byte as the first byte of field data — the host parser must decide if it\'s data or a protocol order. Interesting responses: screen changes on SF/SBA injection, disconnect on IAC 0xFF.',
+        highlight: 'fuzzOrderByte',
+        autoFn: null,
+      },
+      {
+        title: 'SBA Mutation',
+        body:  'Select "SBA Mutation" and click ▶ START. The fuzzer sends 7 preset crafted addresses: zero, max 14-bit, all-bits-set, high-bit-set, etc. Most produce no-response on a strict host. A host that disconnects on 0xFFFF is performing address validation; one that returns a screen on every address is more permissive.',
+        highlight: 'fuzzResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Read and export results',
+        body:  'The result table colour codes each packet: green = screen, grey = no-response, red = disconnect, amber = error. Click ↓ CSV to export the full run. Build a fingerprint library by comparing results across different host types and firmware versions.',
+        highlight: 'fuzzResultsTable',
+        autoFn: 'fuzzExportCsv',
+        autoLabel: 'Export results CSV for me',
+      },
+    ],
+  },
+
+  // ── Scenario 18: z/TPF Handshake Fuzzer ───────────────────────────
+  {
+    id:       'fuzzer-tpf-handshake',
+    category: 'security',
+    title:    'z/TPF Handshake Fuzzer',
+    desc:     'Fuzzes the negotiation phase itself — malformed Query Reply structured fields and raw telnet IAC sequences — instead of post-connect 3270 data.',
+    steps: [
+      {
+        title: 'What this mode does differently',
+        body:  'The other four fuzz modes all mutate 3270 data sent after a session is already up and negotiated. This one targets the handshake itself: a real terminal replies to the host’s Read Partition Query with a Query Reply structured field (AID 0x88), and negotiates telnet options like TIMING-MARK before that. Most hosts, z/TPF’s message router included, get far less scrutiny here than on the data stream.',
+        highlight: 'fuzzMode',
+        autoFn: null,
+      },
+      {
+        title: 'Connect to a z/TPF target',
+        body:  'This mode works against any TN3270 host, but z/TPF is the intended target, it has almost no fuzzing coverage today outside the login profile. Connect to a z/TPF LPAR (mock or real, with written authorization) before starting.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Select the mode and run it',
+        body:  'Select "z/TPF Handshake Fuzzer" from the mode dropdown and click ▶ START. It sends 4 malformed Query Reply cases (truncated, oversized-length, invalid SFID, zero-length) over the normal 3270 data path, then 4 raw telnet IAC cases (DO TIMING-MARK, unsolicited WILL TIMING-MARK, an unterminated TN3270E subnegotiation, a bare IAC) that bypass 3270 framing entirely.',
+        highlight: 'fuzzStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the results',
+        body:  'screen = the host actually processed the malformed negotiation data and repainted (worth a closer look at what it did with it). no-response = the host silently dropped it, the most common and “safe” outcome for an option it doesn’t implement. disconnect = the malformed negotiation frame took the connection down, that’s the finding: a negotiation-layer input crashed or killed the session before any real work started.',
+        highlight: 'fuzzResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Export results',
+        body:  'Click ↓ CSV or ↓ JSON to save the run alongside your other fuzzer results.',
+        highlight: 'fuzzResultsTable',
+        autoFn: 'fuzzExportCsv',
+        autoLabel: 'Export results CSV for me',
+      },
+    ],
+  },
+
+  // ── Recon 1: RACF Settings Analyzer ──────────────────────────────
+  {
+    id:       'recon-racf-settings',
+    category: 'security',
+    title:    'RACF Settings Analyzer',
+    desc:     'Issue SETROPTS LIST from TSO and parse the full RACF configuration — password policy, lockout settings, and security class activation gaps.',
+    steps: [
+      {
+        title: 'What SETROPTS LIST reveals',
+        body:  'SETROPTS LIST is a single TSO command that dumps the entire RACF global configuration: password expiry interval, history count, lockout threshold, minimum/maximum length, which security resource classes are active, and which are in WARNING mode (logging but not enforcing). Most operators overlook this as a reconnaissance vector.',
+        highlight: 'reconSettingsOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY',
+        body:  'You must be at a TSO READY prompt before running this tool. If you are in ISPF, exit first — type "=X" from the ISPF primary menu, or "END" repeatedly. The APP field in the OIA bar should show "TSO" in green when you are at the correct prompt.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel and find RECON TOOLS',
+        body:  'Click 🔒 in the OIA bar, enter the security password (default: 2970). Scroll to the RECON TOOLS section. The RACF SETTINGS ANALYZER subsection is at the top.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the analysis',
+        body:  'Click ▶ ANALYZE. The tool issues SETROPTS LIST and parses the response. Two cards appear: Password Policy (interval, history, lockout, length) and Security Class Status (which key classes are ACTIVE, WARNING, or INACTIVE).',
+        highlight: 'reconSettingsBtn',
+        autoFn: 'startReconSettings',
+        autoLabel: 'Run SETROPTS LIST for me',
+      },
+      {
+        title: 'Read the Password Policy card',
+        body:  'Expiry interval above 90 days = HIGH finding. No lockout (NOREVOKE) = CRITICAL — any brute-force attempt will never trigger a lockout, meaning the RACF probe can run indefinitely without risk. History below 8 = MEDIUM — users can recycle passwords quickly. Minimum length below 8 = MEDIUM.',
+        highlight: 'reconSettingsOut',
+        autoFn: null,
+      },
+      {
+        title: 'Read the Security Class Status card',
+        body:  'Classes marked INACTIVE (red ✗) are not enforced — resources in those classes have no RACF protection. DSNR INACTIVE means any TSO user can connect to DB2. GCICSTRN INACTIVE means all CICS transactions are unprotected. WARNING mode (amber ⚠) means RACF is logging violations but not blocking — active exploitation would succeed and only appear in SMF records.',
+        highlight: 'reconSettingsOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export the findings',
+        body:  'Click "↓ Export all Recon results CSV" at the bottom of RECON TOOLS to capture password policy values and class status for your report. The NOREVOKE flag exports as a CRITICAL severity marker in the CSV.',
+        highlight: 'reconSettingsOut',
+        autoFn: 'reconExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Recon 2: RACF Timing Attack ───────────────────────────────────
+  {
+    id:       'recon-timing',
+    category: 'security',
+    title:    'RACF Userid Timing Attack',
+    desc:     'Measure RACF response times to detect valid userids — many RACF configurations skip the password hash check for invalid userids, creating a measurable timing side-channel.',
+    steps: [
+      {
+        title: 'The timing side-channel',
+        body:  'When RACF receives a logon with an invalid userid, it rejects it immediately without evaluating the password — no hash computation, no profile lookup. Valid userids proceed to password validation, which takes measurably longer. The ms column in the RACF probe results table captures this difference.',
+        highlight: 'probeResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Navigate to a TSO, z/VM, or CICS logon screen. The RACF probe must be able to detect the subsystem type (the APP field shows LOGON or the screen matches a known layout). Use a long wordlist with a mix of likely-valid (IBMUSER, MAINT, SYS) and random userids to generate a spread of timings.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Set up the probe wordlist',
+        body:  'In the RACF PROBE section, add your credential pairs. Mix valid-looking userids (IBMUSER,WRONGPASS, MAINT,WRONGPASS, SYS1,WRONGPASS) with random ones (ZZZZTEST,WRONGPASS, AABBCC,WRONGPASS). Use a known-wrong password for all — you are testing userid validity, not cracking passwords.',
+        highlight: 'probeWordlist',
+        autoFn: null,
+      },
+      {
+        title: 'Run the probe and watch the ms column',
+        body:  'Click ▶ START. After attempts complete, look at the ms column. Consistent fast times (<800ms, shown in amber) across all attempts suggest RACF validates userid and password together — no timing leak. Fast times for some userids and slower for others suggests the early-rejection path is active and those fast responses are invalid userids.',
+        highlight: 'probeResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Interpret the results',
+        body:  'A timing gap of 300ms or more between fast and slow responses is worth flagging. Repeat the experiment 3–5 times with the same wordlist to rule out network jitter. Consistent fast responses on the same userids across runs = likely timing oracle. Note: this works best on LAN-adjacent systems where round-trip variance is low.',
+        highlight: 'probeResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Export with timing data',
+        body:  'Click ↓ Export CSV in the RACF PROBE section. The exported CSV now includes a response_ms column for every attempt, making it easy to sort by timing and spot outliers in a spreadsheet.',
+        highlight: 'probeResultsTable',
+        autoFn: 'probeExportCsv',
+        autoLabel: 'Export timing CSV for me',
+      },
+    ],
+  },
+
+  // ── Recon 3: RACF User/Group Enumerator ───────────────────────────
+  {
+    id:       'recon-enum',
+    category: 'security',
+    title:    'RACF User/Group Enumerator',
+    desc:     'Issue SEARCH CLASS(USER) and SEARCH CLASS(GROUP) from TSO READY to collect all RACF user IDs and group names — the authorization map of the system.',
+    steps: [
+      {
+        title: 'What this reveals',
+        body:  'SEARCH CLASS(USER) returns every user profile defined in RACF — every person, service account, vendor ID, and shared login on the system. SEARCH CLASS(GROUP) returns every group — the authorization hierarchy. Together they give you a complete picture of the identity estate without needing RACF administrator authority.',
+        highlight: 'reconEnumOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY',
+        body:  'You must be at a TSO READY prompt. Exit ISPF if needed ("=X"). The APP field in the OIA bar shows TSO in green at the READY prompt.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and navigate to RECON TOOLS',
+        body:  'Click 🔒, enter the security password, scroll to RECON TOOLS, and find the RACF USER/GROUP ENUMERATOR subsection.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the enumeration',
+        body:  'Click ▶ ENUMERATE. The tool issues SEARCH CLASS(USER) first — this may return hundreds of entries on a large system, paging through ***MORE*** output automatically. Then it runs SEARCH CLASS(GROUP). Both results appear as scrollable lists with counts.',
+        highlight: 'reconEnumStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'What to look for in users',
+        body:  'Scan for high-value targets: IBMUSER (IBM default superuser), MAINT (maintenance), SYS1, SYSPROG, SYSADM (elevated privilege names), DB2, CICS, MQ (service accounts), and any IDs matching vendor names or contractors. Service accounts often have weak or default passwords and are rarely monitored.',
+        highlight: 'reconEnumOut',
+        autoFn: null,
+      },
+      {
+        title: 'What to look for in groups',
+        body:  'RACF groups reveal the authorization structure: SYS1 typically contains RACF-privileged users, IBMUSER often has SPECIAL authority, and vendor groups (MQADMIN, DB2ADMIN, CICSGRP) show who has elevated application access. Cross-reference group names with the wordlist for the RACF probe to prioritize targets.',
+        highlight: 'reconEnumOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click "↓ Export all Recon results CSV" at the bottom of RECON TOOLS. The CSV includes every userid and group name — import into a spreadsheet to sort, filter, and build a target list for further probing.',
+        highlight: 'reconEnumOut',
+        autoFn: 'reconExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Recon 4: Dataset Recon Scanner ───────────────────────────────
+  {
+    id:       'recon-dataset',
+    category: 'security',
+    title:    'Dataset Recon Scanner',
+    desc:     'Run LISTCAT LEVEL() across common dataset prefixes to map the data estate and flag sensitive dataset names — credentials, keys, certificates, payroll, parmlib.',
+    steps: [
+      {
+        title: 'What LISTCAT reveals',
+        body:  'LISTCAT is a standard IDCAMS utility that lists datasets in the catalog. Running it with LEVEL(prefix) returns every dataset under that high-level qualifier. Unlike a filesystem, mainframe dataset names are self-documenting — PAYROLL.MASTER.FILE, SYS1.PARMLIB, USER.PRIVATE.KEYS — making sensitive data easy to spot without reading the contents.',
+        highlight: 'reconDatasetOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY',
+        body:  'You must be at a TSO READY prompt. The scanner issues LISTCAT as a TSO command — it works at the READY prompt without entering ISPF.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and navigate to Dataset Recon',
+        body:  'Click 🔒, enter the security password, scroll to RECON TOOLS, and find the DATASET RECON SCANNER subsection.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Load default prefixes and customize',
+        body:  'Click "Load defaults" to populate the prefix list with SYS1, SYS2, IBMUSER, ADMIN, PROD, PAYROLL, FINANCE, HR, SECURITY. Add site-specific prefixes you know from earlier reconnaissance — LPARs often have prefixes matching the company name or application acronyms.',
+        highlight: 'reconDatasetPrefixes',
+        autoFn: 'datasetLoadDefaults',
+        autoLabel: 'Load defaults for me',
+      },
+      {
+        title: 'Run the scan',
+        body:  'Click ▶ SCAN. The tool runs LISTCAT LEVEL() for each prefix and parses the output. Datasets are listed in the results table; flagged entries (matching sensitive patterns) appear at the top in amber with the matched keyword shown in the FLAG column.',
+        highlight: 'reconDatasetStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Interpret flagged datasets',
+        body:  'Flagged entries match patterns like PASSWORD, KEY, CERT, PARMLIB, PAYROLL, SECRET, TOKEN, MASTER, SECURE. Each flag is a dataset to investigate further — can it be browsed in ISPF? Is it protected by a RACF DATASET profile? A dataset named USER.PRIVATE.KEYS with no RACF protection is a critical finding.',
+        highlight: 'reconDatasetOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export and follow up',
+        body:  'Click "↓ Export all Recon results CSV" to capture the full dataset list with flags. Follow up flagged datasets in ISPF: option 2 (Edit) or 1 (View) to check read access. Use the RACF Settings Analyzer to see if DATASET class is active — if not, all datasets are accessible by default.',
+        highlight: 'reconDatasetOut',
+        autoFn: 'reconExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Transit 1: In-Transit Encryption Monitor ─────────────────────
+  {
+    id:       'transit-encryption',
+    category: 'security',
+    title:    'In-Transit Encryption Monitor',
+    desc:     'See the TLS state of the active session and inspect captured traffic — showing what an on-path attacker sees when TN3270 runs without TLS.',
+    steps: [
+      {
+        title: 'Why TN3270 in-transit exposure matters',
+        body:  'Classic TN3270 runs over raw TCP on port 23. No TLS, no encryption — every keystroke, every screen, every RACF password and DB2 query crosses the wire in plaintext. TN3270E on port 992 adds TLS, but many shops still connect on port 23 for legacy compatibility, or have TLS misconfigured. This tool makes that exposure visible.',
+        highlight: 'transitBanner',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel and find IN-TRANSIT MONITOR',
+        body:  'Click 🔒 in the OIA bar and enter the security password. The IN-TRANSIT MONITOR section is at the top of the Security panel, above RECON TOOLS. The banner immediately shows whether the active session is encrypted or plaintext.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the session banner',
+        body:  'The banner reflects the current active session\'s TLS state. Red banner = PLAINTEXT — the TN3270 session is on port 23 or TLS negotiation was skipped. Green banner = ENCRYPTED — shows the TLS version (TLSv1.2, TLSv1.3). The OIA bar "TLS" field shows the same value: "3270" means plaintext.',
+        highlight: 'transitBanner',
+        autoFn: 'transitRefresh',
+        autoLabel: 'Refresh and show my session state',
+      },
+      {
+        title: 'Fetch the traffic log',
+        body:  'Click ↺ Refresh to load the server-side traffic log. Every key sent and screen received is listed with direction, AID key name, TLS state at capture time, and a plaintext-exposed data preview for unencrypted entries.',
+        highlight: 'transitLog',
+        autoFn: null,
+      },
+      {
+        title: 'Read the traffic entries',
+        body:  'Red left border = plaintext event. Green left border = encrypted. For plaintext entries, the screen data captured at that moment appears below the row in red — this is what an attacker with tcpdump on the same network sees verbatim. Entries marked TRANSFER are IND$FILE upload/download events — file contents traverse the wire in the same plaintext stream.',
+        highlight: 'transitLog',
+        autoFn: null,
+      },
+      {
+        title: 'IND$FILE transfer exposure',
+        body:  'When a file is uploaded or downloaded via IND$FILE on a plaintext session, the transfer appears as a dedicated log entry tagged TRANSFER. The byte count shown is the total file data that crossed the wire unencrypted — the actual file content, not just screen text. On a TLS session, this entry still appears but shows 🔒 encrypted.',
+        highlight: 'transitLog',
+        autoFn: null,
+      },
+      {
+        title: 'Export for evidence',
+        body:  'Click ↓ Export CSV to download the traffic log with a plaintext_exposed column — YES for every event on a plaintext session, NO for encrypted. Import into a spreadsheet and filter plaintext_exposed=YES to produce the evidence list for a pentest finding.',
+        highlight: 'transitLog',
+        autoFn: 'transitExportCsv',
+        autoLabel: 'Export traffic CSV for me',
+      },
+    ],
+  },
+
+  // ── Recon 5: Encryption Audit Scanner ────────────────────────────
+  {
+    id:       'recon-encrypt-audit',
+    category: 'security',
+    title:    'Encryption At Rest — Audit Scanner',
+    desc:     'Use LISTCAT ENT() ALL to check whether z/OS datasets are encrypted with DFSMS at-rest encryption — identifying unencrypted sensitive data stores.',
+    steps: [
+      {
+        title: 'The gap most shops miss',
+        body:  'z/OS DFSMS at-rest encryption (via ICSF key labels) is optional and not retroactively applied to existing datasets. A shop may have encrypted new datasets for years while older PAYROLL or KEY datasets remain in plaintext — on the same disk. LISTCAT ENT() ALL surfaces the ENCRYPTION-KEY-LABEL field, which is absent on unencrypted datasets.',
+        highlight: 'reconEncryptOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY',
+        body:  'You must be at a TSO READY prompt. Exit ISPF if needed. The APP field in the OIA bar should show TSO in green.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and find Encryption Audit Scanner',
+        body:  'Click 🔒, enter the security password. In the RECON TOOLS section, scroll past the Dataset Recon Scanner to find the ENCRYPTION AUDIT SCANNER subsection.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Option A: Import flagged datasets from recon',
+        body:  'If you already ran the Dataset Recon Scanner, click "⬆ Import Flagged" to pull every sensitive-named dataset directly into the audit list. This is the fastest path — discover names first, then audit encryption for the high-risk ones.',
+        highlight: 'reconEncryptDatasets',
+        autoFn: 'encryptImportFlagged',
+        autoLabel: 'Import flagged datasets for me',
+      },
+      {
+        title: 'Option B: Enter names manually',
+        body:  'Paste dataset names directly — one per line. Use fully qualified names (e.g. PAYROLL.MASTER.FILE, SYS1.PARMLIB, FINANCE.ACCOUNTS.DATA). The scanner accepts up to any number; run in batches for large lists.',
+        highlight: 'reconEncryptDatasets',
+        autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Click ▶ AUDIT. For each dataset the tool issues LISTCAT ENT(dsname) ALL and parses the output. Results appear as they complete — CRITICAL (red) rows at the top for sensitive unencrypted datasets, INFO (green) for encrypted, MEDIUM/HIGH (amber/yellow) in between.',
+        highlight: 'reconEncryptStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Interpret the results',
+        body:  'CRITICAL = sensitive pattern (PASSWORD, KEY, CERT, SSN, TOKEN) + no encryption — these are the highest-priority findings. HIGH = production or system dataset (PROD, PAYROLL, SYS1.PARMLIB, FINANCE) + no encryption. MEDIUM = any unencrypted dataset. INFO = encrypted, key label shown in the KEY LABEL column. ERR = LISTCAT failed (dataset may not exist or be catalogued).',
+        highlight: 'reconEncryptOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export and report',
+        body:  'Click "↓ Export all Recon results CSV" — the encrypt-audit rows include dataset name, encryption status (ENCRYPTED/UNENCRYPTED), key label or risk level, and timestamp. Sort by the flag column in a spreadsheet to produce the findings table for your report.',
+        highlight: 'reconEncryptOut',
+        autoFn: 'reconExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Recon 6: VTAM Applid Enumerator ───────────────────────────────
+  {
+    id:       'recon-vtam-applid',
+    category: 'security',
+    title:    'VTAM Applid Enumerator',
+    desc:     'Issue D NET,ID=applid for a wordlist of VTAM application IDs, discovering what regions and consoles exist on the network without ever leaving TSO.',
+    steps: [
+      {
+        title: 'Why this is different from LOGON APPLID',
+        body:  'A real terminal switches to another VTAM application with LOGON APPLID(x), but that actually transfers the session there, so sweeping a wordlist of guesses would mean reconnecting after every single attempt. D NET,ID=applid is a genuine VTAM operator display command instead: it answers whether a resource exists and its current state without ever leaving the TSO session it was issued from.',
+        highlight: 'reconApplidOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY',
+        body:  'You must be at a TSO READY prompt. Exit ISPF if needed. The APP field in the OIA bar should show TSO in green.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and find the enumerator',
+        body:  'Click 🔒, enter the security password. In the RECON TOOLS section, scroll to the VTAM APPLID ENUMERATOR subsection at the bottom.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Load or edit the wordlist',
+        body:  'Click "Load defaults" for a starter set (TSO, a couple of CICS regions, IMS, NETVIEW), or paste your own guesses, one per line. Real shops often name regions predictably, CICSPROD next to CICSTEST, a NetView console APPLID nobody meant to make guessable.',
+        highlight: 'reconApplidWordlist',
+        autoFn: 'applidLoadDefaults',
+        autoLabel: 'Load the default wordlist for me',
+      },
+      {
+        title: 'Run the sweep',
+        body:  'Click ▶ ENUMERATE. The tool issues D NET,ID=applid for each name in turn and classifies the response. Read-only, nothing here ever leaves the TSO session.',
+        highlight: 'reconApplidStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the findings',
+        body:  'FOUND_ACTIVE means the resource exists and is live right now, the clearest hit. FOUND_INACTIVE still discloses that it exists, just not currently active, worth noting since it confirms the naming convention even if this particular instance isn’t reachable today. NOT_FOUND discloses nothing, that APPLID simply doesn’t exist on this network.',
+        highlight: 'reconApplidOut', autoFn: null,
+      },
+      {
+        title: 'Export and report',
+        body:  'Click "↓ Export all Recon results CSV" (or the JSON button next to it) to save the findings alongside the rest of this session’s recon results.',
+        highlight: 'reconApplidOut',
+        autoFn: 'reconExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── SysCheck 1: APF Library Scanner ──────────────────────────────
+  {
+    id:       'apf-library-scanner',
+    category: 'security',
+    title:    'APF Library Scanner',
+    desc:     'List all APF-authorized libraries via LISTAPF and check each for a RACF dataset profile — a missing or weak profile is a privilege escalation path to superuser.',
+    steps: [
+      {
+        title: 'Why APF libraries matter',
+        body:  'APF (Authorized Program Facility) libraries hold programs that run with z/OS supervisor authority. Any program loaded from an APF library can call privileged SVCs, bypass RACF, and acquire superuser status. If an APF library is writable by a non-privileged user, that user can drop in a backdoor and escalate to the most privileged level on the system.',
+        highlight: 'apfOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY and unlock Security',
+        body:  'You must be at a TSO READY prompt. Click 🔒 in the OIA bar, enter the password, then scroll to the SYSTEM ACCESS CHECKS section.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the APF scan',
+        body:  'Click ▶ SCAN APF LIST. The tool first issues LISTAPF to get all APF-authorized library names and volumes, then runs LISTDSD on each to check for a RACF dataset profile. This may take 30–60 seconds on a system with many APF libraries.',
+        highlight: 'apfScanBtn',
+        autoFn: 'startApfScan',
+        autoLabel: 'Run APF scan for me',
+      },
+      {
+        title: 'Interpret RACF status',
+        body:  'CRITICAL (red) = no RACF profile — ICH10006I "not defined" from LISTDSD. Any authenticated user can write to this library. WEAK = RACF profile exists but UACC is UPDATE or ALTER — still broadly writable. UNKNOWN = LISTDSD was denied (likely protected, but cannot confirm). OK = protected with UACC READ or NONE.',
+        highlight: 'apfOut',
+        autoFn: null,
+      },
+      {
+        title: 'What to do with CRITICAL findings',
+        body:  'An unprotected APF library is a critical escalation path. Document the library name and volume. In ISPF, try option 3.4 to browse — if you can EDIT the library, you can create a member that calls MODESET KEY=ZERO or AXSET to acquire superuser state. The finding should trigger immediate remediation: add a RACF profile with UACC(NONE) and restrict UPDATE/ALTER to authorized users.',
+        highlight: 'apfOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export System Checks CSV to capture library names, volumes, RACF status, and risk level.',
+        highlight: 'apfOut',
+        autoFn: 'syscheckExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── SysCheck 2: PARMLIB Access Check ─────────────────────────────
+  {
+    id:       'parmlib-access-check',
+    category: 'security',
+    title:    'PARMLIB Access Check',
+    desc:     'Test read access to SYS1.PARMLIB members via ALLOC SHR — non-destructive. Readable members expose SMF configuration, the APF list, SVC table, and z/OS UNIX parameters.',
+    steps: [
+      {
+        title: 'What SYS1.PARMLIB contains',
+        body:  'SYS1.PARMLIB is the system parameter library — it controls almost everything about how z/OS runs. IEASYS00 is the main system config, SMFPRM00 controls security logging (knowing what SMF records are captured helps an attacker avoid detection), IEAAPF00 is the static APF list, BPXPRM00 controls z/OS UNIX, and IEASVC00 is the SVC dispatch table.',
+        highlight: 'parmlibOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY and unlock Security',
+        body:  'You must be at a TSO READY prompt. Click 🔒, enter the password, find SYSTEM ACCESS CHECKS → PARMLIB ACCESS CHECK.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Load defaults and run',
+        body:  'Click "Load defaults" to populate the member list with eight key PARMLIB members. Click ▶ CHECK. For each member, the tool issues ALLOC FI(PTEST) DA(\'SYS1.PARMLIB(member)\') SHR — a read-only allocation test that returns immediately without modifying anything.',
+        highlight: 'parmlibStartBtn',
+        autoFn: 'parmlibLoadDefaults',
+        autoLabel: 'Load defaults for me',
+      },
+      {
+        title: 'Interpret results',
+        body:  'READABLE (red ✗) = ALLOC succeeded — the current user can read this member. BLOCKED (green ✓) = ICH408I from RACF — the member is protected. "Not found" = member doesn\'t exist or isn\'t catalogued. Any READABLE result on SMFPRM00 or IEAAPF00 is a high-severity finding — the attacker can map the security logging strategy and the complete APF list.',
+        highlight: 'parmlibOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export System Checks CSV. PARMLIB results export with CRITICAL for readable members and OK for blocked.',
+        highlight: 'parmlibOut',
+        autoFn: 'syscheckExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── SysCheck 3: APF Writability Checker ───────────────────────────
+  {
+    id:       'apf-writability-checker',
+    category: 'security',
+    title:    'APF Writability Checker',
+    desc:     'Actually attempts a write against every APF library LISTAPF returns, to prove exploitability rather than just flag a missing RACF profile.',
+    steps: [
+      {
+        title: 'Why this is different from the APF Library Scanner',
+        body:  'The scanner above only checks whether a RACF dataset profile EXISTS, via LISTDSD. That’s a necessary check, but not a sufficient one: a library can have no profile and still turn out to reject the write for some other reason, or carry a profile and still be writable through a UACC or access-list gap LISTDSD’s parsing never catches. This tool skips the inference entirely and actually attempts the write.',
+        highlight: 'apfWriteOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to TSO READY and unlock Security',
+        body:  'You must be at a TSO READY prompt. Click 🔒, enter the password, find SYSTEM ACCESS CHECKS → APF WRITABILITY CHECKER (below PARMLIB Access Check).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the check',
+        body:  'Click ▶ TEST WRITE ACCESS. The tool issues LISTAPF to enumerate every APF-authorized library, then for each one issues ALLOC FI(APFWR) DA(’library’) SHR REUSE, the same real command the PARMLIB check uses, this time against APF libraries instead of a fixed member list. A successful allocation is immediately FREEd, nothing is left allocated or modified.',
+        highlight: 'apfWriteBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL means the write actually succeeded, that library is exploitable right now: drop a backdoor program in it and it runs with supervisor authority on the next load. OK means RACF blocked the allocation. UNKNOWN means the response didn’t match either real message, worth a manual look.',
+        highlight: 'apfWriteOut', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export System Checks CSV (or the JSON button next to it). apf-write-check rows carry the library, the risk, and the note explaining why.',
+        highlight: 'apfWriteOut',
+        autoFn: 'syscheckExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── CICS 1: Transaction Scanner ───────────────────────────────────
+  {
+    id:       'cics-transaction-scanner',
+    category: 'security',
+    title:    'CICS Transaction Scanner',
+    desc:     'Probe CICS transaction IDs from a wordlist — DFHAC2001 "not authorized" proves the transaction exists even if the user cannot run it.',
+    steps: [
+      {
+        title: 'The CICS enumeration side-channel',
+        body:  'CICS returns different error codes for "transaction not defined" (DFHAC2206) vs "transaction exists but you are not authorized" (DFHAC2001). This distinction is a side-channel: an attacker gets a yes/no answer on every transaction\'s existence without needing authority to run it. DFHAC2001 is a higher-value finding than a successful run — it confirms the transaction is defined and worth targeting.',
+        highlight: 'cicsOut',
+        autoFn: null,
+      },
+      {
+        title: 'Get to a CICS clear screen',
+        body:  'Connect to a CICS session. The OIA APP field should show CICS in orange. Press PA2 (CLEAR) or press F3 until you are at a blank CICS screen — the cursor should be at the top left, ready to accept a transaction ID. This is the starting position the scanner expects.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock Security and find CICS TRANSACTION SCANNER',
+        body:  'Click 🔒, enter the password, scroll to the CICS TRANSACTION SCANNER section.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Load defaults and customize',
+        body:  'Click "Load defaults" to load common CICS administrative transactions: CEDA (resource definitions), CEMT (task management), CEDF (debugger), CEBR (queue browser), CESF (sign off), SIGN, MQSC, and others. Add site-specific transaction IDs you know from screen captures or documentation.',
+        highlight: 'cicsTxnList',
+        autoFn: 'cicsLoadDefaults',
+        autoLabel: 'Load defaults for me',
+      },
+      {
+        title: 'Run the scan',
+        body:  'Click ▶ SCAN. For each transaction the tool clears the screen (PA2), types the ID, and presses ENTER. The response is classified: ACCESSIBLE (red) = ran, DENIED (amber) = exists but security blocked, NOT FOUND (grey) = not defined. Results sort by severity — ACCESSIBLE first.',
+        highlight: 'cicsScanBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Interpret DENIED results',
+        body:  'DENIED transactions are the most valuable findings. They confirm the transaction is defined on this CICS region — an attacker can now target privilege escalation through that transaction specifically (e.g., CEDA is the resource definition editor — even a denial confirms CEDA is active, meaning the region has full resource definition capability). Cross-reference DENIED transactions with known privilege-escalation paths.',
+        highlight: 'cicsOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CICS Scan CSV to capture all results with transaction ID, result, and detail message.',
+        highlight: 'cicsOut',
+        autoFn: 'cicsExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Wave 14: TN3270E Negotiation Analyzer ────────────────────────
+  {
+    id:       'tn3270e-negotiation',
+    category: 'security',
+    title:    'TN3270E Negotiation Analyzer',
+    desc:     'Inspect TLS version, cipher suite, certificate details, and TN3270E protocol negotiation for every active session — flags plaintext, weak ciphers, and self-signed certs.',
+    steps: [
+      {
+        title: 'Why TN3270 security matters',
+        body:  'TN3270 was designed in an era before TLS. Mainframe shops often tunnel TN3270 over TLS (TN3270E with TELNET/TLS), but many legacy configurations leave sessions in plaintext — every keystroke, including passwords, crosses the network unencrypted. The Negotiation Analyzer shows the exact TLS handshake parameters negotiated for each active session so you can confirm whether your mainframe access is actually encrypted.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Connect to a host and open the analyzer',
+        body:  'Connect to your mainframe target using the main connection panel. Once connected, unlock the Security panel and scroll to TN3270E NEGOTIATION ANALYZER.',
+        highlight: 'negotiateStatus',
+        autoFn: null,
+      },
+      {
+        title: 'Click Refresh',
+        body:  'Click ↺ Refresh. The tool calls /api/negotiate on the bridge server, which reads live TLS socket state for every active session and returns cipher suite, TLS version, peer certificate details, and TN3270E negotiation flags.',
+        highlight: 'negotiateStatus',
+        autoFn: 'negotiateRefresh',
+        autoLabel: 'Refresh for me',
+      },
+      {
+        title: 'Reading the results',
+        body:  'Each session shows: TLS version, cipher suite, session resumption flag, certificate CN/issuer/expiry, TN3270E status, terminal model, LU requested vs LU granted, LU fixation result, certificate chain depth, and the full TN3270E sub-negotiation trace. The left border color is the worst finding.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'LU fixation and handshake trace (Wave 15)',
+        body:  'Two new fields: LU FIXATION shows whether the host honored the requested LU name (ACCEPTED = client controls its audit identity — MEDIUM finding) or assigned a pool LU (REJECTED = normal). The TN3270E HANDSHAKE TRACE section shows every DEVICE-TYPE and FUNCTIONS sub-negotiation exchange, color-coded by direction (blue = client sent, green = server sent), with decoded field names.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Common findings',
+        body:  'CRITICAL (red): session is PLAIN. HIGH (amber): weak cipher (RC4/DES/3DES/NULL/EXPORT) or self-signed/expired cert. MEDIUM (yellow): TN3270E not negotiated, or LU fixation ACCEPTED (client controls LU identity). INFO (blue): TLS session resumed, or LU fixation rejected. GREEN: strong cipher, valid cert chain, TN3270E active.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV to record the negotiation posture for all sessions. Useful for audit evidence: "all mainframe sessions use TLSv1.3 with AES-256-GCM-SHA384 and a valid corporate CA."',
+        highlight: 'negotiateStatus',
+        autoFn: 'negotiateExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Wave 15: LU Name Fixation ─────────────────────────────────────
+  {
+    id:       'lu-fixation',
+    category: 'security',
+    title:    'LU Name Fixation',
+    desc:     'Test whether the host honors the LU name you request during TN3270E negotiation — fixation accepted means you control your terminal\'s audit identity in RACF and SMF logs.',
+    steps: [
+      {
+        title: 'What is an LU and why does it matter for security?',
+        body:  'In TN3270E, the client can request a specific LU (Logical Unit) name during DEVICE-TYPE negotiation. The host either accepts it (assigns exactly that LU) or rejects it (assigns one from its pool). LU names appear in SMF audit records, VTAM logs, and some applications use them for access control. If fixation is accepted, an attacker can request any LU name — including one belonging to another user or a privileged terminal pool.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Set a specific LU name at connect time',
+        body:  'Open the Connect modal. In the LU Name field, enter a specific LU you want to test — e.g., a known pool name like LU00001, LPAR01A, or a name you have seen in SDSF or VTAM documentation. Connect to the host.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Refresh the analyzer and check LU FIXATION',
+        body:  'After connecting, refresh the Negotiation Analyzer. Look at "LU requested" vs "LU granted" and the "LU fixation" field. ACCEPTED means the host granted exactly the LU name you requested — you control your identity in audit logs. REJECTED means the host ignored your request and assigned a pool LU.',
+        highlight: 'negotiateOut',
+        autoFn: 'negotiateRefresh',
+        autoLabel: 'Refresh for me',
+      },
+      {
+        title: 'ACCEPTED — what it means',
+        body:  'LU fixation ACCEPTED is a MEDIUM finding. It means: (1) you could request a predictable LU name that appears in VTAM resource profiles and may have different RACF access than your normal terminal, (2) audit records in SMF will show the requested LU rather than a pool-assigned one — if you request another user\'s known LU, their audit trail is now polluted. In high-security environments, the host should assign LUs from a pool regardless of what the client requests.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV — the CSV now includes luRequested, lu (granted), and luFixation columns. Document the finding with the specific LU names tested and whether fixation was accepted.',
+        highlight: 'negotiateOut',
+        autoFn: 'negotiateExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Wave 15: TN3270E Handshake Trace ──────────────────────────────
+  {
+    id:       'tn3270e-handshake-trace',
+    category: 'security',
+    title:    'TN3270E Handshake Trace',
+    desc:     'Capture and decode the full TN3270E DEVICE-TYPE and FUNCTIONS sub-negotiation exchange — reveals exactly what terminal type was agreed, which LU was assigned, and which TN3270E functions are active.',
+    steps: [
+      {
+        title: 'What the handshake reveals',
+        body:  'TN3270E negotiation happens via Telnet sub-option (IAC SB) exchanges before any 3270 data flows. The DEVICE-TYPE REQUEST/IS exchange establishes the terminal model and LU. The FUNCTIONS REQUEST/IS exchange establishes which TN3270E features are active (RESPONSES, BIND-IMAGE, UNBIND, DATA-STREAM-CTL, SYSREQ). This trace shows every byte exchanged — useful for understanding what the host is capable of and what it told your client.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Connect and refresh',
+        body:  'Connect to a host with TN3270E enabled. After the session is established, refresh the Negotiation Analyzer. The TN3270E HANDSHAKE TRACE section at the bottom of the session card shows each sub-negotiation exchange in order.',
+        highlight: 'negotiateOut',
+        autoFn: 'negotiateRefresh',
+        autoLabel: 'Refresh for me',
+      },
+      {
+        title: 'Reading the trace',
+        body:  'Each line shows direction (→ C = client sent, ← S = server sent) and the decoded meaning. DEVICE-TYPE REQUEST shows what terminal type and LU name the client requested. DEVICE-TYPE IS shows what the server confirmed (look for CONNECT LU= to see the assigned LU). FUNCTIONS REQUEST/IS shows the negotiated feature set — functions in the IS that were not in the REQUEST mean the server added capabilities the client did not ask for.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+      {
+        title: 'Security implications of FUNCTIONS',
+        body:  'The FUNCTIONS IS list matters: RESPONSES means the server will send positive/negative acknowledgment of data records — useful for MITM reliability analysis. BIND-IMAGE means the server sends VTAM BIND parameters, which includes session key information. DATA-STREAM-CTL gives the server control over SNA data stream framing. If the server negotiates functions the client did not request, it is extending capabilities unilaterally.',
+        highlight: 'negotiateOut',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── VTAM-Operator Pool/Session Dashboard ───────────────────────────
+  {
+    id:       'vtam-pool-dashboard',
+    category: 'security',
+    title:    'VTAM-Operator Pool/Session Dashboard',
+    desc:     'Groups every active session by LPAR, showing live count against a configured threshold and each session’s LU requested vs. granted — catches pool exhaustion before it takes an LPAR down.',
+    steps: [
+      {
+        title: 'Why this matters',
+        body:  'A VTAM session/LU pool has a fixed size. A shop that never watches how close to that ceiling it’s running finds out the hard way, new connections start failing, usually at the worst possible time. This dashboard surfaces the count per LPAR continuously instead of discovering the limit by hitting it.',
+        highlight: 'poolOut',
+        autoFn: null,
+      },
+      {
+        title: 'Optional: set a threshold',
+        body:  'Copy pool-limits.json.example to pool-limits.json and add a maxSessions value for any LPAR id (matching the id column in lpars.txt) you want WARN/CRITICAL thresholds for. An LPAR with no entry still shows its live count, just without a percentage-based alert.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and refresh',
+        body:  'Click 🔒, enter the password, find VTAM-OPERATOR POOL/SESSION DASHBOARD (below the TN3270E Negotiation Analyzer). Click ↺ Refresh. It groups every active session by the LPAR it’s connected to.',
+        highlight: 'poolOut',
+        autoFn: 'poolRefresh',
+        autoLabel: 'Refresh for me',
+      },
+      {
+        title: 'Reading a card',
+        body:  'Each LPAR gets one card: session count against its configured max (or just a live count if none is set), colored by severity, and a table of every session on it with LU requested vs. granted and connection state. WARN at 80% of the configured max, CRITICAL at 100%, or CRITICAL immediately regardless of count if a session’s very first screen matched a configured shop-specific reject pattern (see below).',
+        highlight: 'poolOut', autoFn: null,
+      },
+      {
+        title: 'Reject-pattern detection',
+        body:  'Some shops reject a connection outright when the pool is exhausted, showing something like "NO LU AVAILABLE" or "SESSION LIMIT REACHED" instead of a normal logon screen, wording isn’t standardized across installations, so add a rejectPattern regex for that LPAR’s id in pool-limits.json if you know your shop’s wording. It’s checked once, against the first screen only, right after connect, same regex-on-screen-text approach the RACF Probe already uses for lockout detection.',
+        highlight: 'poolOut', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV (or the JSON button next to it) for a per-LPAR record: count, configured max, severity, and reject-pattern match count.',
+        highlight: 'poolOut',
+        autoFn: 'poolExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── SSH No-Credential Access Checker ────────────────────────────────
+  {
+    id:       'ssh-no-credential-access-checker',
+    category: 'security',
+    title:    'SSH No-Credential Access Checker',
+    desc:     'Probes an SSH target for two specific misconfigurations: a session granted with zero credentials at all, and an empty password accepted for a named account.',
+    steps: [
+      {
+        title: 'Why this matters',
+        body:  'z/TPF and other IBM ported-OpenSSH targets occasionally ship with a stray "PermitEmptyPasswords yes" or a misconfigured none-auth path left over from a bring-up script. Neither shows up unless you actually test for it, a working password login looks identical to an operator either way.',
+        highlight: 'sshAuditOut',
+        autoFn: null,
+      },
+      {
+        title: 'Pick a target',
+        body:  'Select a saved host from ssh-hosts.txt, or type a host, port, and username directly. This is a single targeted check against one named account, not a sweep, so it needs to know exactly who to test.',
+        highlight: 'sshAuditHost',
+        autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Click ▶ RUN AUDIT. First attempt: the \'none\' auth method, does the server grant a session with no credential at all. If that\'s correctly rejected and the server tells us it offers password auth, second attempt: an empty password string for the same account. Each is one connection, one attempt, nothing chained.',
+        highlight: 'sshAuditOut',
+        autoFn: null,
+      },
+      {
+        title: 'Reading the verdict',
+        body:  'FINDING means one of the two checks succeeded, the finding text says which. SECURE means both were correctly rejected. INCONCLUSIVE means the check couldn\'t complete, connection refused, timeout, or the server doesn\'t offer password auth at all so the second check didn\'t apply.',
+        highlight: 'sshAuditOut', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV (or the JSON button next to it) for a record of the host, port, username, verdict, and finding text.',
+        highlight: 'sshAuditOut',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) HTTP Admin GUI Audit ─────────────────────────────
+  {
+    id:       'as400-http-admin-audit',
+    category: 'security',
+    title:    'IBM i: HTTP Admin GUI Audit',
+    desc:     'A read-only check of the IBM i HTTP Server Administration GUI (ports 2001 and 2010): is it reachable, does it take sign-in in clear text, what TLS and certificate does it present, and, with one profile, is the CVE-2026-96119 fix installed.',
+    steps: [
+      {
+        title: 'Why the admin console gets its own check',
+        body:  'The HTTP Server Administration GUI (the ADMIN instance, behind IBM Navigator for i) can create web servers and change how the system serves them. It belongs on an admin workstation or a VPN, not on every network that can route to the box. This audit asks whether it is reachable from where you are standing, and what it tells a stranger.',
+        highlight: 'httpAdminAuditOut', autoFn: null,
+      },
+      {
+        title: 'Prerequisites and scope',
+        body:  'This is a network check against a host you name, not tied to an open terminal session. It is gated by the RoE Scope Guard, so with a scope.json in place the host must be listed. It sends GETs only, submits no form, and never touches the Create HTTP Server page. Nothing here exploits anything.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Pick a target',
+        body:  'Type the host or IP. The ports default to 2001 (clear text) and 2010 (TLS). Leave the profile and password empty for the no-credential checks. Give one profile and password only if you also want the OS release and fix status read from the About page. The password is sent once for that request and is never kept, shown or exported.',
+        highlight: 'httpAdminAuditHost', autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Click ▶ RUN AUDIT. It asks both ports at once, then reads what an unauthenticated request reveals (the Server header). With a profile it makes one more GET for the About page.',
+        highlight: 'httpAdminAuditBtn', autoFn: null,
+      },
+      {
+        title: 'Read the verdict',
+        body:  'FINDING means something needs attention: the console answers on clear text port 2001 (so Basic auth would cross the wire in the clear), the TLS port negotiated TLS 1.0 or 1.1, the certificate is expired or too small, the console is reachable at all from this network, or the CVE-2026-96119 fix is not installed. A self-signed certificate is INFO, not a finding. INCONCLUSIVE means neither port answered, which is not the same as secure. SECURE means nothing was found.',
+        highlight: 'httpAdminAuditOut', autoFn: null,
+      },
+      {
+        title: 'The part to confirm on the box',
+        body:  'The mock models the CVE-2026-96119 weakness class and the PTF numbers in the finding text are the ones to check against IBM\'s bulletin for your release. The About page layout was modelled, not run on a live IBM i, so confirm what it reports. A console you cannot reach from here may still be reachable from somewhere else, so run it from each network that matters.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV (or JSON) for a record of the host, verdict, severity and finding text.',
+        highlight: 'httpAdminAuditOut', autoFn: null,
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) FTP Service Audit ────────────────────────────────
+  {
+    id:       'as400-ftp-service-audit',
+    category: 'security',
+    title:    'IBM i: FTP Service Audit',
+    desc:     'A read-only check of the IBM i FTP server (ports 21 and 990): banner and pre-login leaks, clear text sign-on, TLS and certificate, anonymous sign-on, optionally default profiles, and what one profile can browse.',
+    steps: [
+      {
+        title: 'Why FTP is worth its own check',
+        body:  'FTP is the old front door on IBM i, and it is a wide one. A signed-on session can browse the IFS and the libraries, and without an exit program on the FTP server exit points it can do far more. The Exit Point audit asks whether a program is registered, and the Listening Services Inventory asks whether the port is open. This asks what the server itself says and allows to someone who walks up to it.',
+        highlight: 'ftpAuditOut', autoFn: null,
+      },
+      {
+        title: 'Prerequisites and scope',
+        body:  'This is a network check against a host you name, not tied to an open terminal session, and it is gated by the RoE Scope Guard. It can only send read-only commands, from a fixed list, so STOR, DELE, MKD and RCMD cannot be sent. The default ports are 21 and 990. The mock listens on 2121 and 2990, because a container user cannot bind below 1024.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Pick a target',
+        body:  'Type the host or IP and check the two ports. Leave the profile and password empty for the no-credential checks. Give one profile and password to also see what that profile can reach. The password is sent once and never kept, shown or exported, and it is not sent in clear text unless you tick the clear text box.',
+        highlight: 'ftpAuditHost', autoFn: null,
+      },
+      {
+        title: 'The opt-in default profile check',
+        body:  'Ticking "also try default profiles" is the one intrusive part, so it is off by default and needs the activity ftp-login-probe named in scope.json. It makes at most 2 tries per profile, a second apart, and stops on the first success. Every failed FTP sign-on counts toward QMAXSIGN, and a profile that reaches it is disabled, so the cap exists to keep an audit from locking out a real person. Leave it unticked unless the engagement allows it.',
+        highlight: 'ftpAuditDefaults', autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Click ▶ RUN AUDIT. It reads the banner, tries SYST and FEAT before any sign-on, sends USER only (never PASS) to see whether clear text sign-on is accepted, negotiates TLS on the plain port and on 990, and tries anonymous and ftp once each. With a profile it then reads SYST, HELP, and lists the IFS root and /QSYS.LIB.',
+        highlight: 'ftpAuditBtn', autoFn: null,
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL means anonymous sign-on works or a default profile signed on. FINDING covers clear text sign-on accepted (unconfirmed, the server may still refuse at the password step), no TLS at all, SYST or the banner leaking the release before login, TLS 1.0 or 1.1, a bad certificate, RCMD advertised in HELP (it is noticed, never run), and a profile that can browse the IFS and libraries. INFO is a fact, or something that could not be read, which is never a pass. INCONCLUSIVE means nothing answered.',
+        highlight: 'ftpAuditOut', autoFn: null,
+      },
+      {
+        title: 'The part to confirm on the box',
+        body:  'The replies were modelled from IBM\'s documentation and were not run on a live IBM i. Confirm the real banner, whether SYST is refused before login, what USER answers for an unknown profile, the SYST text after login, whether HELP lists RCMD, and how NAMEFMT 1 lists /QSYS.LIB. Whether an exit program is registered is the Exit Point audit\'s question, this tool shows what an ordinary profile can reach without one.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV (or JSON) for a record of the host, verdict, severity and finding text.',
+        highlight: 'ftpAuditOut', autoFn: null,
+      },
+    ],
+  },
+
+  {
+    id:       'as400-ibmi-host-server-recon',
+    category: 'security',
+    title:    'IBM i: Host Server Recon',
+    desc:     'A read-only look at what an IBM i tells anyone on the network before a sign-on: the ports of every host server from the server mapper, and the OS release, password level and answering job from the sign-on server. No profile or password.',
+    steps: [
+      {
+        title: 'What a box says before anyone signs on',
+        body:  'Two listeners answer without a sign-on. The server mapper on 449 tells a client where each host server lives, and the sign-on server on 8476 and 9476 answers the exchange-attributes step every IBM i client does before it asks for a password. Together they give the port of every host server, the OS release, the password level (QPWDLVL) and the job that answered.',
+        highlight: 'ibmiReconOut', autoFn: null,
+      },
+      {
+        title: 'Prerequisites and scope',
+        body:  'This is a network check against a host you name, not tied to an open terminal session, and it is gated by the RoE Scope Guard: the host has to be in scope. No activity needs naming, because no credential is ever sent. It contacts the server mapper and the sign-on server only. The remote command server and the other host servers are named but never connected to.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Pick a target',
+        body:  'Type the host or IP. Leave the mapper port at 449 unless you are testing against the mock, which listens on 4449 (start it with node mock-lpar/mock-as400-hostsvr.js).',
+        highlight: 'ibmiReconHost', autoFn: null,
+      },
+      {
+        title: 'The optional sign-on screen',
+        body:  'Tick "also read the 5250 sign-on screen" to read the telnet sign-on as well. The two boxes under it are the plain and TLS telnet ports, 23 and 992 on a real box (the mock listens on 3272). It opens a real 5250 session for a moment, so the server allocates a virtual device (QPADEVxxxx) and frees it when the probe hangs up. No user ID and no device name are sent. It reports the system name, subsystem and device, and flags a sign-on served over plain telnet. Leave it unticked for the mapper and sign-on server alone.',
+        highlight: 'ibmiReconBanner', autoFn: null,
+      },
+      {
+        title: 'Run it',
+        body:  'Click ▶ READ HOST SERVERS. It asks the mapper for each of the seven host servers, plain and TLS, then sends the sign-on server one exchange-attributes request over plain and over TLS. It takes a few seconds.',
+        highlight: 'ibmiReconBtn', autoFn: null,
+      },
+      {
+        title: 'Read the result',
+        body:  'The top block shows what the sign-on server said: OS release, password level and the answering job. The table lists each host server and its plain and TLS ports, with none where the mapper names no TLS twin. FINDING rows cover a server offered in plain text with no TLS twin, the sign-on server answering in clear text, the OS release shown before any sign-on, QPWDLVL below 2, and the remote command server being registered. Registered is not the same as reachable, so check that one from the network.',
+        highlight: 'ibmiReconOut', autoFn: null,
+      },
+      {
+        title: 'Pair it with the inside view',
+        body:  'The Listening Services Inventory asks what is listening from inside, with NETSTAT_INFO. This tool asks what answers from outside. When the two disagree, for example a service the inventory says is not listening but the mapper still names, that is a finding worth writing up.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV (or JSON) for a record of the host, verdict, severity and finding text. The same checks run from the command line as the mainframe-nse scripts ibmi-svrmap-info and ibmi-signon-info.',
+        highlight: 'ibmiReconOut', autoFn: null,
+      },
+    ],
+  },
+
+  // ── Wave 14: SDSF Job Scanner ─────────────────────────────────────
+  {
+    id:       'sdsf-job-scanner',
+    category: 'security',
+    title:    'SDSF Job Scanner',
+    desc:     'Parses the visible SDSF ST or DA screen to enumerate running jobs and STCs — flags system tasks visible from your privilege level, flagging information disclosure.',
+    steps: [
+      {
+        title: 'What SDSF visibility reveals',
+        body:  'SDSF (System Display and Search Facility) shows all running jobs, started tasks (STCs), and TSO users visible to your RACF profile. If you can see a system STC like VTAM or RACF in SDSF, that is information disclosure: you know which security infrastructure is running, which could inform targeting. If your RACF profile has broad SDSF access (SDSFPREF CLASS with wide permissions), you may see far more than intended.',
+        highlight: 'sdsfOut',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to SDSF',
+        body:  'From TSO READY, type SDSF and press ENTER. At the SDSF Primary Menu, type ST and press ENTER to see the Status panel (all jobs), or type DA for Display Active (currently running tasks). The OIA APP bar should show SDSF in green.',
+        highlight: 'oiaApp',
+        autoFn: null,
+      },
+      {
+        title: 'Click Refresh in the scanner',
+        body:  'With the SDSF screen visible, scroll to SDSF JOB & STC SCANNER in the Security panel and click ↺ Refresh. The tool reads the current terminal screen — it sends no commands — and parses the visible job rows. No SDSF line commands are issued.',
+        highlight: 'sdsfStatus',
+        autoFn: 'sdsfRefresh',
+        autoLabel: 'Parse current screen for me',
+      },
+      {
+        title: 'Reading the results',
+        body:  'Each row shows: RISK level, JOBNAME, JOBID, OWNER, priority, queue. HIGH (amber) = system STC with a system owner (SYS1, VTAM, RACF, TCPIP) visible from your session — security finding. MEDIUM = STC without system owner — check its RACF STARTED profile next. INFO = idle STC. OK = ordinary user batch job.',
+        highlight: 'sdsfOut',
+        autoFn: null,
+      },
+      {
+        title: 'Feed STCs to the profile scanner',
+        body:  'After scanning SDSF, use "⇦ Import STCs from SDSF" in the STC Profile Scanner section below. This copies the STC names from the SDSF scan into the profile scanner wordlist so you can then check each STC\'s RACF STARTED class profile in one click.',
+        highlight: 'stcStatus',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Wave 14: STC Profile Scanner ─────────────────────────────────
+  {
+    id:       'stc-profile-scanner',
+    category: 'security',
+    title:    'STC Profile Scanner',
+    desc:     'Issues RLIST STARTED stcname.* for each started task — a missing RACF STARTED profile means the STC runs under the default user, a common misconfiguration and privilege escalation vector.',
+    steps: [
+      {
+        title: 'RACF STARTED class and why it matters',
+        body:  'The RACF STARTED class maps started task (STC) names to user IDs and groups. When a started task launches, RACF looks up its STARTED profile — if no profile exists, the STC runs under the default user (usually a highly privileged system account). An attacker who can start or influence a profiled STC gains that STC\'s user ID. STCs without profiles are a blank check: RACF cannot audit what they do.',
+        highlight: 'stcOut',
+        autoFn: null,
+      },
+      {
+        title: 'Get to TSO READY',
+        body:  'The scanner issues RLIST commands at the TSO READY prompt. Connect to TSO, log in, and ensure the cursor is at a READY prompt before starting the scan.',
+        highlight: 'stcStatus',
+        autoFn: null,
+      },
+      {
+        title: 'Enter STC names or import from SDSF',
+        body:  'Type STC names in the wordlist (comma or space separated), or click "⇦ Import STCs from SDSF" if you ran the SDSF Job Scanner first. The default wordlist covers common infrastructure STCs: JES2, VTAM, TCPIP, RACF, SMF, FTPD, SYSLOG, CATALOG, DFHSM, DFRMM.',
+        highlight: 'stcWordlist',
+        autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Click ▶ Start Scan. For each STC name the tool issues "RLIST STARTED stcname.* ALL" and reads the response. ICH10006I means no profile exists — that STC runs without a defined identity. Otherwise the tool extracts USER= (the user ID the STC runs as) and the PRIVILEGED flag.',
+        highlight: 'stcStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Interpreting results',
+        body:  'CRITICAL (red) = STC has a STARTED profile with PRIVILEGED attribute — it bypasses all RACF access checks. HIGH (amber) = no STARTED profile — STC runs as default user, identity unknown. MEDIUM = profile found but USER could not be parsed. OK = profile found with a named user ID and group.',
+        highlight: 'stcOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV for a complete audit report: STC name, status (PROFILED/NO_PROFILE), user, group, PRIVILEGED flag, and risk rating.',
+        highlight: 'stcOut',
+        autoFn: 'stcExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── SDSF 3: Job Output Harvester ──────────────────────────────────
+  {
+    id:       'sdsf-job-output-harvester',
+    category: 'security',
+    title:    'SDSF Job Output Harvester',
+    desc:     'Actively navigates into each job’s real output (S jobname) instead of just reading the list row, flagging non-zero condition codes and sensitive-looking keywords.',
+    steps: [
+      {
+        title: 'Why this is different from the SDSF Job Parser',
+        body:  'The parser above only reads whatever job list is already on screen, list-level status, nothing more. This tool actively drives into each job’s actual output the way an operator reviewing a failed run would, pulling the real step-by-step content: condition codes, step disposition messages, anything a step’s output named.',
+        highlight: 'sdsfHarvestOut',
+        autoFn: null,
+      },
+      {
+        title: 'Give it something to harvest',
+        body:  'At TSO READY, SUBMIT a job or two first if none are queued yet, e.g. SUBMIT BADJOB for a non-zero return code, SUBMIT QTRRPT for a clean one. Then navigate to SDSF (ISPF → option M → ST) so there’s a job list on screen.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and run the harvest',
+        body:  'Click 🔒, enter the password, find SDSF JOB &amp; STC SCANNER → SDSF JOB OUTPUT HARVESTER. Click ▶ HARVEST OUTPUT. For each job on the list, the tool types "S jobname", reads the real output screen, then PF3s back for the next one.',
+        highlight: 'sdsfHarvestBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Read the findings',
+        body:  'FLAGGED means either a non-zero condition code (the job didn’t end cleanly, worth knowing about) or a sensitive-looking keyword turned up in the harvested output (PASSWORD, CREDENTIAL, SECRET, and similar). OK means neither, nothing stood out in what was actually pulled from the job’s own output.',
+        highlight: 'sdsfHarvestOut', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV (or the JSON button next to it) for a per-job record: name, job ID, flagged status, and the specific reason.',
+        highlight: 'sdsfHarvestOut',
+        autoFn: 'sdsfHarvestExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── DB2 Scenario 1: Subsystem Scanner ────────────────────────────
+  {
+    id:       'db2-subsystem-scan',
+    category: 'security',
+    title:    'DB2 Subsystem Scanner',
+    desc:     'Enumerate accessible DB2 subsystems from TSO using a wordlist — classifies each as ACCESSIBLE, DENIED, or NOT_FOUND and extracts the DB2 version.',
+    steps: [
+      {
+        title: 'What the scanner does',
+        body:  'For each subsystem ID in the wordlist, the scanner issues "DSN SYSTEM(xxx)" from your TSO READY prompt and reads the response. ACCESSIBLE means the connection succeeded — the banner also reveals the DB2 release. DENIED means RACF blocked the connection. NOT_FOUND means no subsystem by that name is active.',
+        highlight: 'db2ScanResults',
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'You must be at a TSO READY prompt before starting. If you are in ISPF, exit to TSO first (type "=X" or "END" from the ISPF primary menu). The scanner will not work from a logon screen, SDSF, or any ISPF panel.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password (default: 2970). The Security panel opens. Scroll down to the DB2 TOOLS section.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Load the default wordlist',
+        body:  'Click "Load defaults" to populate the wordlist with 16 common subsystem IDs used on IBM mainframes: DB2, DB21–DB23, DBPD, DBQA, and others. You can edit this list — one ID per line, lines starting with # are ignored.',
+        highlight: 'db2Wordlist',
+        autoFn: 'db2LoadDefaults',
+        autoLabel: 'Load defaults for me',
+      },
+      {
+        title: 'Set the delay',
+        body:  'The delay controls how long the scanner waits between attempts. 1500 ms is the default — enough time for TSO to respond and for the host to process the disconnect. On production systems use 2000 ms or more to avoid triggering session-rate alarms.',
+        highlight: 'db2ScanDelay',
+        autoFn: null,
+      },
+      {
+        title: 'Start the scan',
+        body:  'Click ▶ START. The status line updates for each attempt. Watch the results table populate: green ACCESSIBLE entries are targets — the version column tells you the exact DB2 release. DENIED entries confirm the subsystem exists but is RACF-protected. NOT_FOUND entries mean no active subsystem by that name.',
+        highlight: 'db2ScanStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Interpret ACCESSIBLE results',
+        body:  'An ACCESSIBLE result means your TSO user has RACF authority to connect to that DB2 subsystem. The scanner exits DSN cleanly after confirming access — it does not execute any SQL. The DB2 version in the banner (e.g. RELEASE 12.1.5) is useful for matching known CVEs.',
+        highlight: 'db2ScanResults',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click "↓ Export all DB2 results CSV" at the bottom of the DB2 TOOLS section to download a CSV covering all three DB2 tools. Use ACCESSIBLE entries as input to the Connection Permission Probe for deeper analysis.',
+        highlight: 'db2ScanResults',
+        autoFn: 'db2ExportCsv',
+        autoLabel: 'Export results CSV for me',
+      },
+    ],
+  },
+
+  // ── DB2 Scenario 2: RACF-DB2 Authority Scan ──────────────────────
+  {
+    id:       'db2-auth-scan',
+    category: 'security',
+    title:    'RACF-DB2 Authority Scan',
+    desc:     'Issue SEARCH CLASS across four DB2 RACF resource classes to map which DB2 objects are protected and discover profile names.',
+    steps: [
+      {
+        title: 'What RACF resource classes protect',
+        body:  'DB2 on z/OS integrates with RACF through four resource classes. DSNR controls who can connect to each subsystem. MDSNPN protects application plan names (EXECUTE privilege). MDSNTB protects table and view names. MDSNSP protects stored procedures. If any of these classes is not activated, that area of DB2 is unprotected by RACF.',
+        highlight: 'db2AuthResults',
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'You must be at a TSO READY prompt. The SEARCH CLASS command requires READ access to the RACF database — most TSO users have this. You do not need RACF administrator authority to list profile names.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and navigate to DB2 TOOLS',
+        body:  'Click 🔒 in the OIA bar, enter the security password, and scroll to the DB2 TOOLS section in the Security panel. The RACF-DB2 AUTHORITY SCAN subsection shows the four class labels with colour coding.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Start the scan',
+        body:  'Click ▶ SCAN. The tool issues SEARCH CLASS(DSNR), then MDSNPN, MDSNTB, and MDSNSP in sequence. Each command\'s output is parsed and appended to the results table. The status line shows which class is currently being scanned.',
+        highlight: 'db2AuthStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Interpret the results',
+        body:  'Each row is a RACF profile in that class. DSNR profiles (amber) follow the pattern "subsystem.connectiontype" — e.g. DB2.BATCH, DB2.DB2CALL. MDSNPN profiles (blue) are plan names. MDSNTB profiles (purple) are table names. An empty result for a class means it is either not activated or all profiles are generic.',
+        highlight: 'db2AuthResults',
+        autoFn: null,
+      },
+      {
+        title: 'What an empty class means',
+        body:  'If SEARCH CLASS(MDSNPN) returns no profiles, plan-level access control is not in use — any authenticated DB2 user can EXECUTE any application plan. This is a common finding in environments that rely solely on table-level grants. Flag it in your report.',
+        highlight: 'db2AuthResults',
+        autoFn: null,
+      },
+      {
+        title: 'Export and cross-reference',
+        body:  'Export with "↓ Export all DB2 results CSV". Cross-reference DSNR profile names with the Subsystem Scanner results to confirm which subsystems have RACF protection. Use the DSNR profile names as input to the Connection Permission Probe for permit-level detail.',
+        highlight: 'db2AuthResults',
+        autoFn: 'db2ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── DB2 Scenario 3: Connection Permission Probe ───────────────────
+  {
+    id:       'db2-perm-probe',
+    category: 'security',
+    title:    'DB2 Connection Permission Probe',
+    desc:     'Run RLIST DSNR against BATCH, DB2CALL, DDF, and SPACENAM profiles for a specific subsystem to expose who has access — and whether PUBLIC is granted.',
+    steps: [
+      {
+        title: 'What DSNR connection types control',
+        body:  'The DSNR class has four standard connection type profiles per subsystem. BATCH controls batch jobs connecting to DB2. DB2CALL controls TSO foreground and CICS attach. DDF controls Distributed Data Facility — remote DRDA/JDBC connections from off-platform. SPACENAM controls access to specific tablespaces. If PUBLIC has READ on any of these, any user on the system can connect via that path.',
+        highlight: 'db2PermResults',
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'You need a DB2 subsystem ID to probe. Run the Subsystem Scanner first to identify accessible subsystems. Then return here and enter one of the ACCESSIBLE subsystem IDs. You must be at a TSO READY prompt.',
+        highlight: 'db2PermSubsys',
+        autoFn: null,
+      },
+      {
+        title: 'Unlock and navigate to DB2 TOOLS',
+        body:  'Click 🔒 in the OIA bar, enter the security password, and scroll to CONNECTION PERMISSION PROBE in the DB2 TOOLS section.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Enter the subsystem ID',
+        body:  'Type the subsystem ID (e.g. DB2, DBPD, DBC1) into the Subsystem field. The field is limited to 4 characters and auto-uppercases. This is the same ID you found with the Subsystem Scanner.',
+        highlight: 'db2PermSubsys',
+        autoFn: null,
+      },
+      {
+        title: 'Start the probe',
+        body:  'Click ▶ PROBE. The tool issues RLIST DSNR subsys.BATCH ALL, then DB2CALL, DDF, and SPACENAM in sequence. Each RLIST response is parsed for permit entries — user IDs and their access level (READ, UPDATE, ALTER, CONTROL).',
+        highlight: 'db2PermStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Spot PUBLIC access',
+        body:  'Each permit appears as a badge: green for READ, amber for UPDATE, red for ALTER/CONTROL. PUBLIC access grants are highlighted with a red background border — these mean any authenticated mainframe user can connect to DB2 via that path without individual RACF authorization. This is the most common DB2 RACF misconfiguration.',
+        highlight: 'db2PermResults',
+        autoFn: null,
+      },
+      {
+        title: 'NOT DEFINED profiles',
+        body:  'A "NOT DEFINED" result for a connection type means RACF has no specific profile for it — the system falls back to generic profiles or RACF WARNING mode. In some environments this is intentional; in others it means the access control was never configured. Document it either way.',
+        highlight: 'db2PermResults',
+        autoFn: null,
+      },
+      {
+        title: 'Export the findings',
+        body:  'Click "↓ Export all DB2 results CSV" to capture the permit lists for your report. The CSV includes each resource name, whether it exists, and the full list of ID:ACCESS pairs — ready to paste into a findings table.',
+        highlight: 'db2PermResults',
+        autoFn: 'db2ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Scenario 4: Protocol Fingerprint via AID Sweep ─────────────────
+  {
+    id:       'aid-fingerprint',
+    category: 'security',
+    title:    'Protocol Fingerprint via AID Sweep',
+    desc:  'Sweep AID bytes and classify host responses to fingerprint the 3270 implementation — distinguishing standard z/OS, z/VM, CICS, and custom middleware.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to any TN3270 host. You do not need to be at a logon screen — any screen works. The sweep sends raw AID records; responses reveal how the host\'s 3270 parser handles the full AID byte space.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Navigate to PROTOCOL FUZZER',
+        body:  'Scroll to the bottom of the Security panel. The PROTOCOL FUZZER section should already have "AID Sweep" selected in the Mode dropdown — this is the default.',
+        highlight: 'fuzzMode',
+        autoFn: null,
+      },
+      {
+        title: 'Narrow the sweep to the PA/CLEAR cluster',
+        body:  'For a quick fingerprint, set Start = 60 and End = 70. This range covers the PA key cluster (0x6B–0x6E), CLEAR (0x6D), and NONE (0x60). Standard z/OS hosts respond to all of them; middleware that translates the stream often only passes through 0x60 and 0x6D.',
+        highlight: 'fuzzAidStart',
+        autoFn: '_wtSetAidRange',
+        autoLabel: 'Set range 60–70 for me',
+      },
+      {
+        title: 'Adjust timeout and delay',
+        body:  'Set timeout to 2000 ms — enough for most hosts to reply. Use a delay of 500 ms+ on anything production-adjacent to avoid triggering rate-limiting or anomaly detection on the mainframe side.',
+        highlight: 'fuzzTimeout',
+        autoFn: null,
+      },
+      {
+        title: 'Run the sweep',
+        body:  'Click ▶ START. Watch the result table populate in real time. The colour tells the story: green (screen) = host understood the AID; grey (no-response) = AID ignored or unknown; red (disconnect) = host rejected it and terminated the session.',
+        highlight: 'fuzzStartBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Interpret the response pattern',
+        body:  'Standard z/OS: 0x60 (NONE), 0x6C (PA1), 0x6D (CLEAR), 0x6E (PA2) → all screen. Standard z/VM: similar but may not respond to CLEAR the same way. A host that returns screen for every byte likely has a catch-all handler — a proxy or SNA gateway in the path. A host that disconnects on any byte is strict about AID validation.',
+        highlight: 'fuzzResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Export the fingerprint',
+        body:  'Click ↓ CSV to save the result set. Collected fingerprints across target systems form a reference library — useful for distinguishing application environments and identifying the TN3270 gateway software.',
+        highlight: 'fuzzResultsTable',
+        autoFn: 'fuzzExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Field Length Disclosure ─────────────────────────────────────────
+  {
+    id:       'field-length-disclosure',
+    category: 'security',
+    title:    'Field Length Disclosure',
+    desc:     'Nondisplay fields mask characters, not length — the MDT bit plus buffer-address deltas reveal exactly how many characters were typed into a password field.',
+    steps: [
+      {
+        title: 'Why "nondisplay" isn\'t "safe"',
+        body:  'A password field\'s FA byte sets the nondisplay intensity bits so the terminal doesn\'t render typed characters. But the field\'s buffer-address span and its MDT (Modified Data Tag) bit are ordinary, unmasked datastream metadata — anyone reading the wire (or sitting where this tool sits) can measure exactly how many characters were typed without ever seeing what they were. That\'s a structural side-channel in the protocol itself, not a timing attack.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Go to a logon screen and type a password — don\'t press Enter',
+        body:  'Navigate to a TSO logon screen. Type anything into the USERID field, then type a password of any length into the PASSWORD field. Leave the cursor there without submitting — this is exactly the moment a real user would be mid-entry.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Scan the screen',
+        body:  'In the FIELD ANALYSIS section, click "🔍 Scan Screen Now". The scanner walks every field on the current screen, finds any nondisplay field with the MDT bit set, and logs its exact character count — even though the field itself still renders masked on your terminal.',
+        highlight: 'fdScanBtn',
+        autoFn: 'fieldDiscScanOnce',
+        autoLabel: 'Scan for me',
+      },
+      {
+        title: 'Read the result',
+        body:  'The results table shows the field\'s row/column and its length in plain numbers. This is the whole finding: you now know the password is, say, exactly 8 characters — a dictionary/brute-force attacker can immediately drop every candidate that isn\'t 8 characters long, without a single failed logon attempt.',
+        highlight: 'fdResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Optional: passive watch mode',
+        body:  'Click "👁 Watch" to leave the scanner running in the background — it re-scans every screen the session receives and logs new nondisplay+MDT findings automatically, silently harvesting password lengths across an entire session without any active probing.',
+        highlight: 'fdWatchBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV to save row/column/length/timestamp findings for your report.',
+        highlight: 'fdResultsTable',
+        autoFn: 'fieldDiscExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Cross-Session Buffer Bleed ──────────────────────────────────────
+  {
+    id:       'buffer-bleed',
+    category: 'security',
+    title:    'Cross-Session Buffer Bleed',
+    desc:     'A pooled LU\'s controller buffer is only guaranteed clear after an Erase/Write — reused too soon, it can hand the next session a prior user\'s field data.',
+    steps: [
+      {
+        title: 'Why buffer reuse matters',
+        body:  'A real 3270 controller only clears its screen buffer on an Erase command. If a Logical Unit (LU) is pooled and handed to a new logical session before the host application issues its own fresh Erase/Write, whatever the previous occupant left behind — including unprotected or nondisplay fields with MDT still set — can still be present for a brief window before the new screen paints over it.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Arm the watch',
+        body:  'In the SESSION HYGIENE section, click "🩸 Arm Buffer-Bleed Watch". The tool now inspects the first screens after every connect for content that shouldn\'t be there yet.',
+        highlight: 'bbArmBtn',
+        autoFn: 'toggleBufferBleedWatch',
+        autoLabel: 'Arm the watch for me',
+      },
+      {
+        title: 'Pin a specific LU and connect',
+        body:  'Open the Connect modal. In the LU Name field, type a name you\'ll reuse — e.g. TESTLU01 — and connect. Type a userid and password into the logon fields (any values), then disconnect without necessarily submitting.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Reconnect to the SAME LU',
+        body:  'Within about 90 seconds, open the Connect modal again, enter the exact same LU Name (TESTLU01), and connect. If the host or gateway reuses LU buffers without a full Erase, the very first screen frame of this new session can carry the prior session\'s field content.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Check the results',
+        body:  'The results table logs the LU name, the field coordinates, and the leaked content — masked for nondisplay fields, shown in plain text otherwise. A hit here means one logical session bled into the next before the host had a chance to draw its own screen.',
+        highlight: 'bbResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV to document the LU, coordinates, and leaked content for your report.',
+        highlight: 'bbResultsTable',
+        autoFn: 'bufferBleedExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── VM Minidisk Password Exposure ───────────────────────────────────
+  {
+    id:       'vm-minidisk-exposure',
+    category: 'security',
+    title:    'VM Minidisk Password Exposure',
+    desc:     'z/VM\'s CP has no masked-input primitive for command arguments — a minidisk LINK password typed at the ordinary CP READ prompt renders in cleartext.',
+    steps: [
+      {
+        title: 'Why this is different from a LOGON password',
+        body:  'z/VM\'s CP LOGON PASSWORD field is properly masked — its FA byte sets the nondisplay bits, same as a TSO password field. But CP has no concept of "this command argument is a secret": a minidisk LINK password typed at the ordinary CP READ command line lands in a normal, NORMAL-intensity, unprotected field. It renders in cleartext the instant it\'s typed — before ENTER is even pressed — and is captured by anything watching the session: traffic logs, screen recorders, or a shared/shoulder-surfed console.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Connect to a z/VM CP session',
+        body:  'Connect to a z/VM target (type ZVM in your profile, or the bundled mock at mock-zvm/3271) and log on. You\'ll land at the CP Ready prompt.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Type a LINK command with a password',
+        body:  'At the CP READ command line, type: LINK MAINT 191 191 MR mysecretpw — but don\'t press Enter yet. Look at the screen: the entire command, including the password, is fully visible in plain text. Compare that with the LOGON PASSWORD field a moment earlier, which was masked.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Scan the screen',
+        body:  'Click "🔎 Scan Current Screen". The scanner recognizes the LINK syntax, extracts the password, and cross-checks the field\'s FA byte to confirm it was never marked nondisplay — the receipt that proves this isn\'t user error, it\'s a structural gap in CP\'s command-line design.',
+        highlight: 'vmScanBtn',
+        autoFn: 'vmMinidiskScanNow',
+        autoLabel: 'Scan for me',
+      },
+      {
+        title: 'Read the result',
+        body:  'The results table shows the owner, target virtual device, the exposed password in plain text, and the field\'s FA — flagged NORMAL / unmasked in orange rather than the green NONDISPLAY you\'d see for a properly protected field.',
+        highlight: 'vmResultsTable',
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV to document the exposure for your report.',
+        highlight: 'vmResultsTable',
+        autoFn: 'vmMinidiskExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Wire Inspector ───────────────────────────────────────────────
+  {
+    id:       'wire-inspector',
+    category: 'security',
+    title:    'Wire Inspector',
+    desc:     'A 3270-aware packet inspector — decoded orders, security-relevant color coding, and replay, in a Wireshark-shaped window Wireshark itself can\'t build without a custom dissector.',
+    steps: [
+      {
+        title: 'Why not just use Wireshark?',
+        body:  'Wireshark has no native TN3270 dissector — a raw capture piped to it only ever shows Telnet/TCP framing, not decoded 3270 orders (SBA, SF, AID, field boundaries). The Wire Inspector reuses the same raw byte capture that already powers PCAP export, but decodes it with this product\'s own 3270 parser instead, so filtering and color-coding can be genuinely protocol-aware.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Open the Wire Inspector',
+        body:  'In the TRAFFIC section, click "🔌 Wire Inspector". It opens as its own popup window, same as Session Viewer and Proxy Viewer.',
+        highlight: 'wireInspectorBtn',
+        autoFn: 'openWireInspector',
+        autoLabel: 'Open it for me',
+      },
+      {
+        title: 'Connect and log on',
+        body:  'Back in the main window, connect to a host and log on. Every screen and every key you send appears in the Wire Inspector\'s packet list in real time (it polls every few seconds) — negotiation, sub-negotiation, writes, and your outbound AID records.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Filter to nondisplay-field activity',
+        body:  'In the Wire Inspector, type "field:nondisplay" into the filter bar. The list narrows to exactly the records that read or wrote a nondisplay field — the logon screen\'s PASSWORD field definition, and your own submission of it.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Decode a record',
+        body:  'Click your logon AID record. The left pane shows an order-by-order breakdown — AID, cursor, each SBA/field pair. Notice the USERID field shows its content in cleartext, but the PASSWORD field shows "N byte(s) — nondisplay field content, masked" — the decoder never surfaces nondisplay content, matching the same guarantee the rest of this product holds everywhere else.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Hover to sync hex ↔ order',
+        body:  'Hover any line in the order tree — the corresponding bytes highlight in the hex/ASCII pane on the right. This is how you\'d explain to someone exactly which bytes produced a given piece of the decode.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Replay an outbound record',
+        body:  'Select an earlier outbound record — a menu selection or command you typed — and click "↻ Replay Selected". The exact bytes are re-sent into that same session, and the host processes it again live, no keyboard involved. Only outbound records are replayable; replaying "what the host said" isn\'t meaningful the same way.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Anomaly correlation',
+        body:  'A single decoded record can’t show a pattern across several of them, repeated ENTER keys, a redisplayed logon screen, the same userid retried, culminating in an actual RACF lockout message. The Wire Inspector now runs a stateful pass over the whole capture every refresh and surfaces what it finds as colored chips above the record list: MEDIUM for two failed logons in a row, HIGH for three or more against the same userid, CRITICAL for either an actual lockout or three-plus different userids tried in sequence, the shape of a brute-force sweep rather than someone fumbling their own password. Click a chip to jump straight to the decisive record.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Use ↓ PCAP for a Wireshark-readable capture (Telnet/TCP level only, same limitation as always), or ↓ CSV for the decoded record list — timestamps, direction, AID, and summaries.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) System Value Security Analyzer ─────────────────
+  {
+    id:       'as400-sysval-analyzer',
+    category: 'security',
+    title:    'IBM i: System Value Security Analyzer',
+    desc:     'Reads the security system values of an IBM i (AS/400) target with WRKSYSVAL and flags weak settings against recommended values.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target and sign on. Stop at any menu that shows a "Selection or command" line — the tool types WRKSYSVAL there. This tool is for IBM i only; it does nothing on a TN3270 (z/OS) session.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar at the bottom of the terminal and enter the security password (default: 2970) to reveal the Security tab and its tools.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the IBM i SECURITY section',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section of the Security panel. The System Value Security Analyzer is the first tool in it.',
+        highlight: 'as400SysvalBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the analyzer',
+        body:  'Click ▶ ANALYZE SYSTEM VALUES. The tool issues WRKSYSVAL, reads the current value of each security system value from the single list screen, then returns to the menu. No values are changed — it is read-only.',
+        highlight: 'as400SysvalBtn',
+        autoFn: 'startAs400SysvalScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'Each system value is rated. HIGH — QSECURITY below 40, QMAXSIGN(*NOMAX), QLMTSECOFR(0), QALWOBJRST(*ALL), QCRTAUT(*CHANGE/*ALL), QAUDCTL(*NONE). MEDIUM — weak QPWD* password rules, QINACTITV(*NONE), QAUDCTL set but missing *AUDLVL or *OBJAUD (object auditing silently logs nothing), QUSEADPAUT(*NONE), QRMTSIGN(*VERIFY/*SAMEPRF), QAUDLVL missing levels. The list pages, 33 values over three screens. OK — hardened settings such as QDSPSGNINF(1). The DETAIL column gives the recommended value.',
+        highlight: 'as400SysvalOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to download the findings from all three IBM i tools you have run this session (system values, user profiles, objects), each row tagged with its tool and a timestamp.',
+        highlight: 'as400SysvalOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) User Profile & Special-Authority Enumerator ────
+  {
+    id:       'as400-usrprf-enum',
+    category: 'security',
+    title:    'IBM i: User Profile & Special-Authority Enumerator',
+    desc:     'Enumerates IBM i user profiles with WRKUSRPRF, then reads each with DSPUSRPRF to flag privileged accounts, default passwords, and weak limit-capability settings.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool needs the command line to issue WRKUSRPRF and each DSPUSRPRF.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970) to reveal the Security tab.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the enumerator',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and locate the User Profile & Special-Authority Enumerator.',
+        highlight: 'as400UsrprfBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the enumerator',
+        body:  'Click ▶ ENUMERATE PROFILES. The tool issues WRKUSRPRF to collect every profile name, then returns to the menu and issues DSPUSRPRF for each profile in turn, reading its status, limit capabilities, special authorities, and whether the password matches the profile name. The status line shows progress; it is fully read-only.',
+        highlight: 'as400UsrprfBtn',
+        autoFn: 'startAs400UserScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'Profiles are ranked by risk. CRITICAL — *ALLOBJ/*SECADM (superuser) or a default password (password = profile name). HIGH — high-risk authorities like *SERVICE/*SPLCTL, or LMTCPB(*NO) on a privileged profile. The finding note also flags a privileged profile that is currently *DISABLED — dormant but still a latent escalation path if re-enabled.',
+        highlight: 'as400UsrprfOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the results (combined with any other IBM i tool output from this session) for your report.',
+        highlight: 'as400UsrprfOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Default Credential Audit (runs pre sign-on) ────
+  {
+    id:       'as400-default-credential-audit',
+    category: 'security',
+    title:    'IBM i: Default Credential Audit',
+    desc:     'Tries the standard IBM-supplied default pairs plus your own pre-audit intel against the Sign On screen, before anything is signed on. Capped and interleaved per profile so it does not trip QMAXSIGN.',
+    steps: [
+      {
+        title: 'Why this is separate from RACF PROBE',
+        body:  'RACF PROBE can already sweep an IBM i Sign On screen, but its built-in list is short and there is no good way to feed it a pre-audit intel list (userids from a kickoff call, a directory export, a prior report) beyond hand-formatting USER,PASS lines yourself. This tool does one job: build and run a lockout-aware plan from the standard IBM i list plus whatever intel you paste or load, specifically for the IBM i Sign On screen.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target and stop at the Sign On screen (User / Password fields, Subsystem / Current library labels). Do not sign on. This is the only tool in the IBM i Security section that runs before sign-on, which is why it sits first in the panel.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970) to reveal the Security tab.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the Default Credential Audit',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section. It is the first block, above the System Value Security Analyzer, since it is the one tool that runs before sign-on.',
+        highlight: 'credAuditIntel',
+        autoFn: null,
+      },
+      {
+        title: 'Add your pre-audit intel (optional)',
+        body:  'Paste USERID:PASSWORD or USERID,PASSWORD pairs, or just bare userids, one per line. A bare userid is tried as userid=password automatically. "Load file" reads a local .txt/.csv you pick (nothing is uploaded). "Load from host" reads default-accounts.txt on the bridge host, the same file RACF PROBE\'s "Load list" uses.',
+        highlight: 'credAuditIntel',
+        autoFn: null,
+      },
+      {
+        title: 'Standard list and userid=password',
+        body:  'Both checkboxes are on by default. "Standard list" adds the built-in IBM-supplied profile defaults (QSECOFR, QSYS, QPGMR, QSYSOPR, QSRV, and more, each with its documented role) plus a short list of common non-Q weak pairs. "Try userid=password" extends that to every userid seen, from either source, not just the standard list.',
+        highlight: 'credAuditStd',
+        autoFn: null,
+      },
+      {
+        title: 'Set the per-profile cap',
+        body:  'Max attempts / profile defaults to 2, one under the stock QMAXSIGN of 3. This is what keeps a long intel list from accidentally disabling an account: the planner tries the most informed guess for each profile first (an explicit intel pair, then userid=userid, then the standard list) and trims the rest once a profile hits the cap. 0 means no cap — only use that on a system you know does not enforce QMAXSIGN, or where you have explicit sign-off to risk a lockout.',
+        highlight: 'credAuditCap',
+        autoFn: null,
+      },
+      {
+        title: 'Preview the plan',
+        body:  'The status line below updates live as you type or toggle options, showing how many attempts across how many profiles the current settings will run, plus anything trimmed by the cap or skipped as not a valid IBM i userid.',
+        highlight: 'credAuditStatus',
+        autoFn: 'credAuditPreview',
+        autoLabel: 'Preview the plan',
+      },
+      {
+        title: 'Run it',
+        body:  'Click ▶ START. Attempts round-robin across profiles so one profile is never hit twice in a row. Each result classifies the same way RACF PROBE does: SUCCESS (credential works), EXISTS (the profile is real, this password was not — the CPF1107/1118/1392/1394 oracle), FAILURE (no such profile, CPF1120), or LOCKOUT (the audit itself tripped QMAXSIGN — it stops immediately). "Keep going after a match" signs a SUCCESS off and continues instead of stopping there.',
+        highlight: 'credAuditStartBtn',
+        autoFn: 'startAs400CredAudit',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — a valid credential. HIGH — the audit disabled a profile itself (lower the cap and re-run once it is re-enabled). A profile whose documented IBM-supplied role says PASSWORD(*NONE) should never accept a password at all — if userid=userid succeeds against one of those, the finding calls that out specifically as a misconfiguration, not just a weak password. These findings fold into the same combined CSV/JSON export as every other IBM i tool, under default-credential-audit.',
+        highlight: 'credAuditResults',
+        autoFn: null,
+      },
+      {
+        title: 'Export the results',
+        body:  'Click ↓ Export CSV (or JSON) right below the results table for this tool\'s own standalone export, or use the combined ↓ Export IBM i Audit CSV further down the panel to bundle it with every other IBM i tool\'s findings from this session.',
+        highlight: 'credAuditResults',
+        autoFn: 'credAuditExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Shipped Profile Audit ─────────────────────────
+  {
+    id:       'as400-shipped-profile-audit',
+    category: 'security',
+    title:    'IBM i: Shipped Profile Audit',
+    desc:     'Audits every IBM-supplied (Q*) user profile with DSPUSRPRF and flags the ones that can still sign on interactively or still hold a default password — the profiles a hardening pass must render non-interactive.',
+    steps: [
+      {
+        title: 'Why this is separate from the profile enumerator',
+        body:  'The User Profile Enumerator hunts privilege-escalation paths across every profile. This tool has one job: check the IBM-supplied Q* profiles against a single rule. IBM ships QSECOFR, QSYSOPR, QPGMR, QUSER, QSYS, QSRV, QTMHHTTP and more because daemons and base services run under them, so you cannot delete them. The control is to make them non-interactive: STATUS(*DISABLED) or PASSWORD(*NONE). Background subsystem jobs still run under a *NONE profile; only 5250, FTP, and SSH sign-on is blocked.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool issues WRKUSRPRF and one DSPUSRPRF per Q* profile from that command line. It is fully read-only.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970) to reveal the Security tab.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the Shipped Profile Audit',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section. The Shipped Profile Audit is directly below the User Profile & Special-Authority Enumerator.',
+        highlight: 'as400ShipprfBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Click ▶ AUDIT SHIPPED PROFILES. The mock now models the full IBM-supplied Q* set (~50 profiles), so WRKUSRPRF spans several pages — the tool rolls through all of them (watching for "More..." / "Bottom") and keeps only the names starting with Q, then returns to the menu and issues DSPUSRPRF for each one, reading Status, the No password (*NONE) line, the date the password was last changed, the special-authority list, and the default-password warning. The status line shows progress.',
+        highlight: 'as400ShipprfBtn',
+        autoFn: 'startAs400ShippedAudit',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — either the password equals the profile name (QSECOFR, QSRV, QSRVBAS on the mock; QSRVBAS also holds *ALLOBJ), OR the name is not one IBM ships at all (QYSPJ — a Q-named *ALLOBJ *SECADM blend-in backdoor; do not harden it, investigate and delete it). HIGH — a privileged Q* profile still enabled with a password. MEDIUM — a non-privileged Q* profile still enabled with a password (QPGMR, QSYSOPR, QUSER, QTMHHTTP). OK — non-interactive already: QSYS ships *DISABLED and PASSWORD(*NONE) even though it holds every special authority, and the ~40 other IBM-supplied profiles (QDOC, QTFTP, QSNADS, QDIRSRV, …) ship PASSWORD(*NONE) — that long tail of OK rows is the target state for the whole set. QSECOFR is judged as the break-glass account — a non-default password is expected there, only a default password or a missing change date is flagged.',
+        highlight: 'as400ShipprfOut',
+        autoFn: null,
+      },
+      {
+        title: 'Cross-check: service tools and QAUTOVRT',
+        body:  'Two checks this tool does not cover, both worth doing by hand. Type STRSST on the command line to see the Service Tools user IDs — QSECOFR, 22222222, and QSRV all still hold their shipped default password. Then run the System Value Security Analyzer: QAUTOVRT is *NOMAX on the mock, which lets the system auto-create unlimited virtual sign-on devices — set it to 0. Type ANZDFTPWD ACTION(*NONE) for IBM\'s own default-password report.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Remediate and re-run',
+        body:  'On the mock you can harden a profile and watch the finding clear. Type CHGUSRPRF USRPRF(QUSER) PASSWORD(*NONE) on the command line (leave QUSER enabled, TCP server prestart jobs run under it, and *NONE is what blocks sign-on), then run the audit again — QUSER moves to OK. On a real system, do this for every Q* profile except your one break-glass admin account, set that one to a complex vaulted password, and change the SST/DST service-tool IDs via STRSST → 8 → 2.',
+        highlight: 'as400ShipprfBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the results, combined with any other IBM i tool output from this session, for your report.',
+        highlight: 'as400ShipprfOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) DSPJOB user enumeration (no command line) ──────
+  {
+    id:       'as400-dspjob-enumeration',
+    category: 'security',
+    title:    'IBM i: DSPJOB user enumeration (no command line)',
+    desc:     'Walks the full IBM i user-profile list without a command line, via Display Job -> Display library list -> Display objects in QSYS -> the *USRPRF objects. This is the enumeration path available to a restricted user who cannot type commands.',
+    steps: [
+      {
+        title: 'Why this one is different',
+        body:  'The User Profile Enumerator and the Shipped Profile Audit both type WRKUSRPRF / DSPUSRPRF on a command line. A properly locked-down IBM i user does not have one — LMTCPB(*YES), an initial program, a menu they cannot escape. This walkthrough uses only menu options and list selections, so it works for that user. On a real system the entry point is the System Request key then option 3; the mock does not model System Request, so it exposes the same screen as the DSPJOB command and as USER menu option 6.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target and sign on. Stop wherever you land — a menu is fine, a locked application screen is fine. You do not need a command line. It is fully read-only.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Open Display Job',
+        body:  'From the mock: at the MAIN MENU choose 1 (User tasks), then 6 (Display current job). If you have a command line you can type DSPJOB instead. Either way you land on the Display Job screen — the same one System Request -> 3 shows on real hardware — with options 1 through 16.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Option 13 — Display library list',
+        body:  'Type 13 in the Selection field and press Enter. You get the job\'s library list: QSYS, QSYS2, QHLPSYS, QUSRSYS, then the application and user libraries. QSYS is the one that matters — every user profile on the system is an object in it.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Drill into QSYS',
+        body:  'Type 5 in the Opt column next to QSYS and press Enter. The Display Library panel lists the objects in QSYS. Commands, programs, the library itself — and, in green, the *USRPRF objects: one per user profile.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Page the profile list',
+        body:  'Roll Up / Roll Down (Page Down / Page Up) through the list — it spans several pages, ending at "Bottom". Every *USRPRF row is a valid account name: the IBM-supplied Q* profiles, the application accounts, and anything irregular someone planted (QYSPJ on the mock). Type 5 next to any one to open its full profile — status, special authorities, last sign-on — the same detail screen WRKUSRPRF drills into. You now have the entire user list and never touched a command line.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Why it is hard to stop',
+        body:  'DSPJOB and the library-list option are core operator function; you cannot remove them. The controls are indirect: keep restricted users at LMTCPB(*YES) with an initial program and menu, set QSYS and the *USRPRF objects to *PUBLIC *EXCLUDE where your applications allow it, and audit for the enumeration pattern (a restricted user opening DSPJOB then Display Library on QSYS). The Shipped Profile Audit is still the tool that catches the actual finding this enumeration would hand an attacker: a default password or an irregular Q* profile.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Object / *PUBLIC Authority Scanner ─────────────
+  {
+    id:       'as400-object-scanner',
+    category: 'security',
+    title:    'IBM i: Object / *PUBLIC Authority Scanner',
+    desc:     'Lists IBM i objects with WRKOBJ and flags over-permissive *PUBLIC authority, amplifying the severity for sensitive objects.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool types WRKOBJ there.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the scanner',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and locate the Object / *PUBLIC Authority Scanner.',
+        highlight: 'as400ObjBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Click ▶ SCAN OBJECT AUTHORITY. The tool issues WRKOBJ to list the objects, then returns to the menu and issues DSPOBJAUT for each object to read its *PUBLIC authority and the private authority list (individual user grants). The status line shows progress; it is fully read-only.',
+        highlight: 'as400ObjBtn',
+        autoFn: 'startAs400ObjScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  '*PUBLIC authority sets the floor of access for every user without a specific grant. CRITICAL — *PUBLIC *ALL (any user can delete/manage). HIGH — *PUBLIC *CHANGE. LOW — *PUBLIC *USE. OK — *PUBLIC *EXCLUDE. MEDIUM — a sensitive object that looks OK/LOW by *PUBLIC but has a risky private grant (a named user with *ALL/*CHANGE). The DETAIL column names those private grants, e.g. "private: JSMITH=*CHANGE". Severity is raised for sensitive objects (PAYROLL, EMPMAST, CONFIG, USRPRF).',
+        highlight: 'as400ObjOut',
+        autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the object findings alongside your system-value and user-profile results from this session.',
+        highlight: 'as400ObjOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Network Attributes Analyzer ───────────────────
+  {
+    id:       'as400-netattr-analyzer',
+    category: 'security',
+    title:    'IBM i: Network Attributes Analyzer',
+    desc:     'Reads the IBM i network attributes with DSPNETA and flags inbound-request settings that enable remote job/command execution.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool types DSPNETA there.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970) to reveal the Security tab.',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the analyzer',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ ANALYZE NETWORK ATTRS. The tool issues DSPNETA, reads the network attributes from the one display screen, then returns to the menu. Read-only.',
+        highlight: 'as400NetattrBtn',
+        autoFn: 'startAs400NetattrScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — JOBACN(*FILE) auto-runs inbound job streams (remote command execution) and DDMACC(*ALL) opens DDM/DRDA to any remote system. MEDIUM — PCSACC and ALWANYNET widen the Client Access / APPC-over-TCP surface. The DETAIL column carries the recommended value.',
+        highlight: 'as400NetattrOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings (combined with any other IBM i tool output this session).',
+        highlight: 'as400NetattrOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Job Description Privesc Scanner ────────────────
+  {
+    id:       'as400-jobd-privesc',
+    category: 'security',
+    title:    'IBM i: Job Description Privesc Scanner',
+    desc:     'Uses WRKJOBD to find job descriptions that name a fixed USER() and are usable by *PUBLIC — a SBMJOB privilege-escalation path.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ SCAN JOB DESCRIPTIONS. The tool issues WRKJOBD and reads each job description’s USER() and *PUBLIC authority. Read-only.',
+        highlight: 'as400JobdBtn',
+        autoFn: 'startAs400JobdScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'A JOBD with USER(*RQD) is safe — the submitter’s own profile is used. The finding is a JOBD naming a real profile that *PUBLIC can use: any user can SBMJOB with it and run code as that user. CRITICAL when the user is the security officer (QSECOFR); HIGH otherwise (e.g. an *ALLOBJ service account). A JOBD at *PUBLIC *EXCLUDE is OK even if it names a user.',
+        highlight: 'as400JobdOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400JobdOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Authorization List Scanner ─────────────────────
+  {
+    id:       'as400-authlist-scanner',
+    category: 'security',
+    title:    'IBM i: Authorization List Scanner',
+    desc:     'Enumerates authorization lists with WRKAUTL, then DSPAUTL each to flag over-permissive *PUBLIC authority that cascades to every secured object.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ SCAN AUTH LISTS. The tool issues WRKAUTL to list the authorization lists, then returns to the menu and issues DSPAUTL for each to read its *PUBLIC authority and the objects it secures. Read-only.',
+        highlight: 'as400AutlBtn',
+        autoFn: 'startAs400AutlScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'An authorization list sets authority for every object attached to it, so an over-permissive *PUBLIC cascades widely. CRITICAL — *PUBLIC *ALL. HIGH — *PUBLIC *CHANGE. LOW — *PUBLIC *USE. OK — *PUBLIC *EXCLUDE. For a flagged list the finding names the secured objects it exposes (e.g. "cascades to PAYROLL/EMPMAST").',
+        highlight: 'as400AutlOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400AutlOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Active Job Scanner ─────────────────────────────
+  {
+    id:       'as400-actjob-scanner',
+    category: 'security',
+    title:    'IBM i: Active Job Scanner',
+    desc:     'Uses WRKACTJOB to flag jobs running under a privileged profile and network host servers, cross-referencing the User Profile Enumerator’s results.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. For the sharpest results, run the User Profile Enumerator first — this scan reuses the profiles it rated CRITICAL/HIGH.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ SCAN ACTIVE JOBS. The tool issues WRKACTJOB and reads each job’s user, subsystem, and function. Read-only.',
+        highlight: 'as400ActjobBtn',
+        autoFn: 'startAs400ActjobScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — a job running under a privileged profile (a built-in set like QSECOFR, plus any profile the User Profile Enumerator rated CRITICAL/HIGH this session, e.g. an *ALLOBJ service account’s batch job). MEDIUM — a network host server such as QZDASOINIT (the DB host server) or QRWTSRVR, which is a remote attack surface. Everything else is OK.',
+        highlight: 'as400ActjobOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings for your report.',
+        highlight: 'as400ActjobOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Exit Point & Service Registration Audit ────────
+  {
+    id:       'as400-exit-point-audit',
+    category: 'security',
+    title:    'IBM i: Exit Point & Service Registration Audit',
+    desc:     'Uses WRKREGINF to find registration-facility exit points with no validation program registered — the way a restricted shell turns out not to matter over FTP, remote SQL, remote command, or NetServer.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool types WRKREGINF there.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ AUDIT EXIT POINTS. The tool issues WRKREGINF and reads which exit points have a program registered. Read-only.',
+        highlight: 'as400ReginfBtn',
+        autoFn: 'startAs400ReginfScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — FTP server request validation, NetServer file-serving validation, or the remote command and program call server (QIBM_QZRC_RMT) with no exit program registered: each one bypasses LMTCPB(*YES) entirely over its own channel. HIGH — remote SQL/ODBC init, native database requests, or FTP logon unregistered. MEDIUM — retrieve-object-information, signon server, Telnet device init, or data queue server unregistered. An exit point showing a real program name is OK — something is actually gating that channel.',
+        highlight: 'as400ReginfOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400ReginfOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) NetServer / SMB Configuration Audit ────────────
+  {
+    id:       'as400-netserver-audit',
+    category: 'security',
+    title:    'IBM i: NetServer / SMB Configuration Audit',
+    desc:     'Reads the NetServer (SMB) configuration in one screen and flags a set guest profile and unenforced SMB signing.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ AUDIT NETSERVER CONFIG. The tool reads the NetServer attributes from the one display screen. Read-only.',
+        highlight: 'as400NetsvrBtn',
+        autoFn: 'startAs400NetsvrScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — GUESTUSRPRF names a real profile, so unauthenticated SMB clients get mapped to it. MEDIUM — SMB signing isn’t required, so requests in transit can be tampered with or replayed. The DETAIL column carries the fix for each.',
+        highlight: 'as400NetsvrOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400NetsvrOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) IFS Permission Sweep ────────────────────────────
+  {
+    id:       'as400-ifs-permission-sweep',
+    category: 'security',
+    title:    'IBM i: IFS Permission Sweep',
+    desc:     'Uses WRKLNK to list IFS object links and flags world-writable objects and world-readable objects on paths that look like credentials or key material.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool types WRKLNK there.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the sweep',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ SWEEP IFS PERMISSIONS. The tool issues WRKLNK and reads each object link’s owner and *PUBLIC authority. Read-only.',
+        highlight: 'as400IfsBtn',
+        autoFn: 'startAs400IfsScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — world-writable (*W in *PUBLIC authority) on a path that also looks sensitive (a .conf/.env file, something under .ssh). HIGH — world-writable anywhere, or world-readable on a path that looks like credentials or key material (id_rsa, .pem, passwd). Shops that lock DB2 libraries down tight often leave the IFS wide open by comparison — this is the everyday-hygiene check for that blind spot.',
+        highlight: 'as400IfsOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400IfsOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Adopted-Authority Runtime Scanner ──────────────
+  {
+    id:       'as400-adopted-authority-scanner',
+    category: 'security',
+    title:    'IBM i: Adopted-Authority Runtime Scanner',
+    desc:     'Uses WRKJOB OPTION(*PGMSTK) and DSPPGM to find a program in the current call stack running under adopted authority, and whose owner that authority actually is.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool types WRKJOB OPTION(*PGMSTK) there.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ SCAN CALL STACK. The tool reads the call stack, then issues DSPPGM for every level that adopts, reading its owner. Read-only.',
+        highlight: 'as400PgmstkBtn',
+        autoFn: 'startAs400PgmstkScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'A stack level that doesn’t adopt is OK, nothing to chase. A level that does adopt runs under its OWNER’s authority, so any caller at or above that level, including an unchecked CL or RPG parameter, gets that authority for free. CRITICAL when the owner is QSECOFR; HIGH for any other owner, since that still needs its own special authorities cross-referenced before ruling it out.',
+        highlight: 'as400PgmstkOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400PgmstkOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Menu/Command-Line Bypass Probe ─────────────────
+  {
+    id:       'as400-menu-bypass-probe',
+    category: 'security',
+    title:    'IBM i: Menu/Command-Line Bypass Probe',
+    desc:     'Drives a fixed set of stock "Work with X" utilities and actually executes a command from each one’s command line, to show where LMTCPB(*YES) stops reaching.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The probe navigates to several stock utility screens on its own from there.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the probe',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ PROBE FOR BYPASSES. The tool visits WRKSPLF, WRKOUTQ, WRKJOBD, WRKUSRJOB, WRKACTJOB, and DSPJOB in turn, tries to run a real command from each one’s own command line, and returns to the menu between each. Read-only, but it does execute commands, same as a real LMTCPB(*YES) bypass attempt would.',
+        highlight: 'as400BypassBtn',
+        autoFn: 'startAs400BypassProbe',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL means the test command actually ran from that screen’s command line and landed on its output, LMTCPB(*YES) does not reach this screen no matter what the signed-on profile’s own command line looks like. OK means the command was rejected or not modelled, DSPJOB’s numeric-only options screen is the contrast case built in here on purpose: a genuinely gated screen never executes raw text typed into it.',
+        highlight: 'as400BypassOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400BypassOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) PTF/CVE Currency Checker ───────────────────────
+  {
+    id:       'as400-ptf-cve-currency-checker',
+    category: 'security',
+    title:    'IBM i: PTF/CVE Currency Checker',
+    desc:     'Runs SYSTOOLS.CVE_INFO() and SYSTOOLS.GROUP_PTF_CURRENCY_LOCAL() via STRSQL, IBM i’s own built-in SQL services, and classifies whatever rows come back against published CVSS bands and PTF-group level gaps. No CVE list is baked into the tool — it only reports what the partition itself says.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool types STRSQL there on its own.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the check',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ CHECK PTF/CVE CURRENCY. The tool opens Interactive SQL, runs SELECT * FROM SYSTOOLS.CVE_INFO(), then SELECT * FROM SYSTOOLS.GROUP_PTF_CURRENCY_LOCAL(), and returns to the menu. Read-only — both are IBM i built-in query services, nothing is changed on the host.',
+        highlight: 'as400PtfcveBtn',
+        autoFn: 'startAs400PtfCveScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CVE rows: CRITICAL/HIGH/MEDIUM/LOW follows the CVSS score of any CVE with no PTF applied — a CVE with a PTF already installed is always OK regardless of its score. PTF group rows: HIGH means the installed level is 5+ levels behind available, or the group hasn’t been checked against IBM’s service in 60+ days; OK means current. Nothing here is a fixed list — every finding is read straight off whatever the partition’s own SQL services report right now.',
+        highlight: 'as400PtfcveOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400PtfcveOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Exit Program Integrity and Authority ─────────────
+  {
+    id:       'as400-exit-program-integrity-authority',
+    category: 'security',
+    title:    'IBM i: Exit Program Integrity and Authority',
+    desc:     'Lists registered exit programs outside Q* libraries and checks who can change them: *PUBLIC on the program and its library, the owner, and the audit journal for the program being changed or restored.',
+    steps: [
+      {
+        title: 'Why an exit program is worth its own check',
+        body:  'The Exit Point audit asks whether a program is registered. This asks whether it can be trusted. A registered exit program runs on every request through its exit point: FTP logon, remote SQL, sign-on, password change. One that anyone can replace is a backdoor on every channel it guards, and it runs for everyone, so it is a very good place to hide something.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target, sign on, and stop at a menu with a "Selection or command" line. Interactive SQL (STRSQL) has to be available and you need authority to read QSYS2.EXIT_PROGRAM_INFO, OBJECT_PRIVILEGES and PROGRAM_INFO, and *USE to the audit journal. Column names and the *LIB rows of OBJECT_PRIVILEGES were not run on a live IBM i, confirm them.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the review',
+        body:  'Click ▶ REVIEW EXIT PROGRAMS. The tool reads the registered exit programs outside Q* libraries, then *PUBLIC\'s authority on those programs and on every library, the owner of each (a statement it builds from the libraries it just found), whether auditing is on, and the audit journal for the last 90 days of creates, changes and restores. Every read goes across all its pages.',
+        highlight: 'as400ExitpgmBtn',
+        autoFn: 'startAs400ExitPgmScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — *PUBLIC holds *ALL on the program (anyone can delete or replace it), or the program is open to *PUBLIC change and so is its library. HIGH — *PUBLIC holds *CHANGE on the program, or *PUBLIC can add objects to the library that holds it. MEDIUM — the journal shows the program changed, restored or created in the window: match each entry to a change ticket. LOW — *PUBLIC is excluded from the program, check the exit really runs for everyone it should. OK — *PUBLIC no more than *USE on the program and the library locked down. The owner is shown, not rated, because ownership alone does not make an exit program safe. A row says when no entries mean nothing because auditing is off.',
+        highlight: 'as400ExitpgmOut', autoFn: null,
+      },
+      {
+        title: 'The part you still do by hand',
+        body:  'CHKOBJITG verifies exit programs but needs a scope you choose on the box, so prompt it with F4 and run it yourself, do not guess its syntax. The tool also does not read exit programs in QGPL or QUSRSYS, and it cannot tell you whether a program does the right thing, that is a code review.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400ExitpgmOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Audit Journal Review ────────────────────────────
+  {
+    id:       'as400-audit-journal-review',
+    category: 'security',
+    title:    'IBM i: Audit Journal Review',
+    desc:     'Reads QSYS/QAUDJRN through QSYS2.DISPLAY_JOURNAL for restores, creates, changes, spool and print entries grouped by user, after checking that auditing is on and the right levels are set.',
+    steps: [
+      {
+        title: 'What the journal can and cannot tell you',
+        body:  'The audit journal is where "who did that, and when" gets answered, but only if auditing was on and set to record it. So the review reads two things: whether the audit levels each entry type needs are set, and what the journal holds for those types. Zero entries is good news only when the level is set. With it off, zero proves nothing, and the tool says so.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target, sign on, and stop at a menu with a "Selection or command" line. Interactive SQL (STRSQL) has to be available and you need *USE authority to the QAUDJRN journal. The DISPLAY_JOURNAL parameters and columns follow IBM\'s published examples but were not run on a live IBM i here, confirm them.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Choose the window and run',
+        body:  'Type how many days back to read, 1 to 365, or leave it blank for 30, then click ▶ REVIEW AUDIT JOURNAL. The tool runs six small checks (is *AUDLVL set in QAUDCTL, is *OBJAUD, and does QAUDLVL carry *SAVRST, *CREATE, *SPLFDTA and *PRTDTA), then one journal read per group of entry types: restores (OR, RA, RO, RP), creates (CO), changes (ZC), spool (SF) and print (PO). Every read goes across all its pages, up to 600 rows a group.',
+        highlight: 'as400JrnBtn',
+        autoFn: 'startAs400JrnScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — QAUDCTL has no *AUDLVL, so auditing is off and the journal stops growing; the row gives the newest entry read, ask who switched it off. A restore of an adopting program (RP) is HIGH too. MEDIUM — restores in general (each should match a change ticket), and a group with no entries because its audit level is not set. LOW — creates and changes. INFO — spool and print counts, and anything not read. Everything done as QSECOFR rates one step higher, the security officer is not a day-to-day administrator. A row says when its entries are from before a level was switched off. A journal that was cleared, detached or never audited looks the same as a quiet one, so check the receiver chain too.',
+        highlight: 'as400JrnOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400JrnOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Output Queue and Spool Audit ───────────────────
+  {
+    id:       'as400-output-queue-spool-audit',
+    category: 'security',
+    title:    'IBM i: Output Queue and Spool Audit',
+    desc:     'Reads output queue settings and authority via STRSQL: who can display any spooled file, who holds *SPLCTL, remote queues, QPJOBLOG and QPRINT, and whether spool activity is audited at all.',
+    steps: [
+      {
+        title: 'Why spool is its own audit',
+        body:  'Payroll registers, statements and job logs end up as spooled files, and the output queue they sit in decides who can read them. The data was locked down in the database and then printed into a queue anyone can open. Four settings decide it: DSPDTA (can any user with read authority to the queue display any file in it, or only the file\'s owner), OPRCTL (can anyone holding *JOBCTL read every file), AUTCHK, and *PUBLIC\'s authority on the queue.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target, sign on, and stop at a menu with a "Selection or command" line. Interactive SQL (STRSQL) has to be available and you need authority to read QSYS2.OUTPUT_QUEUE_INFO, OBJECT_PRIVILEGES and USER_INFO. Column names and value formats (YES or NO, *OWNER or *DTAAUT) were not run on a live IBM i, confirm them. Get the client\'s signed list of sensitive queues first, only they can say which loose queue is a real problem.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Choose the libraries and run',
+        body:  'Name the libraries that hold output queues, up to eight, or leave the box blank to read every library not named Q*, which can be slow on a big system. Click ▶ AUDIT OUTPUT QUEUES. Each library gets four reads (settings, authority checks, remote queues, *PUBLIC authority), then the tool reads QPJOBLOG and QPRINT, the *SPLCTL and *JOBCTL holders, and QAUDLVL for *SPLFDTA and *PRTDTA. Always filtered by library, an unfiltered authority query on a real system will crawl.',
+        highlight: 'as400OutqBtn',
+        autoFn: 'startAs400OutqScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — DSPDTA lets any reader display any file and *PUBLIC can read the queue: everyone reads everything spooled there. HIGH — DSPDTA open without *PUBLIC, or *PUBLIC can change the queue, or QPJOBLOG is writable (job logs carry data values and user names). MEDIUM — OPRCTL(*YES) with *JOBCTL holders, a remote queue (spool leaves the system, approve the destination), a *SPLCTL holder (it overrides every queue), or QAUDLVL without *SPLFDTA or *PRTDTA, so SF and PO audit entries are never written. LOW — *PUBLIC *USE, or AUTCHK(*OWNER). OK — set up the recommended way: DSPDTA(*OWNER), AUTCHK(*DTAAUT), OPRCTL(*NO), *PUBLIC *EXCLUDE. LPD on port 515 bypasses all of this, see the Listening Services Inventory.',
+        highlight: 'as400OutqOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400OutqOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Static Adopted-Authority Scan ──────────────────
+  {
+    id:       'as400-static-adopted-authority-scan',
+    category: 'security',
+    title:    'IBM i: Static Adopted-Authority Scan',
+    desc:     'Reads whole libraries via STRSQL for every program with USRPRF(*OWNER), who owns it, and what *PUBLIC may do to it, judged against who holds *ALLOBJ or *SECADM.',
+    steps: [
+      {
+        title: 'What this adds to the runtime scanner',
+        body:  'The Adopted-Authority Runtime Scanner walks the live call stack, so it only finds a program that happens to be running when you look. A program that adopts its owner\'s authority is a risk whether or not anyone is running it. This scan reads the libraries themselves. The exposure is USRPRF(*OWNER) on a program owned by a powerful profile. USEADPAUT is a different attribute: it controls whether a program inherits adopted authority from its callers, not what it adopts itself.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target, sign on, and stop at a menu with a "Selection or command" line. Interactive SQL (STRSQL) has to be available and you need authority to read QSYS2.PROGRAM_INFO and QSYS2.OBJECT_PRIVILEGES. The view and column names were not run on a live IBM i, confirm them.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Choose the libraries',
+        body:  'Type the libraries to read in the box, for example APPLIB, TOOLLIB, comma separated, up to eight. Leave it blank to read every library not named Q*. On a real production system that can run for a long time, because PROGRAM_INFO is large, so name the libraries there. Each library gets two reads, its adopting programs and *PUBLIC\'s authority on its programs, then the *ALLOBJ and *SECADM holders are read once.',
+        highlight: 'as400AdoptLibs', autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Click ▶ SCAN FOR ADOPTING PROGRAMS. Every result is read across all its pages, so no library is cut off at ten rows.',
+        highlight: 'as400AdoptBtn',
+        autoFn: 'startAs400AdoptScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'One row per adopting program. CRITICAL — the owner holds *ALLOBJ or *SECADM and *PUBLIC has *CHANGE or *ALL, more than running it needs. HIGH — a powerful owner and *PUBLIC may run it, so any user is on a path to that authority, read what it does. MEDIUM — a powerful owner but *PUBLIC is excluded, confirm who is authorized, or a bounded owner with *PUBLIC above *USE. LOW — an owner that is not powerful, still needs a documented reason. INFO — a read failed or was cut short, so the findings may be underrated, never a clean pass. Programs that do not adopt are not listed.',
+        highlight: 'as400AdoptOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400AdoptOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Library CRTAUT Review ──────────────────────────
+  {
+    id:       'as400-library-crtaut-review',
+    category: 'security',
+    title:    'IBM i: Library CRTAUT Review',
+    desc:     'Reads QCRTAUT, then DSPLIBD for each application library, and rates the authority new objects really get. QCRTAUT is only the fallback, each library\'s own CRTAUT wins.',
+    steps: [
+      {
+        title: 'Why the system value is not the answer',
+        body:  'QCRTAUT says what *PUBLIC gets on a new object, but only for libraries whose CRTAUT is *SYSVAL. Every library has its own CRTAUT, and when it names a value that value wins. So a tidy QCRTAUT can sit on top of a library set to *ALL, and an untidy one can be harmless for a library that sets its own. You have to read both layers.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target, sign on, and stop at a menu with a "Selection or command" line. The "Create authority" label on DSPLIBD was not run on a live IBM i, confirm it on yours.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the review',
+        body:  'Click ▶ REVIEW LIBRARY CRTAUT. The tool lists libraries with WRKLIB, reads QCRTAUT first (DSPSYSVAL SYSVAL(QCRTAUT)), then issues DSPLIBD LIB(name) for each application library: every library not named Q*, plus QGPL, where users\' own objects land. Each is judged against the system value it read first.',
+        highlight: 'as400CrtautBtn',
+        autoFn: 'startAs400CrtautScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — new objects are created *PUBLIC *ALL. HIGH — *PUBLIC *CHANGE, including a library that says *SYSVAL while QCRTAUT is *CHANGE, which is the point: the library is only as strict as the fallback. OK — *USE or *EXCLUDE, and a library that sets its own value over a weaker QCRTAUT says so, that is the right layer. INFO — new objects go to an authorization list (the list decides, use the Authorization List scan) or something could not be read, never a pass. A library that sets a weaker value than QCRTAUT is called out as overriding a stricter system value. CRTAUT only decides what NEW objects get. CHGLIB LIB(name) CRTAUT(*EXCLUDE) does not touch objects already there, so run the Object Authority scan on the library too.',
+        highlight: 'as400CrtautOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400CrtautOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) QSECOFR-Owned Objects ──────────────────────────
+  {
+    id:       'as400-qsecofr-owned-objects',
+    category: 'security',
+    title:    'IBM i: QSECOFR-Owned Objects',
+    desc:     'Reads QSYS2.OBJECT_OWNERSHIP via STRSQL for application objects the security officer owns, and rates each library, HIGH when programs are among them.',
+    steps: [
+      {
+        title: 'Why ownership matters',
+        body:  'Every IBM i object has an owner, and the owner has full authority over it no matter what the authority list says. Application objects should belong to a dedicated application owner profile. When QSECOFR owns them, the security officer is tied to the application, a program owned by QSECOFR that adopts its owner\'s authority runs as QSECOFR, and whoever restores the library as QSECOFR keeps the problem going.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target, sign on, and stop at a menu with a "Selection or command" line. Interactive SQL (STRSQL) has to be available, and you need authority to read the view. The view and column names were not run on a live IBM i, confirm them. DSPUSRPRF USRPRF(QSECOFR) TYPE(*OBJOWN) with OUTPUT(*OUTFILE) is the CL way to get the same list.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Click ▶ FIND QSECOFR-OWNED OBJECTS. The tool opens Interactive SQL and runs one long statement that wraps across the three input lines, the way a real STRSQL statement area does. It asks for objects owned by QSECOFR outside libraries named Q*, because IBM\'s own libraries are expected to be QSECOFR\'s. The result is read across every page.',
+        highlight: 'as400OwnsecBtn',
+        autoFn: 'startAs400OwnSecScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'One row per library. HIGH — the library holds QSECOFR-owned code (programs, service programs, commands). If any adopts its owner\'s authority it runs as QSECOFR, so run the Adopted-Authority scan on that library. MEDIUM — data only, which cannot be handed to the application team without a change of owner. The fix is CHGOBJOWN to a dedicated owner profile, but test first, because a program that adopts its owner changes behavior when the owner changes. "Application library" here just means not named Q*, so a Q-named library that is really yours is missed, and an IBM library that does not start with Q is flagged.',
+        highlight: 'as400OwnsecOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400OwnsecOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Group Profile Review ───────────────────────────
+  {
+    id:       'as400-group-profile-review',
+    category: 'security',
+    title:    'IBM i: Group Profile Review',
+    desc:     'Reads QSYS2.GROUP_PROFILE_ENTRIES and QSYS2.USER_INFO via STRSQL to find privileged group profiles and users who reach one only through a supplemental group.',
+    steps: [
+      {
+        title: 'Why groups need their own review',
+        body:  'A user\'s primary group is one field on the profile, so every profile review sees it. Supplemental groups are not. A user can be in up to fifteen more groups, and the only place that list lives is QSYS2.GROUP_PROFILE_ENTRIES. So a person can look clean on a profile-by-profile review while belonging to a group that holds *ALLOBJ. This review reads both.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target, sign on, and stop at a menu with a "Selection or command" line. Interactive SQL (STRSQL) has to be available, it is a separately licensed feature on a real system, and you need authority to read the views. Column names were not run on a live IBM i, confirm them.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the review',
+        body:  'Click ▶ REVIEW GROUP PROFILES. The tool opens Interactive SQL and runs four reads: supplemental group entries, primary groups, and the holders of *ALLOBJ and *SECADM. Each result is read across every page, so a big shop is not cut off at ten rows. Then it compares them.',
+        highlight: 'as400GrprevBtn',
+        autoFn: 'startAs400GrpRevScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'A group row: the group profile itself holds *ALLOBJ or *SECADM, HIGH, CRITICAL if it holds both, with its primary and supplemental members listed. A user row, "via supplemental": that user reaches a privileged group only through a supplemental membership, HIGH, and the row says which primary group they appear to have instead. An INFO "incomplete" row means a read failed or was cut short, so the absence of a finding is not proof. Whether a member picks up a group\'s special authority depends on your release, so confirm before reporting it as inherited. Stale empty groups are not found, a group with no members never shows in either read.',
+        highlight: 'as400GrprevOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400GrprevOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Default Password Report (ANZDFTPWD) ────────────
+  {
+    id:       'as400-default-password-report',
+    category: 'security',
+    title:    'IBM i: Default Password Report (ANZDFTPWD)',
+    desc:     'Runs ANZDFTPWD ACTION(*NONE) and rates every profile whose password is the same as its name. The supported way to find default passwords in a client-assisted audit, with no guessing at a sign-on screen.',
+    steps: [
+      {
+        title: 'Which tool is this',
+        body:  'IBM i can check its own password hashes against the profile names. That is ANZDFTPWD, and it is the right way to find default passwords in an audit the client knows about: nothing is guessed, no profile can lock out. The Default Credential Audit is the other tool. It guesses at the Sign On screen, so it belongs to a pentest whose ROE names credential enumeration as its own activity. Different engagement, different tool.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 target and sign on with a profile that holds *ALLOBJ and *SECADM, which ANZDFTPWD requires. Stop at a menu with a "Selection or command" line.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the report',
+        body:  'Click ▶ REPORT DEFAULT PASSWORDS. The tool issues ANZDFTPWD ACTION(*NONE) and reads the report. Report only: it never runs ACTION(*DISABLE), *PWDEXP or *BOTH, which change profiles. On a real system ANZDFTPWD writes a spooled report, the mock shows it as a screen.',
+        highlight: 'as400DftpwdBtn',
+        autoFn: 'startAs400DftpwdScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — a default password on a profile holding *ALLOBJ or *SECADM. HIGH — a default password on any other profile. A disabled profile still counts, because anyone who can enable it gets in with a password everyone can guess. OK — none found. Review this report before ever running ANZDFTPWD with an action that changes profiles.',
+        highlight: 'as400DftpwdOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400DftpwdOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── IBM i (AS/400) Listening Services Inventory ───────────────────
+  {
+    id:       'as400-listening-services-inventory',
+    category: 'security',
+    title:    'IBM i: Listening Services Inventory',
+    desc:     'Runs one narrow QSYS2.NETSTAT_INFO query per service group via STRSQL and rates what is listening: clear text Telnet, FTP, host servers, TFTP, SNMP and more, against their TLS counterparts.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a TN5250 (IBM i / AS/400) target, sign on, and stop at a menu with a "Selection or command" line. The tool types STRSQL there on its own. Ratings are a judgment call from review, not IBM\'s, and the SQL was not run on a live IBM i, so confirm the column names on your release.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Run the inventory',
+        body:  'Scroll to the IBM i SECURITY (AS/400) section and click ▶ INVENTORY LISTENING SERVICES. The tool opens Interactive SQL and runs about ten short queries, each one a service group, for example SELECT LOCAL_ADDRESS, LOCAL_PORT, TCP_STATE FROM QSYS2.NETSTAT_INFO WHERE LOCAL_PORT IN (23, 992). A long statement wraps onto the second input line, the way a real STRSQL statement area does. One query per group keeps each result small enough to read without paging, and an empty result is evidence the port is not listening.',
+        highlight: 'as400SvcinvBtn',
+        autoFn: 'startAs400SvcInvScan',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — clear text Telnet (23), REXEC, TFTP, the clear text Navigator admin port (2001), or the clear file and remote command host servers (8473, 8475). MEDIUM — FTP, the other clear host servers, DDM on 446, LPD, SNMP, NFS, NetServer, plain HTTP. LOW — bound to loopback only, so not reachable from the network. OK — not listening (for a clear text service that is the pass), or a TLS listener present. INFO — a TLS port that is not listening, which is fine only if its clear text twin is off too. ESTABLISHED sessions on a port are not counted as listeners. A UDP port showing as off should be confirmed with WRKTCPSVR, since NETSTAT_INFO may not list UDP on every release.',
+        highlight: 'as400SvcinvOut', autoFn: null,
+      },
+      {
+        title: 'Export the audit',
+        body:  'Click ↓ Export IBM i Audit CSV to save the findings.',
+        highlight: 'as400SvcinvOut',
+        autoFn: 'as400ExportCsv',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── FUNC KEY Inject ──────────────────────────────────────────────
+  {
+    id:       'func-key-inject',
+    category: 'security',
+    title:    'FUNC KEY Inject',
+    desc:     'Fire any 3270 AID key — ENTER, CLEAR, SYSREQ, PA1–PA3, PF1–PF24 — straight to the host from the Security toolbar, with no matching physical key.',
+    steps: [
+      {
+        title: 'Why inject an AID key',
+        body:  'A PC keyboard stops at F12, but a real 3270 has PF1–PF24 plus PA1–PA3 and SYSREQ. FUNC KEY Inject sends the raw Attention Identifier for any of them, and only the AID — no field data. It is the clean way to answer a "PRESS PF7 TO PAGE BACK" prompt, or to probe how a screen reacts to a key it never mentions.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970) to reveal the Security tab.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the INJECT section',
+        body:  'Scroll to the INJECT section of the Security panel. It has a single dropdown of every AID key, grouped into Transmit (ENTER/CLEAR/SYSREQ), PA keys, PF1–PF12, and PF13–PF24.',
+        highlight: 'keyInjectSelect',
+        autoFn: null,
+      },
+      {
+        title: 'Pick a key',
+        body:  'Choose the AID key to send. PF13–PF24 are the ones worth knowing about — on a real terminal they are Shift+PF1 through Shift+PF12, and most PC keyboards cannot produce them at all, so this dropdown is often the only way to send one.',
+        highlight: 'keyInjectSelect',
+        autoFn: null,
+      },
+      {
+        title: 'Inject it',
+        body:  'Click ▶ INJECT. The AID goes to the host on the active session exactly as if you had pressed the key. The status text confirms "✓ injected PFn", or shows "not connected" when there is no live session.',
+        highlight: 'keyInjectFeedback',
+        autoFn: 'secInjectKey',
+        autoLabel: 'Inject the selected key',
+      },
+      {
+        title: 'Read the host response',
+        body:  'Watch the terminal repaint. Injecting a key a screen does not use is a quick, low-noise way to fingerprint an application: some panels ignore an undefined PF key, some return an error message, some drop the session.',
+        highlight: null,
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── ESM Fingerprint ─────────────────────────────────────────────
+  {
+    id:       'esm-fingerprint',
+    category: 'security',
+    title:    'ESM Fingerprint',
+    desc:     'Passively identifies the external security manager — RACF, ACF2, or Top Secret — from message-ID prefixes and banners already on screen. Sends nothing to the host.',
+    steps: [
+      {
+        title: 'What this identifies',
+        body:  'z/OS runs one of three external security managers: IBM RACF, Broadcom ACF2, or Broadcom Top Secret. Each stamps its own message-ID prefixes (ICH/IRR for RACF, ACFxx for ACF2, TSSxx for Top Secret) and logon banners. Knowing which one is in play tells you which command syntax, default profiles, and known weaknesses apply before you touch anything.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970) to reveal the Security tab.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Open the ESM FINGERPRINT section',
+        body:  'Scroll to the ESM FINGERPRINT section. There is nothing to start — the classifier runs on the bridge and pushes a verdict whenever the evidence moves. The panel just renders the current verdict.',
+        highlight: 'esmFpBody',
+        autoFn: null,
+      },
+      {
+        title: 'Give it something to read',
+        body:  'Connect a session and reach a logon screen, or trigger an authentication error (a bad password is enough). Those screens carry the message IDs the classifier keys on. Until then the panel reads "No external security manager identified yet."',
+        highlight: 'esmFpBody',
+        autoFn: null,
+      },
+      {
+        title: 'Read the verdict',
+        body:  'The panel shows the product, a confidence bar, the runner-up, the raw per-product scores, and an evidence table: every matched string with its screen number, row/column, match kind, and the rule ID that fired. The verdict is cumulative — more matching screens raise confidence.',
+        highlight: 'esmFpBody',
+        autoFn: null,
+      },
+      {
+        title: 'Reset or export',
+        body:  '✕ Reset clears the accumulated evidence on the bridge and starts the fingerprint over — do this after switching the mock z/OS ESM with the ESM command, or when moving to a different host. ↓ Export CSV writes the full evidence list (screen, row, col, product, kind, weight, matched text, rule, timestamp) for your report.',
+        highlight: 'esmFpBody',
+        autoFn: 'esmFingerprintExport',
+        autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── z/TPF: ECB Enumerator ───────────────────────────────────────
+  {
+    id:       'tpf-ecb-enumerator',
+    category: 'security',
+    title:    'z/TPF: ECB Enumerator',
+    desc:     'Runs ZSHOW E on a z/TPF operator console and parses the ECB directory — every loaded entry point, its type, status, transaction count, and privilege flag.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Connect to a z/TPF target (the bundled mock on port 3274, or a session profile with host type TPF), sign on at the operator logon screen, and stop at the ENTER TPF COMMAND console. The z/TPF CONSOLE section only appears once a z/TPF console is detected on screen.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970) to reveal the Security tab.',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the z/TPF CONSOLE section',
+        body:  'Scroll to the z/TPF CONSOLE section — it carries a DETECTED badge and, once known, a privilege badge (OPER / SYSOP / SYSPROG). The ECB Enumerator is the first tool in it.',
+        highlight: 'tpfEnumBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the enumerator',
+        body:  'Click ⊞ ECB Enumerator. The tool types ZSHOW E on the console command line, waits for the reply, and parses the directory between the ZTPF200I header and the ZTPF202I end marker. It is a read-only query.',
+        highlight: 'tpfEnumBtn',
+        autoFn: 'tpfEnumEcbs',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the directory',
+        body:  'Each ECB shows name, type (APPL or SYSTEM), status (ACTIVE / IDLE / STOPPED), and lifetime transaction count. Rows tagged PRIV handle privileged data and are highlighted; the footer counts privileged and active entry points. On the mock, AUTH, CCARD, LOGR, PAYM, and SECU are the privileged SYSTEM handlers — the ones where a misconfiguration exposes an authentication or cardholder-data path, not just a fares lookup.',
+        highlight: 'tpfResults',
+        autoFn: null,
+      },
+      {
+        title: 'Feed the Entry Point Prober',
+        body:  'The parsed list is cached for this session. Run the Entry Point Prober next and it will probe exactly these ECBs instead of its built-in fallback list.',
+        highlight: 'tpfProbeBtn',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── z/TPF: Privilege Boundary Scanner ───────────────────────────
+  {
+    id:       'tpf-privilege-scanner',
+    category: 'security',
+    title:    'z/TPF: Privilege Boundary Scanner',
+    desc:     'Maps the OPER → SYSOP → SYSPROG boundary on a z/TPF console by attempting one representative command at each level and reading the refusals.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Be signed on to a z/TPF operator console at the ENTER TPF COMMAND prompt. The mock ships three logons, one per level: TPFOP01/TPF1 (OPER), SYSOP01/SYS1 (SYSOP), ADMIN01/ADMIN (SYSPROG). Sign on as each in turn to see the scanner report a different boundary.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the Privilege Scanner',
+        body:  'In the z/TPF CONSOLE section, the Privilege Scanner is the second tool.',
+        highlight: 'tpfPrivBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the scan',
+        body:  'Click ⚡ Privilege Scanner. It sends three commands in sequence: ZSHOW S (needs OPER), ZSTOP,RPRT (needs SYSOP, and is report-only — it takes no action), and ZEND CHECK (needs SYSPROG — a preview, nothing is quiesced). Each response is classified as allowed or AUTHORIZATION FAILURE.',
+        highlight: 'tpfPrivBtn',
+        autoFn: 'tpfScanPriv',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the boundary',
+        body:  'The highest command that succeeded sets the level and updates the privilege badge in the section header. OPER — read-only, low risk. SYSOP — can stop entry points and load modules, medium risk; a compromised SYSOP session can disrupt transaction processing. SYSPROG — full control, critical; ZEND QUIESCE from here halts all transactions. Every refusal the scan triggers is itself an audit record on the host.',
+        highlight: 'tpfResults',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── z/TPF: Entry Point Prober ──────────────────────────────────
+  {
+    id:       'tpf-entry-prober',
+    category: 'security',
+    title:    'z/TPF: Entry Point Prober',
+    desc:     'Runs ZTEST ENTRY against each ECB on a z/TPF console to confirm it responds and to see whether it self-reports as handling privileged data.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Be signed on to a z/TPF operator console at the ENTER TPF COMMAND prompt. Run the ECB Enumerator first — the prober will then work the real directory rather than its built-in fallback list of ten common entry-point names.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the Entry Point Prober',
+        body:  'In the z/TPF CONSOLE section, the Entry Point Prober is the third tool.',
+        highlight: 'tpfProbeBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the probe',
+        body:  'Click ⬡ Entry Point Prober. For each target it sends ZTEST ENTRY,<name>, reads the response status and the RESPONDED IN Nms timing, and flags the entry when the reply says HANDLES PRIVILEGED DATA. The footer totals how many responded and how many are privileged.',
+        highlight: 'tpfProbeBtn',
+        autoFn: 'tpfProbeEntries',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the results',
+        body:  'Every ACTIVE entry point answers in a few milliseconds; IDLE ones (SCHD, UPGD on the mock) still respond but report zero transactions. The five privileged handlers come back tagged PRIV. Probing PAYM also surfaces a rising queue depth and an AWAITING CONFIRMATION FEED note — that is a seeded cross-platform incident storyline, a queue backlog rather than an entry-point fault, and the normal STATUS and RESPONDED lines above it are what make that distinction the lesson.',
+        highlight: 'tpfResults',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── z/TPF: Pool Monitor ───────────────────────────────────────
+  {
+    id:       'tpf-pool-monitor',
+    category: 'security',
+    title:    'z/TPF: Pool Monitor',
+    desc:     'Runs ZSHOW P on a z/TPF console and flags any memory pool at or above 90% capacity — a denial-of-service surface.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Be signed on to a z/TPF operator console at the ENTER TPF COMMAND prompt. Any privilege level works — ZSHOW P is an OPER-level query.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the Pool Monitor',
+        body:  'In the z/TPF CONSOLE section, the Pool Monitor is the fourth tool.',
+        highlight: 'tpfPoolBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the check',
+        body:  'Click ≣ Pool Monitor. It sends ZSHOW P and reads each pool row (ECBPOOL, FPOOL, GPOOL, IPOOL, TPOOL, XPOOL) for size, used, and percent, marking any pool at 90% or above as a warning.',
+        highlight: 'tpfPoolBtn',
+        autoFn: 'tpfCheckPools',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the results',
+        body:  'Pool exhaustion is a denial-of-service surface: a z/TPF system already running its ECB or frame pools near capacity can be tipped into transaction rejection by a modest traffic burst, no exploit required. On the mock, IPOOL (95%) and XPOOL (97%) trip the warning while GPOOL (62%) and TPOOL (70%) are shown but clear. Note that ZSHOW S can report "SYSTEM HEALTH: NORMAL" at the same time two pools are one bad afternoon from rejecting work.',
+        highlight: 'tpfResults',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── z/TPF: System Diagnostics ─────────────────────────────────────
+  {
+    id:       'tpf-system-diagnostics',
+    category: 'security',
+    title:    'z/TPF: System Diagnostics',
+    desc:     'Runs the four diagnostic ZSHOW subcommands — UTIL, LOCK, MQP, ALLOC — in one sweep and flags the resource anomalies a containment review cares about.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Be signed on to a z/TPF operator console at the ENTER TPF COMMAND prompt. Any privilege level works — all four ZSHOW subcommands this tool uses are OPER-level queries.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find System Diagnostics',
+        body:  'In the z/TPF CONSOLE section, System Diagnostics is the fifth tool, below Pool Monitor.',
+        highlight: 'tpfDiagBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the sweep',
+        body:  'Click ◈ System Diagnostics. It sends ZSHOW UTIL (CPU per I-stream), ZSHOW LOCK (held record and resource locks), ZSHOW MQP (scheduler list depths) and ZSHOW ALLOC (fixed-file record allocation) back to back, then parses each reply. Every command is read-only.',
+        highlight: 'tpfDiagBtn',
+        autoFn: 'tpfSysDiag',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the anomalies',
+        body:  'Flagged rows: a lock held over 1,000ms or with five or more waiters, the DEFERRED scheduler list above 1,000 entries, any record type at or above 90% of prime. On the mock all three fire — PAYM holds ACCT#00920C14 for 4,210ms with 7 waiters, the deferred list sits at 1,842, and #ACCREC is at 91%. The point of running them together is that these are one incident (the seeded CYC-0826 storyline), not three: the PAYM lock is why the deferred list is backing up, and the backlog is why #ACCREC is filling. Chasing any one in isolation leads nowhere.',
+        highlight: 'tpfResults',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── z/TPF: Entry Point Debugger ──────────────────────────────────
+  {
+    id:       'tpf-entry-debugger',
+    category: 'security',
+    title:    'z/TPF: Entry Point Debugger',
+    desc:     'Drives the console debugger — ZTEST START / DISPLAY / BP / STEP / GO / STOR / STOP — against a privileged ECB, showing that operator-console reach is debugger reach on privileged code.',
+    steps: [
+      {
+        title: 'Prerequisites',
+        body:  'Be signed on to a z/TPF operator console at the ENTER TPF COMMAND prompt. Run the ECB Enumerator first if you want the tool to target a real privileged ECB from the live directory; otherwise it falls back to PAYM. This walkthrough drives a live debugger against a payment handler — only do it on the mock or a system you are authorized to test.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the Entry Point Debugger',
+        body:  'In the z/TPF CONSOLE section, the Entry Point Debugger is the sixth tool, below System Diagnostics.',
+        highlight: 'tpfDebugBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the debug cycle',
+        body:  'Click ⬚ Entry Point Debugger. It runs a full session: ZTEST START,<ecb> attaches and loads the entry point, ZTEST DISPLAY dumps the PSW and all 16 general registers, ZTEST BP sets a breakpoint a few instructions in, ZTEST STEP single-steps once, ZTEST GO runs to that breakpoint, ZTEST STOR dumps entry-point storage, and ZTEST STOP closes the session cleanly.',
+        highlight: 'tpfDebugBtn',
+        autoFn: 'tpfDebugEntry',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the results',
+        body:  'ZTEST ENTRY (the Entry Point Prober) is a health check. Everything past ENTRY is a live debugger — registers, breakpoints, single-step, storage read — and on the mock it carries no privilege gate, so an OPER session that can reach the console can attach it to a privileged payment handler. The takeaway for a review: treat operator-console access as equivalent to code-execution access on anything ZTEST can name. Against PAYM, DISPLAY also surfaces the seeded CYC-0826 marker in the save-area chain, the same incident the other z/TPF tools touch from their own angles.',
+        highlight: 'tpfResults',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── z/TPF: Hardening Audit ───────────────────────────────────────
+  {
+    id:       'tpf-hardening-audit',
+    category: 'security',
+    title:    'z/TPF: Hardening Audit',
+    desc:     'Sweeps the four surfaces a z/TPF training lab is usually left exposed on — internet daemons (ZINET), CRAS console routing (ZCRAS), the command authorization matrix (ZAUTH), and the POSIX account files — and lists every config leftover as a rated finding.',
+    steps: [
+      {
+        title: 'What this covers',
+        body:  'A stood-up-and-never-locked-down z/TPF lab leaks in four predictable places. ZINET: daemons (FTP, Telnet, HTTP, TFTP) left with anonymous or no authentication. ZCRAS: an alternate Computer Room Agent Set console bound to a TCP/IP line, and student terminal pools that can route restricted operator commands. ZAUTH: the UUSR command-authorization matrix letting a non-admin class reach ZFILE / ZDCP / ZLOGP. POSIX: leftover demo accounts (tpfuser, guest, test) in /etc/passwd with login shells, and real or empty password hashes in /etc/shadow.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Prerequisites',
+        body:  'Be signed on to a z/TPF operator console at the ENTER TPF COMMAND prompt. Any privilege level works — every command the tool issues is a DISPLAY or a ZFILE cat, all read-only. On the mock, that ZFILE is reachable at all is itself one of the findings.',
+        highlight: null,
+        autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click the 🔒 button in the OIA status bar and enter the security password (default: 2970).',
+        highlight: 'secBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Find the Hardening Audit',
+        body:  'In the z/TPF CONSOLE section, the Hardening Audit is the seventh tool, below the Entry Point Debugger.',
+        highlight: 'tpfHardenBtn',
+        autoFn: null,
+      },
+      {
+        title: 'Run the sweep',
+        body:  'Click ⛨ Hardening Audit. It issues ZINET DISPLAY, ZCRAS DISPLAY, ZAUTH DISPLAY, ZFILE cat /etc/passwd and ZFILE cat /etc/shadow back to back, parses each reply, and collapses everything into one findings table sorted by severity.',
+        highlight: 'tpfHardenBtn',
+        autoFn: 'tpfHardeningAudit',
+        autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL — anonymous FTP, and the /etc/shadow entry for test with no password field at all. HIGH — the unauthenticated HTTP daemon and the no-auth TFTP daemon, CRAS3 bound to a TCP/IP line, POOL2 (STUDENT class) routing restricted commands, ZFILE/ZDCP reachable from STUDENT, and tpfuser/guest carrying weak MD5 hashes with login shells. MEDIUM — Telnet password auth over cleartext. The clean contrast is the system accounts tpf/daemon/sshd: /sbin/nologin shells and ! / * in shadow, which is the state the demo accounts should be in. None of this is a live incident — it is what a lab looks like when the teardown step was skipped.',
+        highlight: 'tpfResults',
+        autoFn: null,
+      },
+    ],
+  },
+
+  // ── Z/LINUX ON Z/VM: CP Privilege Class Check ────────────────────────
+  {
+    id:       'zlinux-priv-check',
+    category: 'security',
+    title:    'Z/Linux: CP Privilege Class Check',
+    desc:     'A Linux guest should hold CP privilege class G, nothing more. This checks what the guest\'s own directory entry actually grants, and whether CP will run commands class G shouldn\'t.',
+    steps: [
+      {
+        title: 'Why this matters',
+        body:  'Every z/VM guest, Linux or otherwise, gets a CP privilege class from its directory entry. Class G is the unprivileged default. If a Linux guest was ever provisioned with anything above G, often because "the monitoring agent needed it", a compromise of that one Linux box becomes a compromise of whatever that class can reach on the whole z/VM system.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 in the OIA bar and enter the security password.',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Log on as the guest',
+        body:  'Connect to a z/VM target (the bundled mock-zvm/3271 ships two training guests: LNXGST01, correctly provisioned at class G, and LNXGST02, a deliberately over-privileged ABEG). Log on as either. You can run this from the CP prompt, or from the guest\'s Linux console — the tool prefixes #CP automatically when it sees one.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Run the check',
+        body:  'Scroll to Z/LINUX ON Z/VM → ▶ CP PRIVILEGE CHECK. It runs QUERY PRIVCLASS, then two commands real class G is not supposed to be able to run (INDICATE LOAD, QUERY SRM).',
+        highlight: 'zlStatus', autoFn: 'zlinuxPrivCheck', autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'CRITICAL if the guest holds any class beyond G, or if CP actually executed a gated command — either one proves the point. OK means class G, and every gated command was refused. INFO, inconclusive, means a command never got a clear refusal (it may not have reached CP at all) — that is never scored as a pass, on purpose: an earlier version of this tool did score a swallowed command as clean, which is the worst thing an audit tool can do.',
+        highlight: 'zlResults', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV or JSON to document the class and each command\'s result for your report.',
+        highlight: 'zlResults', autoFn: 'zlinuxExportCsv', autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Z/LINUX ON Z/VM: Guest Console + #CP Escape ─────────────────────
+  {
+    id:       'zlinux-console-escape',
+    category: 'security',
+    title:    'Z/Linux: Console and #CP Escape',
+    desc:     'Whoever has the CP logon password for a Linux guest has its 3270 console. This checks whether that console is reachable, and whether #CP reaches the hypervisor from it.',
+    steps: [
+      {
+        title: 'Why this matters',
+        body:  'A Linux guest\'s 3270 session isn\'t just a terminal into Linux, it\'s also the guest\'s CP console. Logon credentials are the only gate. From a reachable console, #CP escapes straight into the hypervisor, letting the holder disconnect, interrupt, or IPL the guest without ever touching Linux itself.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Log on to a Linux guest',
+        body:  'Connect to mock-zvm/3271 and log on as LNXGST01 (password: LINUX). You\'ll land on a Linux login prompt, not the usual CP banner — that\'s the console, reachable from the 3270 session, right there.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Scroll to Z/LINUX ON Z/VM → ▶ CONSOLE + #CP ESCAPE. It types one read-only #CP QUERY PRIVCLASS and reads what comes back.',
+        highlight: 'zlStatus', autoFn: 'zlinuxConsoleAudit', autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH, console reachable — the logon password was the only thing standing between a tester and this guest\'s console. HIGH, #CP reaches CP — commands typed here are issued to the hypervisor as this guest. CRITICAL would mean the logon landed straight in a Linux shell with no authentication at all. Weak guest logon passwords themselves are found separately, by RACF PROBE\'s existing z/VM sweep — put the customer\'s real guest userids in its wordlist.',
+        highlight: 'zlResults', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV or JSON.',
+        highlight: 'zlResults', autoFn: 'zlinuxExportCsv', autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Z/LINUX ON Z/VM: VSWITCH / VMLAN Isolation ───────────────────────
+  {
+    id:       'zlinux-network-audit',
+    category: 'security',
+    title:    'Z/Linux: VSWITCH / VMLAN Isolation',
+    desc:     'Reads QUERY VSWITCH and QUERY VMLAN to find what lets one compromised guest reach its neighbors — an unrestricted switch, port isolation off, or an open HiperSockets-type LAN that bypasses network segmentation entirely.',
+    steps: [
+      {
+        title: 'Why this matters',
+        body:  'Linux guests usually share a virtual switch or an internal guest LAN with other guests on the same z/VM system. If port isolation is off, a compromised guest can talk directly to its neighbors, no firewall in the path. HiperSockets-type LANs are worse: that traffic never touches the corporate network at all, so segmentation controls never see it.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Log on as a guest',
+        body:  'Connect to mock-zvm/3271 and log on as LNXGST01 or LNXGST02, at the CP prompt or the Linux console either way.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Run the audit',
+        body:  'Scroll to Z/LINUX ON Z/VM → ▶ VSWITCH / VMLAN ISOLATION. It reads both queries, then tries each switch\'s access list.',
+        highlight: 'zlStatus', autoFn: 'zlinuxNetworkAudit', autoLabel: 'Run it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — an unrestricted switch, or worse, an unrestricted HiperSockets-type LAN. MEDIUM — port isolation is off. INFO — VLAN-unaware (no VLAN separation, isolation is the only control left), or an access list the guest\'s class couldn\'t read (expected for class G, not a finding). Log back on as LNXGST02 and rerun it: that guest can read the access list, and the finding names every user sharing the network.',
+        highlight: 'zlResults', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV or JSON.',
+        highlight: 'zlResults', autoFn: 'zlinuxExportCsv', autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Z/LINUX ON Z/VM: Directory Review (IUCV) ─────────────────────────
+  {
+    id:       'zlinux-directory-review',
+    category: 'security',
+    title:    'Z/Linux: Directory Review (IUCV)',
+    desc:     'A class G guest can\'t read the z/VM directory, so this works on a pasted export. Flags IUCV ALLOW on sensitive service machines, IUCV ANY on application guests, weak passwords, and LOGONBY entries that hand one guest\'s console to another.',
+    steps: [
+      {
+        title: 'Why this matters',
+        body:  'IUCV lets z/VM guests message each other. ALLOW lets anyone open a path in with no further check; ANY lets a guest open a path to anyone. Put together, a guest with ANY can reach any guest that has ALLOW, no credentials required. LOGONBY is a different exposure: it lets a named userid log on to a guest, console included, using its OWN password — the guest is only as safe as its weakest by-user. None of this needs a live connection to review, which is the point: it works from an export the customer hands you.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Unlock the Security panel',
+        body:  'Click 🔒 and enter the security password.',
+        highlight: 'secBtn', autoFn: null,
+      },
+      {
+        title: 'Load the training sample',
+        body:  'Scroll to Z/LINUX ON Z/VM → Load sample. This drops an invented directory export into the box — not a real one, built to exercise every rule this tool checks.',
+        highlight: 'zlDirText', autoFn: 'zlinuxLoadSample', autoLabel: 'Load it for me',
+      },
+      {
+        title: 'Run the review',
+        body:  'Click ▶ REVIEW DIRECTORY (IUCV). Nothing is sent anywhere — this reads only the text in the box.',
+        highlight: 'zlStatus', autoFn: 'zlinuxDirectoryReview', autoLabel: 'Review it for me',
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — IUCV ALLOW on MAINT/DIRMAINT/VSMSERVE (names every guest holding ANY that can reach them), IUCV ANY on an ordinary Linux guest, a password equal to its own userid (the value is never printed), or a LOGONBY by-user that is itself weak or an ordinary class G guest. INFO — ALLOW on a less sensitive machine, ANY on a service machine, or a LOGONBY naming administrators (confirm each one actually is one). Anything the tool didn\'t review, a missing INCLUDE\'d profile, IDENTITY/SUBCONFIG entries, is reported as skipped rather than silently passed.',
+        highlight: 'zlResults', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV or JSON. When you run this against a real customer export, paste it into the box in place of the sample first.',
+        highlight: 'zlResults', autoFn: 'zlinuxExportCsv', autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Z/LINUX ON Z/VM: SMAPI Exposure Check ────────────────────────────
+  {
+    id:       'zlinux-smapi-check',
+    category: 'security',
+    title:    'Z/Linux: SMAPI Exposure Check',
+    desc:     'Checks whether the z/VM Systems Management API is reachable and whether it protects its traffic with TLS. SMAPI can provision guests and rewrite the directory, and its requests carry a userid and password.',
+    steps: [
+      {
+        title: 'Why this matters',
+        body:  'SMAPI is the automation interface behind directory changes and guest provisioning on z/VM. Its requests carry credentials. A plaintext listener means those credentials cross the network readable to anything watching.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'This one needs no session',
+        body:  'Unlike the other checks here, this is a standalone network probe — no 3270 connection required. It opens a TCP connection to the SMAPI ports and, if one answers, tries a TLS handshake. It sends no SMAPI request and tries no credentials, so it can\'t lock an account or change anything.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Run the check',
+        body:  'Unlock 🔒, scroll to Z/LINUX ON Z/VM, type the z/VM host in the SMAPI field, click ▶ SMAPI.',
+        highlight: 'zlSmapiHost', autoFn: null,
+      },
+      {
+        title: 'Read the findings',
+        body:  'HIGH — the port is open and answered with no TLS; the traffic is plaintext. MEDIUM — the port is open and did a TLS handshake; confirm who can reach it and who is in the authorization list, since reachability over TLS is not the same as locked down. OK — closed or filtered. This check only proves the door exists, not what\'s behind it: whether SMSG DIRMAINT actually accepts commands from a class G guest still needs the customer\'s confirmation.',
+        highlight: 'zlResults', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV or JSON.',
+        highlight: 'zlResults', autoFn: 'zlinuxExportCsv', autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Z/LINUX ON Z/VM: XAUTOLOG Start Probe (INTRUSIVE) ────────────────
+  {
+    id:       'zlinux-xautolog-probe',
+    category: 'security',
+    title:    '⚠ Z/Linux: XAUTOLOG Start Probe (INTRUSIVE)',
+    desc:     'Tries to start another virtual machine as the logged-on guest. This can change state on a system you do not own — read every step before clicking anything.',
+    steps: [
+      {
+        title: 'Stop and read this first',
+        body:  'XAUTOLOG is a real z/VM directory statement that authorizes a guest to start another virtual machine. This probe actually issues the command. If the target is down and the guest is authorized, CP starts it, for real, on whatever system you point this at. Do not run this against a target you don\'t control unless the Rules of Engagement explicitly name it. The authorizing statement\'s exact rules are not confirmed against IBM\'s own manual, so the mock\'s responses are a stand-in, not a captured message.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'How to run it with zero state change',
+        body:  'Pick a target you already know is logged on. CP still checks authorization first and reports it honestly, but if the target is already up, nothing starts, you only learn whether this guest was authorized to do it.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'The two gates',
+        body:  'First, the RoE scope guard: this check runs only when scope.json explicitly names xautolog-start in its activities list — leaving the activities list out does NOT authorize it, unlike the other checks in this panel. Second, a confirm dialog pops up in the browser every single time, spelling out exactly what is about to run, with no setting anywhere to skip it. Cancel stops it cold, before anything reaches the host.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Try it on the mock',
+        body:  'Log on to mock-zvm/3271 as LNXGST02 (password LNXPRIV, the deliberately over-privileged training guest). In the Z/LINUX ON Z/VM section, type OPERATOR in the XAUTOLOG target field, click ▶ XAUTOLOG PROBE, and read the confirm dialog before accepting. OPERATOR is already logged on in this mock, so nothing actually starts.',
+        highlight: 'zlXautologTarget', autoFn: null,
+      },
+      {
+        title: 'Read the finding, then try the denied case',
+        body:  'HIGH means this guest is authorized, which on a real system with OPERATOR as the target would be the headline finding of the engagement. Now log off, log back on as LNXGST01 (class G, password LINUX) and run the same probe against OPERATOR — OK means CP refused it, the expected result for an ordinary guest.',
+        highlight: 'zlResults', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV or JSON.',
+        highlight: 'zlResults', autoFn: 'zlinuxExportCsv', autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+  // ── Z/LINUX ON Z/VM: SEND CP Probe (INTRUSIVE) ───────────────────────
+  {
+    id:       'zlinux-sendcp-probe',
+    category: 'security',
+    title:    '⚠ Z/Linux: SEND CP Probe (INTRUSIVE)',
+    desc:     'Tries to issue a CP command as another virtual machine. Read every step before clicking anything.',
+    steps: [
+      {
+        title: 'Stop and read this first',
+        body:  'SEND CP lets one guest route a CP command through another guest, running under the target\'s own authority. This probe actually sends QUERY TIME, a harmless read-only command, but it is a real command issued as the target, not a simulation. The privilege class SEND CP actually needs is not confirmed against IBM\'s own manual — treat whatever class the mock gates on as illustrative, not authoritative.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'The two gates',
+        body:  'The RoE scope guard refuses this unless send-cp is explicitly named in scope.json\'s activities — leaving the list out does not cover it. A confirm dialog also appears in the browser every time, with no way to turn it off. Cancel stops it before anything reaches the host.',
+        highlight: null, autoFn: null,
+      },
+      {
+        title: 'Try it on the mock',
+        body:  'Log on to mock-zvm/3271 as LNXGST02 (password LNXPRIV). Type MAINT in the SEND CP target field, click ▶ SEND CP PROBE, and accept the confirm dialog.',
+        highlight: 'zlSendCpTarget', autoFn: null,
+      },
+      {
+        title: 'Read the finding, then try the denied case',
+        body:  'HIGH means CP executed the command as MAINT, this guest\'s commands now run under another guest\'s authority. Log on as LNXGST01 instead and rerun it: OK means CP refused it.',
+        highlight: 'zlResults', autoFn: null,
+      },
+      {
+        title: 'Export',
+        body:  'Click ↓ Export CSV or JSON.',
+        highlight: 'zlResults', autoFn: 'zlinuxExportCsv', autoLabel: 'Export CSV for me',
+      },
+    ],
+  },
+
+];
+
+// ── Engine state ───────────────────────────────────────────────────
+let _wt = null; // { id, stepIdx } or null when no walkthrough is active
+
+function openWalkthrough(id) {
+  const scenario = _WALKTHROUGHS.find(s => s.id === id);
+  if (!scenario) return;
+  _wt = { id, stepIdx: 0 };
+  const el = document.getElementById('wtOverlay');
+  // Reset to default anchor so drag position doesn't persist across sessions
+  el.style.top    = '';
+  el.style.left   = '';
+  el.style.bottom = '56px';
+  el.style.right  = '12px';
+  el.style.display = 'flex';
+  _wtRender();
+}
+
+function closeWalkthrough() {
+  _wt = null;
+  _wtClearHighlight();
+  document.getElementById('wtOverlay').style.display = 'none';
+}
+
+function walkthroughNext() {
+  if (!_wt) return;
+  const scenario = _WALKTHROUGHS.find(s => s.id === _wt.id);
+  if (!scenario) return;
+  if (_wt.stepIdx < scenario.steps.length - 1) {
+    _wt.stepIdx++;
+    _wtRender();
+  } else {
+    closeWalkthrough();
+  }
+}
+
+function walkthroughPrev() {
+  if (!_wt || _wt.stepIdx === 0) return;
+  _wt.stepIdx--;
+  _wtRender();
+}
+
+function wtAutoStep() {
+  if (!_wt) return;
+  const scenario = _WALKTHROUGHS.find(s => s.id === _wt.id);
+  if (!scenario) return;
+  const step = scenario.steps[_wt.stepIdx];
+  if (!step || !step.autoFn) return;
+
+  // Built-in helpers that aren't top-level functions
+  if (step.autoFn === '_wtSetAidRange') {
+    const s = document.getElementById('fuzzAidStart');
+    const e = document.getElementById('fuzzAidEnd');
+    if (s) s.value = '60';
+    if (e) e.value = '70';
+    return;
+  }
+  if (step.autoFn === '_wtOpenXfer') {
+    const tab = document.querySelector('.panel-tab[onclick*="Xfer"]');
+    if (tab) { tab.click(); const p = document.getElementById('rightPanel'); if (p) p.classList.remove('hidden'); }
+    return;
+  }
+  if (step.autoFn === '_wtOpenAIConfig') {
+    const tab = document.querySelector('.panel-tab[onclick*="AIConfig"]');
+    if (tab) { tab.click(); const p = document.getElementById('rightPanel'); if (p) p.classList.remove('hidden'); }
+    return;
+  }
+
+  // Call any global function by name
+  if (typeof window[step.autoFn] === 'function') {
+    window[step.autoFn]();
+  }
+}
+
+// ── Rendering ──────────────────────────────────────────────────────
+
+function _wtRender() {
+  if (!_wt) return;
+  const scenario = _WALKTHROUGHS.find(s => s.id === _wt.id);
+  if (!scenario) return;
+  const step     = scenario.steps[_wt.stepIdx];
+  const total    = scenario.steps.length;
+  const isLast   = _wt.stepIdx === total - 1;
+  const isFirst  = _wt.stepIdx === 0;
+
+  // Update highlight
+  _wtClearHighlight();
+  if (step.highlight) _wtHighlight(step.highlight);
+
+  // Header
+  document.getElementById('wtTitle').textContent    = scenario.title;
+  document.getElementById('wtProgress').textContent = `Step ${_wt.stepIdx + 1} of ${total}`;
+
+  // Step content
+  document.getElementById('wtStepTitle').textContent = step.title;
+  document.getElementById('wtStepBody').textContent  = step.body;
+
+  // Auto button
+  const autoBtn = document.getElementById('wtAutoBtn');
+  if (step.autoFn) {
+    autoBtn.style.display  = '';
+    autoBtn.textContent    = step.autoLabel || 'Do it for me';
+  } else {
+    autoBtn.style.display = 'none';
+  }
+
+  // Nav buttons
+  document.getElementById('wtPrevBtn').disabled = isFirst;
+  const nextBtn = document.getElementById('wtNextBtn');
+  nextBtn.textContent = isLast ? 'Finish' : 'Next →';
+}
+
+function _wtHighlight(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.classList.add('wt-highlight');
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function _wtClearHighlight() {
+  document.querySelectorAll('.wt-highlight').forEach(el => el.classList.remove('wt-highlight'));
+}
+
+// ── Security panel list (category: security only) ──────────────────
+
+function renderWalkthroughList() {
+  const sel = document.getElementById('wtSecSelect');
+  if (!sel) return;
+  const list = _WALKTHROUGHS.filter(s => s.category === 'security');
+  const opts = list.map(s => `<option value="${s.id}">${s.title}</option>`).join('');
+  sel.innerHTML = '<option value="">Select a walkthrough…</option>' + opts;
+}
+
+function wtStartSelected() {
+  const sel = document.getElementById('wtSecSelect');
+  if (!sel || !sel.value) return;
+  openWalkthrough(sel.value);
+}
+
+// ── Help menu picker (category: general) ───────────────────────────
+
+function openWalkthroughPicker() {
+  const el = document.getElementById('wtPickerList');
+  if (el) {
+    const list = _WALKTHROUGHS.filter(s => s.category === 'general');
+    el.innerHTML = list.map(s => _wtCard(s)).join('');
+  }
+  const modal = document.getElementById('wtPickerModal');
+  if (modal) modal.style.display = 'flex';
+  // Do NOT call closeAllMenus() here — let the click bubble naturally to
+  // toggleMenu() which sees wasOpen=true and closes the dropdown cleanly.
+}
+
+function closeWalkthroughPicker() {
+  const modal = document.getElementById('wtPickerModal');
+  if (modal) modal.style.display = 'none';
+}
+
+function _wtCard(s) {
+  return (
+    `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #1a2030">` +
+    `<div>` +
+    `<div style="font-size:11px;color:var(--text-main);font-weight:600">${esc(s.title)}</div>` +
+    `<div style="font-size:10px;color:var(--text-muted);margin-top:1px">${esc(s.desc)}</div>` +
+    `</div>` +
+    `<button onclick="closeWalkthroughPicker();openWalkthrough('${s.id}')" ` +
+    `style="flex-shrink:0;background:#0d1f0d;border:1px solid #2a4a2a;border-radius:3px;color:#6db86d;` +
+    `font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer;white-space:nowrap">▶ Start</button>` +
+    `</div>`
+  );
+}
+
+Object.assign(window, {
+  openWalkthrough, closeWalkthrough, walkthroughNext, walkthroughPrev,
+  wtAutoStep, openWalkthroughPicker, closeWalkthroughPicker,
+  renderWalkthroughList, wtStartSelected,
+});
+
+// ── Draggable walkthrough popup ────────────────────────────────────
+(function () {
+  let _dragging = false;
+  let _ox = 0, _oy = 0;
+
+  function _startDrag(e) {
+    if (e.button !== 0) return;
+    const el = document.getElementById('wtOverlay');
+    if (!el) return;
+    // Convert bottom/right anchor to top/left so we can drag freely
+    const rect = el.getBoundingClientRect();
+    el.style.top    = rect.top  + 'px';
+    el.style.left   = rect.left + 'px';
+    el.style.bottom = '';
+    el.style.right  = '';
+    _ox = e.clientX - rect.left;
+    _oy = e.clientY - rect.top;
+    _dragging = true;
+    e.preventDefault();
+    document.getElementById('wtDragHandle').style.cursor = 'grabbing';
+  }
+
+  function _onDrag(e) {
+    if (!_dragging) return;
+    const el = document.getElementById('wtOverlay');
+    if (!el) return;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const w  = el.offsetWidth,   h  = el.offsetHeight;
+    el.style.left = Math.max(0, Math.min(e.clientX - _ox, vw - w)) + 'px';
+    el.style.top  = Math.max(0, Math.min(e.clientY - _oy, vh - h)) + 'px';
+  }
+
+  function _stopDrag() {
+    if (!_dragging) return;
+    _dragging = false;
+    const handle = document.getElementById('wtDragHandle');
+    if (handle) handle.style.cursor = 'grab';
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const handle = document.getElementById('wtDragHandle');
+    if (handle) handle.addEventListener('mousedown', _startDrag);
+    document.addEventListener('mousemove', _onDrag);
+    document.addEventListener('mouseup',   _stopDrag);
+  });
+})();

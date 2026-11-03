@@ -1,0 +1,182 @@
+services:
+  tn3270-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+
+    container_name: tn3270-bridge
+    restart: unless-stopped
+
+    ports:
+      - "${BRIDGE_HOST_PORT:-8081}:8081"
+    
+    volumes:
+      - type: bind
+        source: ./lpars.txt
+        target: /app/lpars.txt
+      - type: bind
+        source: ./ssh-hosts.txt
+        target: /app/ssh-hosts.txt
+      - type: bind
+        source: ./default-accounts.txt
+        target: /app/default-accounts.txt
+      - type: volume
+        source: macros_data
+        target: /app/macros/local
+
+    environment:
+      BRIDGE_PORT: "8081"
+      # Optional at build/start time so a fresh clone without .env configured
+      # still builds — routes/macro-run.js itself fails closed (503) on an
+      # empty key, so this doesn't reopen the auth gap, it just moves where
+      # the missing-key error surfaces from "compose won't start" to "the
+      # endpoint refuses requests until you set one."
+      MACRO_RUN_API_KEY: "${MACRO_RUN_API_KEY:-}"
+      LOG_LEVEL: "debug"
+        # Set this if you are using non-self signed cert.
+        # BRIDGE_VERIFY_TLS: "true"
+        # Set this is you are using a self-signed cert.
+      BRIDGE_VERIFY_TLS: "false"
+      BRIDGE_SOCKET_TIMEOUT_MS: "300000"
+      BRIDGE_MAX_SESSIONS: "50"
+      TN3270_HEXDUMP: "1"
+      
+
+      DEFAULT_MODEL:    "3278-2"
+      DEFAULT_CODEPAGE: "37"
+      # RACF PROBE "Load list" reads this file (bind-mounted above). Drop your
+      # authorized-lab wordlist into ./default-accounts.txt on the host.
+      DEFAULT_ACCOUNTS_FILE: "/app/default-accounts.txt"
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    depends_on:
+      - mock-lpar
+      - mock-zvm
+      - mock-tpf
+      - mock-as400
+
+    networks:
+      - tn3270-net
+
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.50"
+        reservations:
+          memory: 64M
+# Mock z/VM  — lightweight TN3270 server simulating CP/CMS
+  mock-zvm:
+    build:
+      context: .
+      dockerfile: mock-lpar/Dockerfile.mock-zvm
+    container_name: mock-zvm
+    restart: unless-stopped
+   
+    environment:
+      MOCK_ZVM_PORT:  "3271"
+      MOCK_ZVM_SYSID: "ZVMPROD"
+      MOCK_ZVM_VMID:  "ZVMSYS1"
+      MOCK_ZVM_LU:    "ZVMLU01"
+      LOG_LEVEL:      "debug"
+   
+    networks:
+      - tn3270-net
+     
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+# Mock z/TPF — operator console simulation, port 3274
+  mock-tpf:
+    build:
+      context: .
+      dockerfile: mock-lpar/Dockerfile.mock-tpf
+    container_name: mock-tpf
+    restart: unless-stopped
+
+    environment:
+      MOCK_PORT:  "3274"
+      MOCK_SYSID: "TPFSYS1"
+      MOCK_LU:    "TPFLU01"
+      LOG_LEVEL:  "debug"
+
+    networks:
+      - tn3270-net
+
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+
+# Mock LPAR  lightweight TN3270 server for testing and demos
+  mock-lpar:
+    build:
+      context: .                          # project root COPY paths are relative to here
+      dockerfile: mock-lpar/Dockerfile    # Dockerfile lives in the mock-lpar subfolder
+    container_name: mock-lpar
+    restart: unless-stopped
+
+    environment:
+      MOCK_PORT:  "3270"
+      MOCK_SYSID: "DEMOSYS"
+      MOCK_LU:    "MOCKLU01"
+      LOG_LEVEL:  "debug"
+
+    networks:
+      - tn3270-net
+
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+
+# Mock AS/400 (TN5250) — signon + main menu simulation, port 3272
+  mock-as400:
+    build:
+      context: .
+      dockerfile: mock-lpar/Dockerfile.mock-as400
+    container_name: mock-as400
+    restart: unless-stopped
+
+    environment:
+      MOCK_AS400_PORT:  "3272"
+      MOCK_AS400_SYSID: "AS400MOCK"
+      # HTTP Server Administration GUI (2001 HTTP, 2010 HTTPS), unpatched by default.
+      # Set MOCK_AS400_HTTPADMIN_PATCHED to "1" to model the CVE-2026-96119 PTF.
+      MOCK_AS400_HTTPADMIN_PATCHED: "0"
+      MOCK_AS400_OSLEVEL: "V7R4M0"
+      # FTP server on 2121 (real box: 21). Loose by default: clear text accepted,
+      # explicit TLS offered, no anonymous. Set MOCK_AS400_FTP_IMPLICIT=1 for 2990,
+      # _REQUIRE_TLS=1 to refuse clear text, _ANON=1 to allow anonymous.
+      MOCK_AS400_FTP_ANON: "0"
+      MOCK_AS400_FTP_REQUIRE_TLS: "0"
+      MOCK_AS400_FTP_IMPLICIT: "0"
+      # Server mapper on 4449 (real box: 449) and sign-on server on 8476 and
+      # 9476, for the IBM i Host Server Recon probe. MOCK_AS400_PWDLVL sets the
+      # QPWDLVL it reports (unset: the mock's own QPWDLVL system value, so the
+      # sign-on server and WRKSYSVAL agree), MOCK_AS400_HOSTSVR_TLS_TWINS (all,
+      # none, or unset) decides which servers the mapper says have a TLS twin.
+      LOG_LEVEL:        "debug"
+
+    networks:
+      - tn3270-net
+
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.25"
+
+networks:
+  tn3270-net:
+    driver: bridge
+
+volumes:
+  macros_data:

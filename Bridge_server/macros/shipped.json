@@ -1,0 +1,190 @@
+[
+  {
+    "name": "TSO-LOGON",
+    "description": "Gets me though the mess to the LOGON prompt",
+    "created": "2026-06-04T00:00:00.000Z",
+    "steps": [
+      {
+        "op": "aid",
+        "aid": "ENTER",
+        "fields": []
+      },
+      {
+        "op": "wait",
+        "condition": "screen",
+        "timeoutMs": 5000
+      },
+      {
+        "op": "aid",
+        "aid": "PA1",
+        "fields": []
+      },
+      {
+        "op": "wait",
+        "condition": "screen",
+        "timeoutMs": 5000
+      },
+      {
+        "op": "aid",
+        "aid": "PA1",
+        "fields": []
+      },
+      {
+        "op": "wait",
+        "condition": "screen",
+        "timeoutMs": 5000
+      }
+    ],
+    "id": "mp17efzred08"
+  },
+  {
+    "name": "z/VM CP to FILELIST",
+    "description": "cp to filelist for z\\vm",
+    "steps": [
+      {
+        "op": "comment",
+        "text": "Start from CP Ready prompt"
+      },
+      {
+        "op": "wait",
+        "condition": "unlock"
+      },
+      {
+        "op": "type",
+        "row": 21,
+        "col": 13,
+        "text": "IPL CMS"
+      },
+      {
+        "op": "aid",
+        "aid": "ENTER"
+      },
+      {
+        "op": "wait",
+        "condition": "unlock"
+      },
+      {
+        "op": "comment",
+        "text": "Now at CMS Ready"
+      },
+      {
+        "op": "type",
+        "row": 21,
+        "col": 14,
+        "text": "FILELIST"
+      },
+      {
+        "op": "aid",
+        "aid": "ENTER"
+      },
+      {
+        "op": "wait",
+        "condition": "unlock"
+      },
+      {
+        "op": "comment",
+        "text": "FILELIST screen active — open Transfer panel and click refresh"
+      }
+    ],
+    "id": "mp17gc94ntij"
+  },
+  {
+    "name": "Z\\VM cp to CMS to filelist",
+    "description": "this will bring up the filelist for Z\\VM to download files.",
+    "steps": [
+      {
+        "op": "comment",
+        "text": "Start from CP Ready prompt"
+      },
+      {
+        "op": "wait",
+        "condition": "unlock"
+      },
+      {
+        "op": "type",
+        "row": 21,
+        "col": 13,
+        "text": "IPL CMS"
+      },
+      {
+        "op": "aid",
+        "aid": "ENTER"
+      },
+      {
+        "op": "wait",
+        "condition": "text",
+        "row": 28,
+        "col": 0,
+        "text": "Ready;",
+        "timeoutMs": 30000
+      },
+      {
+        "op": "comment",
+        "text": "Now at CMS Ready"
+      },
+      {
+        "op": "type",
+        "row": 21,
+        "col": 14,
+        "text": "FILELIST"
+      },
+      {
+        "op": "aid",
+        "aid": "ENTER"
+      },
+      {
+        "op": "wait",
+        "condition": "unlock"
+      },
+      {
+        "op": "comment",
+        "text": "FILELIST screen active — open Transfer panel and click refresh"
+      }
+    ],
+    "id": "mq6u5eobquxq"
+  },
+  {
+    "name": "create_dataset",
+    "description": "Prompts for a dataset name, then allocates it with a TSO ALLOCATE command from the READY prompt",
+    "created": "2026-09-11T00:00:00.000Z",
+    "steps": [
+      {
+        "op": "comment",
+        "text": "Start from the native TSO READY prompt (not inside ISPF)"
+      },
+      {
+        "op": "wait",
+        "condition": "text",
+        "row": 6,
+        "col": 1,
+        "text": "READY",
+        "timeoutMs": 10000
+      },
+      {
+        "op": "prompt",
+        "var": "dsname",
+        "label": "Dataset name to create (e.g. HLQ.NEW.DATA):"
+      },
+      {
+        "op": "type",
+        "row": 7,
+        "col": 1,
+        "text": "ALLOCATE DATASET('{dsname}') NEW CATALOG SPACE(1,1) TRACKS RECFM(F,B) LRECL(80) BLKSIZE(0) DSORG(PS)"
+      },
+      {
+        "op": "aid",
+        "aid": "ENTER"
+      },
+      {
+        "op": "wait",
+        "condition": "screen",
+        "timeoutMs": 5000
+      },
+      {
+        "op": "comment",
+        "text": "Blank READY means it allocated cleanly; an IKJ56xxx message (e.g. already cataloged) shows on the READY screen instead"
+      }
+    ],
+    "id": "mtwxvwwtdlum"
+  }
+]

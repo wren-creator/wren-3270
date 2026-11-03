@@ -1,0 +1,83 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+import * as traffic    from '../routes/traffic.js';
+import * as logs       from '../routes/logs.js';
+import * as profiles   from '../routes/profiles.js';
+import * as sshHosts   from '../routes/ssh-hosts.js';
+import * as macros     from '../routes/macros.js';
+import * as macroRun   from '../routes/macro-run.js';
+import * as recording  from '../routes/recording.js';
+import * as security   from '../routes/security.js';
+import * as negotiate  from '../routes/negotiate.js';
+import * as wire       from '../routes/wire.js';
+import * as esm        from '../routes/esm.js';
+import * as probeWl    from '../routes/probe-wordlist.js';
+import * as sessionsRt from '../routes/sessions.js';
+import * as poolLimits from '../routes/pool-limits.js';
+import * as sshAudit   from '../routes/ssh-audit.js';
+import * as httpAdminAudit from '../routes/http-admin-audit.js';
+import * as ftpAudit from '../routes/ftp-audit.js';
+import * as ibmiRecon from '../routes/ibmi-recon.js';
+import * as scopeRt    from '../routes/scope.js';
+import * as smapiAudit from '../routes/smapi-audit.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css':  'text/css',
+  '.js':   'application/javascript',
+  '.json': 'application/json',
+  '.ico':  'image/x-icon',
+  '.png':  'image/png',
+  '.svg':  'image/svg+xml',
+  '.woff2':'font/woff2',
+};
+
+const ROUTES = [traffic, logs, profiles, sshHosts, macros, macroRun, recording, security, negotiate, wire, esm, probeWl, sessionsRt, poolLimits, sshAudit, httpAdminAudit, ftpAudit, ibmiRecon, scopeRt, smapiAudit];
+
+export function createRequestHandler({ config, logger, sessions }) {
+  const ctx = { config, logger, sessions };
+
+  return function handleRequest(req, res) {
+    if (req.url === '/health' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok' }));
+      return;
+    }
+
+    for (const route of ROUTES) {
+      if (route.handle(req, res, ctx)) return;
+    }
+
+    // ── Static file server ─────────────────────────────────────────
+    const urlPath = req.url.split('?')[0];
+    let filePath;
+    if (urlPath === '/' || urlPath === '')                           filePath = path.join(PUBLIC_DIR, 'tn3270-client.html');
+    else if (urlPath === '/demo' || urlPath === '/demo.html')        filePath = path.join(PUBLIC_DIR, 'tn3270-client-demo.html');
+    else if (urlPath === '/replay' || urlPath === '/replay.html')    filePath = path.join(PUBLIC_DIR, 'replay.html');
+    else if (urlPath === '/logs' || urlPath === '/logs.html')        filePath = path.join(PUBLIC_DIR, 'logs.html');
+    else if (urlPath === '/traffic' || urlPath === '/traffic.html')  filePath = path.join(PUBLIC_DIR, 'traffic.html');
+    else if (urlPath === '/wire' || urlPath === '/wire.html')        filePath = path.join(PUBLIC_DIR, 'wire.html');
+    else if (urlPath === '/copilot' || urlPath === '/copilot.html')  filePath = path.join(PUBLIC_DIR, 'copilot-panel-standalone.html');
+    else {
+      filePath = path.join(PUBLIC_DIR, urlPath);
+      if (!filePath.startsWith(PUBLIC_DIR + path.sep) && filePath !== PUBLIC_DIR) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
+    }
+
+    fs.readFile(filePath, (err, data) => {
+      if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end(`Not found: ${urlPath}`); return; }
+      const ext  = path.extname(filePath);
+      const mime = MIME[ext] || 'text/plain';
+      res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'no-cache' });
+      res.end(data);
+    });
+  };
+}

@@ -1,0 +1,2031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebTerm/3270 — Production</title>
+<link rel="stylesheet" href="css/terminal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<style>
+  .ssh-terminal-pane { width:100%; height:100%; background:#020c14; overflow:hidden; }
+  .ssh-xterm-container { width:100%; height:100%; }
+  .ssh-xterm-container .xterm { height:100%; }
+  .tab-add-ssh { font-size:9px; font-weight:700; letter-spacing:.05em; color:#3a9a6a; border-color:#1e4a2f !important; }
+  .tab-add-ssh:hover { background:#0d2a1a; color:#5acc8a; }
+  .session-tab.ssh-tab { border-top-color:#3a9a6a; }
+  .session-tab.ssh-tab .tab-dot { }
+</style>
+</head>
+<style>
+.cmd-hist-item { padding: 2px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--t-green, #33ff66); }
+.cmd-hist-item:hover { background: rgba(255,255,255,0.06); }
+.cmd-hist-latest { color: var(--accent-green, #33ff66); font-weight: 500; }
+@keyframes rec-blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+@keyframes wt-pulse  { 0%,100%{box-shadow:0 0 0 2px var(--accent-amber)} 50%{box-shadow:0 0 8px 3px var(--accent-amber)} }
+.wt-highlight { outline:2px solid var(--accent-amber)!important; border-radius:3px; animation:wt-pulse 1.2s ease-in-out infinite; }
+</style>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo" id="logo" style="display:flex;align-items:center;gap:7px;">
+   <svg width="20" height="20" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0;border-radius:3px;">
+    <rect width="160" height="160" fill="var(--logo-bg)" rx="10"/>
+    <g transform="translate(68,80)">
+      <circle cx="0" cy="0" r="62" fill="none" stroke="var(--logo-ring)" stroke-width="4"/>
+      <circle cx="0" cy="0" r="16" fill="var(--logo-ring)"/>
+      <line x1="0" y1="-16" x2="0" y2="-62" stroke="var(--logo-ring)" stroke-width="4"/>
+      <line x1="0" y1="16" x2="0" y2="62" stroke="var(--logo-ring)" stroke-width="4"/>
+      <line x1="-16" y1="0" x2="-62" y2="0" stroke="var(--logo-ring)" stroke-width="4"/>
+      <line x1="16" y1="0" x2="62" y2="0" stroke="var(--logo-ring)" stroke-width="4"/>
+      <circle cx="32" cy="-32" r="9" fill="none" stroke="var(--logo-ring-light)" stroke-width="3.5"/>
+      <line x1="32" y1="-32" x2="76" y2="-6" stroke="var(--logo-ring-light)" stroke-width="3.5"/>
+      <circle cx="76" cy="-6" r="8" fill="var(--logo-ring)" stroke="var(--logo-ring-light)" stroke-width="2.5"/>
+    </g>
+   </svg>
+   WebTerm<span>/3270</span>
+  </div>
+  <div class="topbar-menu">
+    <div class="menu-item" id="menuFile" onclick="toggleMenu('menuFile')">File
+      <div class="menu-dropdown">
+        <div class="menu-dd-item" onclick="showConnectModal()">New Session…<span class="menu-dd-shortcut">Ctrl+T</span></div>
+        <div class="menu-dd-item" id="menuCloseSession" onclick="menuCloseActiveSession()">Close Session</div>
+        <div class="menu-dd-sep"></div>
+        <div class="menu-dd-item" onclick="menuCaptureScreen()">Save Screen Capture<span class="menu-dd-shortcut">Ctrl+P</span></div>
+        <div class="menu-dd-sep"></div>
+        <div class="menu-dd-item" onclick="window.close()">Exit</div>
+      </div>
+    </div>
+    <div class="menu-item" id="menuSession" onclick="toggleMenu('menuSession')">Session
+      <div class="menu-dropdown">
+        <div class="menu-dd-item" id="menuDisconnect" onclick="menuDisconnect()">Disconnect</div>
+        <div class="menu-dd-item" id="menuReconnect" onclick="menuReconnect()">Reconnect</div>
+        <div class="menu-dd-sep"></div>
+        <div class="menu-dd-item" onclick="sessionManagerOpen(); closeAllMenus()">Session Manager…</div>
+      </div>
+    </div>
+    <div class="menu-item" id="menuView" onclick="toggleMenu('menuView')">View
+      <div class="menu-dropdown">
+        <div class="menu-dd-item" onclick="document.getElementById('sidebar').classList.toggle('collapsed');closeAllMenus()">Toggle Sidebar<span class="menu-dd-shortcut">Ctrl+B</span></div>
+        <div class="menu-dd-item" onclick="toggleRightPanel();closeAllMenus()">Toggle Panel</div>
+        <div class="menu-dd-sep"></div>
+        <div class="menu-dd-item" onclick="menuOpenPanel('Settings')">Settings</div>
+        <div class="menu-dd-item" onclick="menuOpenPanel('AIConfig')">⚙ AI Config</div>
+        <div class="menu-dd-item" onclick="menuOpenCopilot()">⬡ AI Assist<span class="menu-dd-shortcut">Ctrl+K</span></div>
+      </div>
+    </div>
+    <div class="menu-item" id="menuMacros" onclick="toggleMenu('menuMacros')">Macros
+      <div class="menu-dropdown">
+        <div class="menu-dd-item" onclick="showAddMacroModal();closeAllMenus()">Add Macro…</div>
+        <div class="menu-dd-item" onclick="menuImportMacro()">Import JSON…</div>
+        <div class="menu-dd-sep"></div>
+        <div id="menuMacroList"><div class="menu-dd-item disabled">No macros saved</div></div>
+      </div>
+    </div>
+    <div class="menu-item" id="menuTransfer" onclick="toggleMenu('menuTransfer')">Transfer
+      <div class="menu-dropdown">
+        <div class="menu-dd-item" onclick="menuOpenTransfer()">Send File (IND$FILE)</div>
+        <div class="menu-dd-item" onclick="menuOpenTransfer()">Receive File (IND$FILE)</div>
+      </div>
+    </div>
+    <div class="menu-item" id="menuHelp" onclick="toggleMenu('menuHelp')">Help
+      <div class="menu-dropdown">
+        <div class="menu-dd-item" onclick="openWalkthroughPicker()">Walkthroughs…</div>
+        <div class="menu-dd-item" onclick="menuShowShortcuts()">Keyboard Shortcuts</div>
+        <div class="menu-dd-sep"></div>
+        <div class="menu-dd-item" onclick="menuAbout()">About WebTerm/3270</div>
+      </div>
+    </div>
+  </div>
+  <div class="status-area">
+    <div class="conn-indicator">
+      <div class="conn-dot disconnected" id="mainConnDot"></div>
+      <span id="connStatusText" style="color:var(--text-muted);font-size:11px">Not connected</span>
+    </div>
+    <div class="session-dropdown" id="sessionDropdown">
+      <div class="session-dropdown-btn" id="sessionDropdownBtn" onclick="toggleSessionDropdown()">
+        <span>⊕ Connect</span>
+        <span class="chevron">▼</span>
+      </div>
+      <div class="session-dropdown-menu" id="sessionDropdownMenu">
+        <div class="session-menu-header">Session Profiles</div>
+        <div class="session-menu-items" id="sessionMenuItems"></div>
+        <div class="session-menu-footer" onclick="showConnectModal(); closeSessionDropdown()">
+          <span style="font-size:13px">＋</span> New session / manual connect…
+        </div>
+      </div>
+    </div>
+    <button class="topbar-btn primary" onclick="toggleRightPanel()">⊞ Panel</button>
+  </div>
+</div>
+
+<!-- SESSION TABS -->
+<div class="session-tabs">
+  3270 sessions
+  <div id="tabSplitBtn" class="tab-split" onclick="toggleSplitMode()" title="Split screen — compare two sessions side by side (max 2)">⊞</div>
+  <div class="tab-add tab-add-ssh" onclick="openSshConnect()" title="New SSH session">SSH</div>
+  <div class="tab-add" onclick="showConnectModal()" title="New TN3270 session">＋</div>
+</div>
+
+<!-- MAIN LAYOUT -->
+<div class="main-layout">
+
+  <!-- LEFT SIDEBAR -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-header">Session Profiles <span class="sidebar-header-btn" onclick="showConnectModal()">＋</span></div>
+      <div id="sidebarSessionList" style="padding:4px 0 8px;max-height:220px;overflow-y:auto;"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-header">Macros <span class="sidebar-header-btn" onclick="startMacroRecord()" title="Record a new macro" style="margin-right:4px;color:#e06060">● REC</span><span class="sidebar-header-btn" onclick="showAddMacroModal()">＋</span></div>
+      <div id="sidebarMacroList" style="padding:4px 0 8px;max-height:180px;overflow-y:auto"></div>
+    </div>
+    <div class="sidebar-section" style="flex:1">
+      <div class="sidebar-header">Command History <span style="font-size:9px;color:var(--text-muted);font-weight:normal">(F12=back F11=fwd)</span></div>
+      <div id="cmdHistoryList" style="padding:4px 0 8px;overflow-y:auto;font-size:10px;font-family:'IBM Plex Mono',monospace;line-height:1.8">
+        <span style="color:var(--text-muted)">▶ No commands yet</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TERMINAL AREA -->
+  <div class="terminal-area">
+    <div class="terminal-toolbar">
+      <button class="t-btn pf" data-pf-bank="1" title="PF1"  onclick="sendKey('PF1')">PF1 Help</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF2"  onclick="sendKey('PF2')">PF2 Split</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF3"  onclick="sendKey('PF3')">PF3 End</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF4"  onclick="sendKey('PF4')">PF4 Ret</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF5"  onclick="sendKey('PF5')">PF5 RFnd</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF6"  onclick="sendKey('PF6')">PF6 RChg</button>
+      <div class="t-sep" data-pf-bank="1"></div>
+      <button class="t-btn pf" data-pf-bank="1" title="PF7"  onclick="sendKey('PF7')">PF7 ↑</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF8"  onclick="sendKey('PF8')">PF8 ↓</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF9"  onclick="sendKey('PF9')">PF9 Swap</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF10" onclick="sendKey('PF10')">PF10 ←</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF11" onclick="sendKey('PF11')">PF11 →</button>
+      <button class="t-btn pf" data-pf-bank="1" title="PF12" onclick="sendKey('PF12')">PF12 Retr</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF13 (Shift+F1)" onclick="sendKey('PF13')">PF13</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF14 (Shift+F2)" onclick="sendKey('PF14')">PF14</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF15 (Shift+F3)" onclick="sendKey('PF15')">PF15</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF16 (Shift+F4)" onclick="sendKey('PF16')">PF16</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF17 (Shift+F5)" onclick="sendKey('PF17')">PF17</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF18 (Shift+F6)" onclick="sendKey('PF18')">PF18</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF19 (Shift+F7)" onclick="sendKey('PF19')">PF19</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF20 (Shift+F8)" onclick="sendKey('PF20')">PF20</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF21 (Shift+F9)" onclick="sendKey('PF21')">PF21</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF22 (Shift+F10)" onclick="sendKey('PF22')">PF22</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF23 (Shift+F11)" onclick="sendKey('PF23')">PF23</button>
+      <button class="t-btn pf" data-pf-bank="2" style="display:none" title="PF24 (Shift+F12)" onclick="sendKey('PF24')">PF24</button>
+      <button class="t-btn" id="pfBankBtn" title="Switch between PF1-12 and PF13-24" onclick="togglePfBank()">1-12 ⇄ 13-24</button>
+      <div class="t-sep"></div>
+      <button class="t-btn" title="PA1" onclick="sendKey('PA1')">PA1</button>
+      <button class="t-btn" title="PA2" onclick="sendKey('PA2')">PA2</button>
+      <button class="t-btn" title="SysReq" style="color:var(--t-red);border-color:#3a1010" onclick="sendKey('SYSREQ')">SysReq</button>
+      <button class="t-btn" title="Clear" onclick="sendKey('CLEAR')">Clear</button>
+      <button class="t-btn" title="Reset (Alt+R)" onclick="resetKey()">Reset</button>
+      <button class="t-btn" title="Home, first input field (Home)" onclick="homeKey()">&#8962;</button>
+      <div class="t-spacer"></div>
+    </div>
+    <div class="screen-wrapper" id="screenWrapper">
+      <div class="split-pane split-pane-left" id="splitPaneLeft">
+        <div class="t3270-screen" id="terminal" onclick="termClick(event)"></div>
+        <div class="ssh-terminal-pane" id="sshTerminal" style="display:none"></div>
+      </div>
+      <div class="split-pane split-pane-right" id="splitPaneRight" style="display:none">
+        <div class="t3270-screen" id="terminal-split" onclick="splitTermClick(event)"></div>
+        <div class="ssh-terminal-pane" id="sshTerminalSplit" style="display:none"></div>
+      </div>
+    </div>
+    <!-- Hidden pool for xterm instances not currently displayed -->
+    <div id="sshPool" style="position:absolute;left:-9999px;top:-9999px;width:800px;height:600px;overflow:hidden"></div>
+    <!-- Anomaly flash bar — shows latest anomalies inline, auto-fades -->
+    <div id="anomalyBar" class="anomaly-bar"></div>
+    <div class="oia-bar">
+      <div class="oia-field"><span class="oia-label">SYS</span><span class="oia-val" id="oiaSys">—</span></div>
+      <div class="oia-field"><span class="oia-label">LU</span><span class="oia-val" id="oiaLu">—</span></div>
+      <div class="oia-field"><span class="oia-label">MODEL</span><span class="oia-val" id="oiaModel">—</span></div>
+      <div class="oia-field"><span class="oia-label">ROW</span><span class="oia-val" id="oiaRow">00</span></div>
+      <div class="oia-field"><span class="oia-label">COL</span><span class="oia-val" id="oiaCol">00</span></div>
+      <div class="oia-field"><span class="oia-label">APP</span><span class="oia-val" id="oiaApp">—</span></div>
+      <div class="oia-spacer"></div>
+      <div class="oia-field"><button id="secBtn" onclick="toggleSecurityPanel()" title="Security Tools" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:1px 6px;cursor:pointer;">🔒</button></div>
+      <div class="oia-field"><button id="demoBtn" onclick="toggleDemoMode()" title="Demo Mode — masks host IP/LU in OIA bar" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 6px;cursor:pointer;letter-spacing:0.05em">DEMO</button></div>
+      <div class="oia-field"><span class="oia-val blue" id="oiaMode">NOT CONNECTED</span></div>
+      <div class="oia-field"><span class="oia-label">PROTO</span><span class="oia-val" id="oiaTls">3270</span></div>
+      <div class="oia-field"><span class="oia-val" id="oiaTime">--:--:--</span></div>
+      <div style="display:flex;align-items:center;gap:4px;opacity:0.35;margin-left:8px;">
+       <svg width="11" height="11" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+        <g transform="translate(68,80)">
+         <circle cx="0" cy="0" r="62" fill="none" stroke="#D4537E" stroke-width="6"/>
+         <circle cx="0" cy="0" r="16" fill="#D4537E"/>
+         <line x1="0" y1="-16" x2="0" y2="-62" stroke="#D4537E" stroke-width="6"/>
+         <line x1="0" y1="16" x2="0" y2="62" stroke="#D4537E" stroke-width="6"/>
+         <line x1="-16" y1="0" x2="-62" y2="0" stroke="#D4537E" stroke-width="6"/>
+         <line x1="16" y1="0" x2="62" y2="0" stroke="#D4537E" stroke-width="6"/>
+        </g>
+       </svg>
+       <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#3a3060;letter-spacing:0.05em;">BH</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel" id="rightPanel">
+
+    <!-- 6 tabs: Settings · Keys · Transfer · AI Config · AI Assist · Security -->
+    <div class="panel-tabs">
+      <div class="panel-tab active"           onclick="switchPanelTab(this,'Settings')">Settings</div>
+      <div class="panel-tab"                  onclick="switchPanelTab(this,'Keys')">Keys</div>
+      <div class="panel-tab"                  onclick="switchPanelTab(this,'Xfer')">Transfer</div>
+      <div class="panel-tab aiconfig-tab"     onclick="switchPanelTab(this,'AIConfig')">⚙ AI</div>
+      <div class="panel-tab copilot-tab"      onclick="switchPanelTab(this,'Copilot')">⬡ Assist</div>
+      <div class="panel-tab sec-panel-tab" id="secPanelTab" onclick="switchPanelTab(this,'Security')" style="display:none">🔒 Sec</div>
+    </div>
+
+    <!-- Settings -->
+    <div class="panel-content active" id="panelSettings">
+      <div class="setting-group">
+        <div class="setting-label">Color Theme</div>
+        <div class="theme-swatches">
+          <div class="theme-swatch active" style="background:linear-gradient(135deg,#000810,#001a08)" title="Classic Green" onclick="setTheme('green',this)"></div>
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#080812,#000a1a)" title="Blue"  onclick="setTheme('blue',this)"></div>
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#100808,#1a0a00)" title="Amber" onclick="setTheme('amber',this)"></div>
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#0a0a0a,#181818)" title="White" onclick="setTheme('white',this)"></div>
+          <div class="theme-swatch" style="background:linear-gradient(135deg,#001010,#002020)" title="Teal"  onclick="setTheme('teal',this)"></div>
+        </div>
+      </div>
+      <div class="setting-group">
+        <div class="setting-label">Display</div>
+        <div class="setting-row">
+          <label>Zoom</label>
+          <input type="range" id="zoomInput" min="50" max="200" value="100" style="width:80px" oninput="setZoom(this.value)">
+          <span style="font-size:10px;color:var(--text-muted);min-width:36px" id="fontSizeLabel">100%</span>
+        </div>
+        <div class="setting-row">
+          <label>Font Size</label>
+          <input type="number" id="tnFontSizeInput" min="8" max="48" placeholder="auto" style="width:60px" onchange="setTnFontSize(this)">
+          <span style="font-size:10px;color:var(--text-muted)">px, blank = auto</span>
+        </div>
+        <div class="setting-row"><label>CRT Scanlines</label><div class="toggle on" onclick="toggleScanlines(this)"></div></div>
+        <div class="setting-row"><label>Cursor Blink</label><div class="toggle on" onclick="toggleCursorBlink(this)"></div></div>
+        <div class="setting-row"><label>Field Highlights</label><div class="toggle on" onclick="toggleFieldHighlights(this)"></div></div>
+	<div class="setting-row"><label>Show passwords</label><div class="toggle" onclick="toggleShowPassword(this)"></div></div>
+        <div class="setting-row"><label>Caps Lock Off</label><div class="toggle" id="capsOffToggle" onclick="toggleCapsOff(this)"></div></div>
+      </div>
+      <div class="setting-group">
+        <div class="setting-label">Connection</div>
+        <div class="setting-row"><label>Auto Reconnect</label><div class="toggle on" id="autoReconnectToggle" onclick="toggleAutoReconnect(this)"></div></div>
+        <div class="setting-row"><label>Keep-Alive (s)</label><input type="number" id="keepAliveInput" value="30" style="width:60px" onchange="setKeepAlive(this)"></div>
+      </div>
+      <div class="setting-group">
+        <div class="setting-label">SSH Terminal</div>
+        <div class="setting-row"><label>Font Size</label><input type="number" id="sshFontSizeInput" value="14" min="8" max="32" style="width:60px" onchange="setSshFontSize(this)"></div>
+      </div>
+    </div>
+
+    <!-- Keys -->
+    <div class="panel-content" id="panelKeys">
+      <div class="setting-group">
+        <div class="setting-label">Function Keys</div>
+        <div class="pf-grid"><button class="t-btn pf" title="PF1 (F1)" onclick="sendKey('PF1')">PF1</button><button class="t-btn pf" title="PF2 (F2)" onclick="sendKey('PF2')">PF2</button><button class="t-btn pf" title="PF3 (F3)" onclick="sendKey('PF3')">PF3</button><button class="t-btn pf" title="PF4 (F4)" onclick="sendKey('PF4')">PF4</button><button class="t-btn pf" title="PF5 (F5)" onclick="sendKey('PF5')">PF5</button><button class="t-btn pf" title="PF6 (F6)" onclick="sendKey('PF6')">PF6</button><button class="t-btn pf" title="PF7 (F7)" onclick="sendKey('PF7')">PF7</button><button class="t-btn pf" title="PF8 (F8)" onclick="sendKey('PF8')">PF8</button><button class="t-btn pf" title="PF9 (F9)" onclick="sendKey('PF9')">PF9</button><button class="t-btn pf" title="PF10 (F10)" onclick="sendKey('PF10')">PF10</button><button class="t-btn pf" title="PF11 (F11)" onclick="sendKey('PF11')">PF11</button><button class="t-btn pf" title="PF12 (F12)" onclick="sendKey('PF12')">PF12</button><button class="t-btn pf" title="PF13 (Shift+F1)" onclick="sendKey('PF13')">PF13</button><button class="t-btn pf" title="PF14 (Shift+F2)" onclick="sendKey('PF14')">PF14</button><button class="t-btn pf" title="PF15 (Shift+F3)" onclick="sendKey('PF15')">PF15</button><button class="t-btn pf" title="PF16 (Shift+F4)" onclick="sendKey('PF16')">PF16</button><button class="t-btn pf" title="PF17 (Shift+F5)" onclick="sendKey('PF17')">PF17</button><button class="t-btn pf" title="PF18 (Shift+F6)" onclick="sendKey('PF18')">PF18</button><button class="t-btn pf" title="PF19 (Shift+F7)" onclick="sendKey('PF19')">PF19</button><button class="t-btn pf" title="PF20 (Shift+F8)" onclick="sendKey('PF20')">PF20</button><button class="t-btn pf" title="PF21 (Shift+F9)" onclick="sendKey('PF21')">PF21</button><button class="t-btn pf" title="PF22 (Shift+F10)" onclick="sendKey('PF22')">PF22</button><button class="t-btn pf" title="PF23 (Shift+F11)" onclick="sendKey('PF23')">PF23</button><button class="t-btn pf" title="PF24 (Shift+F12)" onclick="sendKey('PF24')">PF24</button></div>
+        <div class="pf-grid pf-grid-aid"><button class="t-btn" onclick="sendKey('PA1')">PA1</button><button class="t-btn" onclick="sendKey('PA2')">PA2</button><button class="t-btn" onclick="sendKey('PA3')">PA3</button><button class="t-btn" onclick="sendKey('SYSREQ')">SysReq</button><button class="t-btn" onclick="sendKey('CLEAR')">Clear</button><button class="t-btn" onclick="resetKey()">Reset</button><button class="t-btn" onclick="homeKey()">&#8962; Home</button></div>
+      </div>
+      <div class="setting-group">
+        <div class="setting-label">Key Remapping</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div class="shortcut-item"><span class="shortcut-desc">PF3 End</span><span class="shortcut-key">F3</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">PF7 Scroll Up</span><span class="shortcut-key">PgUp</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">PF8 Scroll Down</span><span class="shortcut-key">PgDn</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Enter / Transmit</span><span class="shortcut-key">Enter</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">SysReq / Attn</span><span class="shortcut-key">Esc</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Insert Mode</span><span class="shortcut-key">Ins</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Reset (unlock keyboard)</span><span class="shortcut-key">Alt+R</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Home (first input field)</span><span class="shortcut-key">Home</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Paste at cursor (newlines stripped)</span><span class="shortcut-key">Ctrl/Cmd+V</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Previous / next typed command</span><span class="shortcut-key">Alt+PgUp / Alt+PgDn</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Clear Screen</span><span class="shortcut-key">Ctrl+L</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">New Session</span><span class="shortcut-key">Ctrl+T</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Open AI Assist</span><span class="shortcut-key">Ctrl+K</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Toggle Sidebar</span><span class="shortcut-key">Ctrl+B</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Next Session</span><span class="shortcut-key">Ctrl+.</span></div>
+          <div class="shortcut-item"><span class="shortcut-desc">Prev Session</span><span class="shortcut-key">Ctrl+,</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- Transfer -->
+    <div class="panel-content" id="panelXfer" style="display:none;flex-direction:column"></div>
+    <!-- AI Config -->
+    <div class="panel-content" id="panelAIConfig">
+      <div class="ai-chip">
+        <div class="ai-chip-dot" id="aiCfgChipDot"></div>
+        <span id="aiCfgChipLabel">Anthropic Claude</span>
+        <span class="ai-chip-ctx" id="aiCfgChipCtx">200K ctx</span>
+      </div>
+      <div class="setting-group">
+        <div class="setting-label">AI Provider</div>
+        <select id="aiProviderSelect" onchange="aiCfgSetProvider(this.value)" style="width:100%">
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="openai">OpenAI GPT</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="ollama">Ollama (local)</option>
+          <option value="lmstudio">LM Studio (local)</option>
+          <option value="github">GitHub Models</option>
+        </select>
+      </div>
+      <!-- Anthropic -->
+      <div id="aiFields-anthropic" class="ai-provider-fields">
+        <div class="setting-group">
+          <div class="setting-label">API Key</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="password" id="aiKey-anthropic" placeholder="sk-ant-api03-&hellip;" autocomplete="off" onblur="aiCfgSave()" style="flex:1">
+            <button class="btn-icon" onclick="aiToggleVis('aiKey-anthropic',this)">&#128065;</button>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">&#128274; Memory only &mdash; never written to disk.</div>
+        </div>
+        <div class="setting-group">
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="setting-label" style="flex:1;margin:0">Model <span id="aiModelLoading-anthropic" style="color:var(--accent-amber);display:none;font-size:9px">&#x27F3; loading&hellip;</span></div>
+            <button class="btn-icon" title="Refresh model list" onclick="aiRefreshModels('anthropic')">&#x27F3;</button>
+          </div>
+          <select id="aiModel-anthropic" onchange="aiCfgSave()" style="width:100%;margin-top:4px">
+            <option value="claude-sonnet-4-6">claude-sonnet-4-6 (recommended)</option>
+            <option value="claude-opus-4-8">claude-opus-4-8 (most capable)</option>
+            <option value="claude-fable-5">claude-fable-5 (frontier)</option>
+            <option value="claude-haiku-4-5">claude-haiku-4-5 (fastest)</option>
+          </select>
+        </div>
+      </div>
+      <!-- OpenAI -->
+      <div id="aiFields-openai" class="ai-provider-fields" style="display:none">
+        <div class="setting-group">
+          <div class="setting-label">API Key</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="password" id="aiKey-openai" placeholder="sk-&hellip;" autocomplete="off" onblur="aiCfgKeyBlur('openai')" style="flex:1">
+            <button class="btn-icon" onclick="aiToggleVis('aiKey-openai',this)">&#128065;</button>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">&#128274; Memory only. Up to 128K token context.</div>
+        </div>
+        <div class="setting-group">
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="setting-label" style="flex:1;margin:0">Model <span id="aiModelLoading-openai" style="color:var(--accent-amber);display:none;font-size:9px">&#x27F3; loading&hellip;</span></div>
+            <button class="btn-icon" title="Refresh model list" onclick="aiLoadModels('openai')">&#x27F3;</button>
+          </div>
+          <select id="aiModel-openai" onchange="aiCfgSave()" style="width:100%;margin-top:4px">
+            <option value="gpt-4o">GPT-4o (recommended)</option>
+            <option value="gpt-4o-mini">GPT-4o mini (fastest)</option>
+            <option value="gpt-4-turbo">GPT-4 Turbo</option>
+          </select>
+        </div>
+      </div>
+      <!-- Gemini -->
+      <div id="aiFields-gemini" class="ai-provider-fields" style="display:none">
+        <div class="setting-group">
+          <div class="setting-label">Google API Key</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="password" id="aiKey-gemini" placeholder="AIza&hellip;" autocomplete="off" onblur="aiCfgKeyBlur('gemini')" style="flex:1">
+            <button class="btn-icon" onclick="aiToggleVis('aiKey-gemini',this)">&#128065;</button>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">&#128274; Memory only. Up to 1M token context.</div>
+        </div>
+        <div class="setting-group">
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="setting-label" style="flex:1;margin:0">Model <span id="aiModelLoading-gemini" style="color:var(--accent-amber);display:none;font-size:9px">&#x27F3; loading&hellip;</span></div>
+            <button class="btn-icon" title="Refresh model list" onclick="aiLoadModels('gemini')">&#x27F3;</button>
+          </div>
+          <select id="aiModel-gemini" onchange="aiCfgSave()" style="width:100%;margin-top:4px">
+	    <option value="gemini-2.5-flash">Gemini 2.5 Flash (recommended)</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+            <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite</option>
+          </select>
+        </div>
+      </div>
+      <!-- Ollama -->
+      <div id="aiFields-ollama" class="ai-provider-fields" style="display:none">
+        <div class="setting-group">
+          <div class="setting-label">Ollama Base URL</div>
+          <input type="text" id="aiOllamaUrl" value="http://localhost:11434" placeholder="http://localhost:11434" onblur="aiCfgKeyBlur('ollama')" style="width:100%">
+        </div>
+        <div class="setting-group">
+          <div class="setting-label">Model <span id="aiModelLoading-ollama" style="color:var(--accent-amber);display:none;font-size:9px">&#x27F3; loading&hellip;</span></div>
+          <select id="aiModel-ollama" onchange="aiCfgSave()" style="width:100%">
+            <option value="llama3.1">llama3.1 (not yet loaded)</option>
+          </select>
+          <input type="text" id="aiOllamaModelManual" placeholder="Or type model name&hellip;" style="margin-top:4px;width:100%;display:none;font-size:10px" oninput="aiOllamaManualSync(this.value)">
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn-sm" onclick="aiLoadModels('ollama')" style="flex:1">Load models</button>
+            <button class="btn-sm" onclick="aiOllamaProbe()" style="flex:1">Test</button>
+          </div>
+          <div class="ai-probe-result" id="aiOllamaProbeResult"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted)">No API key needed &mdash; runs locally.</div>
+      </div>
+      <!-- LM Studio -->
+      <div id="aiFields-lmstudio" class="ai-provider-fields" style="display:none">
+        <div class="setting-group">
+          <div class="setting-label">LM Studio Base URL</div>
+          <input type="text" id="aiLMStudioUrl" value="http://localhost:1234" placeholder="http://localhost:1234" onblur="aiCfgKeyBlur('lmstudio')" style="width:100%">
+        </div>
+        <div class="setting-group">
+          <div class="setting-label">Model <span id="aiModelLoading-lmstudio" style="color:var(--accent-amber);display:none;font-size:9px">&#x27F3; loading&hellip;</span></div>
+          <select id="aiModel-lmstudio" onchange="aiCfgSave()" style="width:100%">
+            <option value="">(load models)</option>
+          </select>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn-sm" onclick="aiLoadModels('lmstudio')" style="flex:1">Load models</button>
+            <button class="btn-sm" onclick="aiLMStudioProbe()" style="flex:1">Test</button>
+          </div>
+          <div class="ai-probe-result" id="aiLMStudioProbeResult"></div>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted)">No API key needed &mdash; runs locally via LM Studio's OpenAI-compatible server (Developer tab &rarr; Start Server).</div>
+      </div>
+      <!-- GitHub -->
+      <div id="aiFields-github" class="ai-provider-fields" style="display:none">
+        <div class="setting-group">
+          <div class="setting-label">GitHub Token</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="password" id="aiKey-github" placeholder="ghp_&hellip;" autocomplete="off" onblur="aiCfgSave()" style="flex:1">
+            <button class="btn-icon" onclick="aiToggleVis('aiKey-github',this)">&#128065;</button>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:4px">&#128274; PAT with models:read scope.</div>
+        </div>
+        <div class="setting-group">
+          <div class="setting-label" style="display:flex;justify-content:space-between;align-items:center">
+            Model
+            <button class="btn-icon" title="Refresh model list" onclick="aiRefreshModels('github')">&#x27F3;</button>
+          </div>
+          <select id="aiModel-github" onchange="aiCfgSave()" style="width:100%;margin-top:4px">
+            <option value="claude-opus-4-5">claude-opus-4-5 (recommended)</option>
+            <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+            <option value="gpt-4o">gpt-4o</option>
+            <option value="gpt-4o-mini">gpt-4o-mini</option>
+          </select>
+        </div>
+      </div>
+      <!-- Actions -->
+      <div style="display:flex;gap:6px;margin-top:4px;margin-bottom:10px">
+        <button class="btn-sm" onclick="aiCfgTest()" style="flex:1">Test connection</button>
+        <button class="btn-sm primary" onclick="aiCfgApply()" style="flex:1">&#x2713; Apply</button>
+      </div>
+      <div class="ai-status-row" id="aiCfgStatus">
+        <div class="ai-status-dot" id="aiCfgStatusDot"></div>
+        <span id="aiCfgStatusLabel">Not tested</span>
+      </div>
+      <div class="setting-group">
+        <div class="setting-label">Generation Options</div>
+        <div class="setting-row">
+          <label>Max tokens</label>
+          <select id="aiMaxTokens" style="width:110px" onchange="aiCfgSave()">
+            <option value="500">500</option>
+            <option value="1000" selected>1000</option>
+            <option value="2000">2000</option>
+            <option value="4000">4000</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <label>Temperature</label>
+          <select id="aiTemperature" style="width:110px" onchange="aiCfgSave()">
+            <option value="0.1">0.1 &mdash; precise</option>
+            <option value="0.3" selected>0.3 &mdash; balanced</option>
+            <option value="0.7">0.7 &mdash; creative</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Copilot -->
+    <div class="panel-content" id="panelCopilot">
+      <div class="copilot-header-row">
+        <div class="copilot-logo-sm">&#x2B21;</div>
+        <div>
+          <div class="copilot-title-sm">3270 AI Assist</div>
+          <div class="copilot-subtitle" id="copilotSubtitle">AI assistant &middot; screen-aware</div>
+        </div>
+      </div>
+      <div class="quick-prompts">
+        <button class="qp-btn" onclick="quickPrompt('Explain what this screen is showing me')">Explain screen</button>
+        <button class="qp-btn" onclick="quickPrompt('What are my options from here? List the PF keys and what they do')">PF keys</button>
+        <button class="qp-btn" onclick="quickPrompt('What should I type in each field?')">Fields</button>
+        <button class="qp-btn" onclick="quickPrompt('Generate a macro JSON to automate this screen')">&rarr; Macro</button>
+        <button class="qp-btn" onclick="quickPrompt('I see an error &mdash; what does it mean and how do I fix it?')">Errors</button>
+        <button class="qp-btn" onclick="quickPrompt('Write JCL that will ')">JCL</button>
+      </div>
+      <div class="chat-area" id="chatArea">
+        <div class="chat-empty" id="chatEmpty">
+          <div class="chat-empty-icon">&#x2B21;</div>
+          <div class="chat-empty-title">3270 AI Assist</div>
+          <div class="chat-empty-body">
+            Ask anything about this screen,<br>
+            TSO &middot; ISPF &middot; JCL &middot; REXX &middot; errors.<br><br>
+            <span style="color:var(--accent-green);font-size:9px">&bull; Screen context is active</span>
+          </div>
+        </div>
+      </div>
+      <div class="copilot-input-area">
+        <div class="copilot-input-row">
+          <textarea id="copilot-input" rows="1" placeholder="Ask about this screen&hellip;" onkeydown="copilotKeydown(event)" oninput="copilotResize(this)"></textarea>
+          <button class="send-btn" id="sendBtn" onclick="sendCopilotMessage()">&uarr;</button>
+        </div>
+        <div class="copilot-input-footer">
+          <div class="screen-ctx-toggle" onclick="toggleScreenCtx()">
+            <div class="toggle-mini" id="screenCtxMini"></div>
+            Include screen
+          </div>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:9px" id="charCount"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Panel -->
+    <div class="panel-content" id="panelSecurity" style="display:none;padding:0;overflow-y:auto;">
+
+      <!-- WALKTHROUGHS section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">WALKTHROUGHS</div>
+        <div style="padding:6px 0">
+          <div style="display:flex;gap:6px;align-items:center">
+            <select id="wtSecSelect"
+              style="flex:1;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+              <option value="">Select a walkthrough…</option>
+            </select>
+            <button onclick="wtStartSelected()"
+              style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer;white-space:nowrap;font-weight:700">▶ Start</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- FIELD section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">FIELD ANALYSIS</div>
+        <div class="sec-section-body">
+          <div class="sec-row">
+            <button id="fmoBtn" class="sec-panel-btn" onclick="toggleFieldMap()">
+              <span class="sec-panel-btn-label">▸ Field Map Overlay</span>
+              <span class="sec-panel-btn-sub">Highlight FA bytes and field types</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="abiBtn" class="sec-panel-btn" onclick="toggleInspector()">
+              <span class="sec-panel-btn-label">⬡ Attribute Byte Inspector</span>
+              <span class="sec-panel-btn-sub">Click any field to decode its FA byte</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="colorRevealBtn" class="sec-panel-btn" onclick="toggleColorReveal()">
+              <span class="sec-panel-btn-label">🎨 Color Reveal</span>
+              <span class="sec-panel-btn-sub">Force all text to visible color — exposes color-on-color hidden content</span>
+            </button>
+          </div>
+          <div class="sec-panel-hint" style="margin:6px 0">Hidden Field Reveal — lists every nondisplay field on the screen (TN3270 and TN5250) with its position, type and contents. Contents stay in the browser and are never logged or exported.</div>
+          <div class="sec-row" style="gap:6px">
+            <button onclick="hiddenFieldScan()" style="flex:1;background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer">🔍 Reveal Hidden Fields</button>
+            <button id="hfLiveBtn" class="sec-panel-btn sec-panel-btn-inline" onclick="toggleHiddenFieldLive()" style="flex:1">
+              <span class="sec-panel-btn-label">👁 Live</span>
+            </button>
+            <button id="hfShowBtn" class="sec-panel-btn sec-panel-btn-inline" onclick="hiddenFieldShowOnScreen()" style="flex:1">
+              <span class="sec-panel-btn-label">▦ On Screen</span>
+            </button>
+          </div>
+          <div id="hfResults"></div>
+          <div class="sec-panel-hint" style="margin:6px 0">Field Length Disclosure — MDT + buffer-address deltas reveal how many characters were typed into a nondisplay field, even though the characters themselves are masked.</div>
+          <div class="sec-row" style="gap:6px">
+            <button id="fdScanBtn" onclick="fieldDiscScanOnce()" style="flex:1;background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer">🔍 Scan Screen Now</button>
+            <button id="fdWatchBtn" class="sec-panel-btn sec-panel-btn-inline" onclick="toggleFieldDiscWatch()" style="flex:1">
+              <span class="sec-panel-btn-label">👁 Watch</span>
+            </button>
+          </div>
+          <div id="fdResultsTable"></div>
+          <div style="margin-top:6px;display:flex;gap:6px">
+            <button onclick="fieldDiscExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="fieldDiscExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            <button onclick="fieldDiscClear()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRAFFIC section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">TRAFFIC</div>
+        <div class="sec-section-body">
+          <div class="sec-row">
+            <button id="recBtn" class="sec-panel-btn" onclick="toggleRecording()">
+              <span class="sec-panel-btn-label">● Traffic Recorder</span>
+              <span class="sec-panel-btn-sub">Record session datastream to .rec.json</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <a class="sec-panel-btn" href="/replay" target="_blank">
+              <span class="sec-panel-btn-label">▶ Replay Viewer</span>
+              <span class="sec-panel-btn-sub">Play back recorded sessions frame by frame</span>
+            </a>
+          </div>
+          <div class="sec-row">
+            <button id="sessionViewerBtn" class="sec-panel-btn" onclick="openTrafficViewer()">
+              <span class="sec-panel-btn-label">⇄ Session Viewer</span>
+              <span class="sec-panel-btn-sub">AID keys sent and screens received, CSV export</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="wireInspectorBtn" class="sec-panel-btn" onclick="openWireInspector()">
+              <span class="sec-panel-btn-label">🔌 Wire Inspector</span>
+              <span class="sec-panel-btn-sub">3270-aware packet view — decoded orders, filter, color, replay</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="proxyViewerBtn" class="sec-panel-btn" onclick="openLogsViewer()">
+              <span class="sec-panel-btn-label">≡ Proxy Viewer</span>
+              <span class="sec-panel-btn-sub">Live bridge log stream with level filter</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button class="sec-panel-btn" onclick="exportScreen()">
+              <span class="sec-panel-btn-label">📋 Export Screen</span>
+              <span class="sec-panel-btn-sub">Copy current screen to clipboard + download .txt</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- INTERCEPT section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">INTERCEPT</div>
+        <div class="sec-section-body">
+          <div class="sec-row">
+            <button id="mitmBtn" class="sec-panel-btn" onclick="toggleMitm()">
+              <span class="sec-panel-btn-label">⚡ MITM Intercept</span>
+              <span class="sec-panel-btn-sub">Hold, edit, release or drop outbound AID records</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="harvestBtn" class="sec-panel-btn" onclick="openHarvestLog()">
+              <span class="sec-panel-btn-label">🔐 Credential Harvest Log</span>
+              <span class="sec-panel-btn-sub">Nondisplay fields captured during MITM intercepts</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- MONITOR section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">MONITOR</div>
+        <div class="sec-section-body">
+          <div class="sec-row sec-row-inline">
+            <button id="anomBtn" class="sec-panel-btn sec-panel-btn-inline" onclick="toggleAnomalyEnabled()">
+              <span class="sec-panel-btn-label">⚠ Anomaly Tracking
+                <span id="anomalyBadge" style="display:none;background:rgba(255,80,80,0.85);color:#fff;border-radius:8px;font-size:9px;padding:0 4px;margin-left:4px;min-width:14px;text-align:center;"></span>
+              </span>
+              <span class="sec-panel-btn-sub">Flag suspicious screen patterns</span>
+            </button>
+            <button id="anomViewBtn" class="sec-panel-icon-btn" onclick="toggleAnomalyLog()" title="View anomaly log" style="display:none">▾</button>
+            <button class="sec-panel-icon-btn" onclick="clearAnomalyLog()" title="Clear anomaly log">✕</button>
+          </div>
+          <!-- Anomaly log panel — expands inline -->
+          <div id="anomalyLogPanel" class="anomaly-log-panel sec-anomaly-log"></div>
+          <div class="sec-row sec-row-watch">
+            <button id="watchBtn" class="sec-panel-btn sec-panel-btn-inline" onclick="toggleWatch()">
+              <span class="sec-panel-btn-label">🔔 Screen Watch</span>
+              <span class="sec-panel-btn-sub">Alert when a string appears on screen</span>
+            </button>
+          </div>
+          <div class="sec-row" id="watchInputRow" style="display:none;padding:0 0 4px 0">
+            <input id="watchInput" class="sec-watch-input" type="text" placeholder="watch string…"
+                   oninput="_watchString=this.value; _watchLastHit='';"
+                   onkeydown="if(event.key==='Escape')toggleWatch();" />
+          </div>
+        </div>
+      </div>
+
+      <!-- INJECT section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">INJECT</div>
+        <div class="sec-section-body">
+          <div class="sec-row">
+            <div class="sec-inject-row">
+              <select id="keyInjectSelect" class="sec-inject-select" title="Choose a 3270 function key to inject">
+                <optgroup label="── Transmit ──">
+                  <option value="ENTER">ENTER</option>
+                  <option value="CLEAR">CLEAR</option>
+                  <option value="SYSREQ">SYSREQ</option>
+                </optgroup>
+                <optgroup label="── PA keys (no field data) ──">
+                  <option value="PA1">PA1  (Attn / Break)</option>
+                  <option value="PA2">PA2</option>
+                  <option value="PA3">PA3</option>
+                </optgroup>
+                <optgroup label="── PF 1–12 (F1–F12) ──">
+                  <option value="PF1">PF1</option><option value="PF2">PF2</option>
+                  <option value="PF3">PF3</option><option value="PF4">PF4</option>
+                  <option value="PF5">PF5</option><option value="PF6">PF6</option>
+                  <option value="PF7">PF7</option><option value="PF8">PF8</option>
+                  <option value="PF9">PF9</option><option value="PF10">PF10</option>
+                  <option value="PF11">PF11</option><option value="PF12">PF12</option>
+                </optgroup>
+                <optgroup label="── PF 13–24 (Shift+F1–F12) ──">
+                  <option value="PF13">PF13</option><option value="PF14">PF14</option>
+                  <option value="PF15">PF15</option><option value="PF16">PF16</option>
+                  <option value="PF17">PF17</option><option value="PF18">PF18</option>
+                  <option value="PF19">PF19</option><option value="PF20">PF20</option>
+                  <option value="PF21">PF21</option><option value="PF22">PF22</option>
+                  <option value="PF23">PF23</option><option value="PF24">PF24</option>
+                </optgroup>
+              </select>
+              <button class="sec-inject-btn" onclick="secInjectKey()">▶ INJECT</button>
+              <span id="keyInjectFeedback" style="font-size:9px;color:#3a9a6a;transition:opacity 0.4s;opacity:0"></span>
+            </div>
+            <div class="sec-panel-hint">Sends the selected AID key directly to the host. Does not type text — use the terminal for that.</div>
+          </div>
+          <div class="sec-row" style="margin-top:4px">
+            <button id="broadcastBtn" class="sec-panel-btn" onclick="toggleBroadcast()">
+              <span class="sec-panel-btn-label">📡 Session Broadcast</span>
+              <span class="sec-panel-btn-sub">Send every keystroke to all open sessions simultaneously</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RACF PROBE section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">RACF PROBE</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:6px">Auto-probes TSO, z/VM, CICS, z/TPF, or IBM i logon screens with a credential wordlist. Navigate to a logon screen first. FOR AUTHORIZED USE ONLY.</div>
+          <div class="sec-row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="font-size:10px;color:var(--text-muted)">Wordlist — USERID,PASSWORD per line</span>
+            <span style="display:flex;gap:4px">
+              <button onclick="probeLoadDefaults()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer" title="Built-in list for the detected system">Load defaults</button>
+              <button onclick="probeLoadList()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer" title="Read ~/mainframe/default-accounts.txt on the bridge host">Load list</button>
+            </span>
+          </div>
+          <textarea id="probeWordlist" rows="5"
+            placeholder="IBMUSER,SYS1&#10;MAINT,MAINT&#10;# lines starting with # are comments"
+            style="width:100%;box-sizing:border-box;background:#000;border:1px solid #2a2a2a;border-radius:3px;color:#8acce8;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;outline:none"></textarea>
+          <div class="sec-row" style="gap:8px;align-items:center;margin-top:4px">
+            <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">Delay (ms)</span>
+            <input id="probeDelay" type="number" value="1500" min="500" max="10000" step="100"
+              style="width:68px;background:#000;border:1px solid #333;border-radius:3px;color:#ccc;font-family:inherit;font-size:10px;padding:2px 6px;outline:none">
+            <label style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;cursor:pointer" title="On each match, sign the account off and keep trying the rest of the list">
+              <input type="checkbox" id="probeEnumAll" style="margin:0"> Keep going after a match
+            </label>
+            <div style="flex:1"></div>
+            <button id="probeStartBtn" class="sec-inject-btn" onclick="startProbe()" style="background:#1a2a1a">▶ START</button>
+            <button id="probeStopBtn"  class="sec-inject-btn" onclick="stopProbe()"  style="background:#2a1a1a;display:none">■ STOP</button>
+          </div>
+          <div id="probeStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="probeResultsTable"></div>
+          <div style="margin-top:6px">
+            <button onclick="probeExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="probeExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SESSION HYGIENE section — Cross-Session Buffer Bleed -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">SESSION HYGIENE</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:6px">Cross-Session Buffer Bleed — detects a pooled LU's controller buffer surviving into the next session before the fresh Erase/Write. Set an LU Name in the connect form, connect, disconnect, then reconnect with the SAME LU Name within ~90s. FOR AUTHORIZED USE ONLY.</div>
+          <div class="sec-row">
+            <button id="bbArmBtn" class="sec-panel-btn" onclick="toggleBufferBleedWatch()">
+              <span class="sec-panel-btn-label">🩸 Arm Buffer-Bleed Watch</span>
+              <span class="sec-panel-btn-sub">Watches the first screens after every connect for stale field data</span>
+            </button>
+          </div>
+          <div id="bbStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="bbResultsTable"></div>
+          <div style="margin-top:6px;display:flex;gap:6px">
+            <button onclick="bufferBleedExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="bufferBleedExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            <button onclick="bufferBleedClear()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- VM MINIDISK SECURITY section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">VM MINIDISK SECURITY</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:6px">VM Minidisk Password Exposure — CP has no masked-input primitive for command arguments, so a LINK minidisk password typed at the CP READ prompt renders in cleartext. Connect to a z/VM CP session and type e.g. <code>LINK MAINT 191 191 MR mysecretpw</code>. FOR AUTHORIZED USE ONLY.</div>
+          <div class="sec-row">
+            <button id="vmScanBtn" onclick="vmMinidiskScanNow()" style="flex:1;background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer">🔎 Scan Current Screen</button>
+          </div>
+          <div id="vmResultsTable"></div>
+          <div style="margin-top:6px;display:flex;gap:6px">
+            <button onclick="vmMinidiskExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="vmMinidiskExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            <button onclick="vmMinidiskClear()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Z/LINUX ON Z/VM section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">Z/LINUX ON Z/VM</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">How far can a Linux guest reach into z/VM? Each check is read-only and asks the RoE scope guard first. Privilege check: at a guest's CP prompt or Linux console. Console audit: at a Linux guest's console login. SMAPI check: needs no session. FOR AUTHORIZED USE ONLY.</div>
+          <input id="zlGuestId" placeholder="Guest userid (read from screen if blank)" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px;margin-bottom:6px">
+          <div class="sec-row">
+            <button class="zlBtn sec-inject-btn" onclick="zlinuxPrivCheck()" style="background:#1a2a1a;flex:1">▶ CP PRIVILEGE CHECK</button>
+          </div>
+          <div class="sec-row" style="margin-top:4px">
+            <button class="zlBtn sec-inject-btn" onclick="zlinuxConsoleAudit()" style="background:#1a2a1a;flex:1">▶ CONSOLE + #CP ESCAPE</button>
+          </div>
+          <div class="sec-row" style="margin-top:4px">
+            <button class="zlBtn sec-inject-btn" onclick="zlinuxNetworkAudit()" style="background:#1a2a1a;flex:1">▶ VSWITCH / VMLAN ISOLATION</button>
+          </div>
+          <textarea id="zlDirText" rows="4" placeholder="Paste a z/VM directory export here (USER and PROFILE entries)" style="width:100%;box-sizing:border-box;margin-top:6px;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px;resize:vertical"></textarea>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <button class="zlBtn sec-inject-btn" onclick="zlinuxDirectoryReview()" style="background:#1a2a1a;flex:1">▶ REVIEW DIRECTORY (IUCV)</button>
+            <button onclick="zlinuxLoadSample()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">Load sample</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <input id="zlSmapiHost" placeholder="z/VM host for SMAPI check" style="flex:1;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <button class="zlBtn sec-inject-btn" onclick="zlinuxSmapiCheck()" style="background:#1a2a1a">▶ SMAPI</button>
+          </div>
+          <div class="sec-panel-hint" style="margin-top:8px;color:#e0a060">⚠ INTRUSIVE — the next two change state on another guest. Both need the activity named in the RoE scope file, and both put up a confirm dialog before running, every time.</div>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <input id="zlXautologTarget" placeholder="Target userid to XAUTOLOG" style="flex:1;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <button class="zlBtn sec-inject-btn" onclick="zlinuxXautologProbe()" style="background:#2a1a1a">▶ XAUTOLOG PROBE</button>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <input id="zlSendCpTarget" placeholder="Target userid for SEND CP" style="flex:1;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <button class="zlBtn sec-inject-btn" onclick="zlinuxSendCpProbe()" style="background:#2a1a1a">▶ SEND CP PROBE</button>
+          </div>
+          <div id="zlStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="zlResults"></div>
+          <div style="margin-top:6px;display:flex;gap:6px">
+            <button onclick="zlinuxExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="zlinuxExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            <button onclick="zlinuxClear()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- FUZZ section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">PROTOCOL FUZZER</div>
+        <div style="padding:6px 0">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Sends mutated 3270 AID records and classifies host responses (screen / no-response / disconnect). FOR AUTHORIZED USE ONLY.</div>
+
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            <label style="font-size:10px;color:var(--text-muted);white-space:nowrap">Mode</label>
+            <select id="fuzzMode" onchange="fuzzModeChanged()"
+              style="flex:1;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+              <option value="aidSweep">AID Sweep — iterate AID bytes 0x00–0xFF</option>
+              <option value="fieldOverflow">Field Overflow — send oversized field payload</option>
+              <option value="orderInject">Order Injection — inject 3270 order bytes into field data</option>
+              <option value="sbaMutation">SBA Mutation — malformed screen buffer addresses</option>
+              <option value="tpfHandshake">z/TPF Handshake Fuzzer — malformed Query Reply + negotiation bytes</option>
+            </select>
+          </div>
+
+          <!-- AID Sweep config -->
+          <div id="fuzzCfg_aidSweep" class="fuzz-mode-cfg" style="margin-bottom:6px">
+            <div style="display:flex;gap:6px;align-items:center">
+              <label style="font-size:10px;color:var(--text-muted)">Start (hex)</label>
+              <input id="fuzzAidStart" type="text" value="00" maxlength="2"
+                style="width:42px;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 4px;text-align:center">
+              <label style="font-size:10px;color:var(--text-muted)">End (hex)</label>
+              <input id="fuzzAidEnd" type="text" value="FF" maxlength="2"
+                style="width:42px;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 4px;text-align:center">
+            </div>
+          </div>
+
+          <!-- Field Overflow config -->
+          <div id="fuzzCfg_fieldOverflow" class="fuzz-mode-cfg" style="display:none;margin-bottom:6px">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <label style="font-size:10px;color:var(--text-muted)">Field addr</label>
+              <input id="fuzzFieldAddr" type="number" value="415" min="0"
+                style="width:58px;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+              <label style="font-size:10px;color:var(--text-muted)">Length</label>
+              <input id="fuzzOverflowLen" type="number" value="100" min="1" max="4096"
+                style="width:58px;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+              <select id="fuzzOverflowPattern"
+                style="background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+                <option value="alpha">EBCDIC A–Z repeat</option>
+                <option value="null">Null bytes 0x00</option>
+                <option value="ff">All 0xFF</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Order Injection config -->
+          <div id="fuzzCfg_orderInject" class="fuzz-mode-cfg" style="display:none;margin-bottom:6px">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <label style="font-size:10px;color:var(--text-muted)">Field addr</label>
+              <input id="fuzzOrderFieldAddr" type="number" value="415" min="0"
+                style="width:58px;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+              <label style="font-size:10px;color:var(--text-muted)">Order byte</label>
+              <select id="fuzzOrderByte"
+                style="flex:1;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+                <option value="">Sweep all orders</option>
+                <option value="1d">SF  0x1D — Start Field</option>
+                <option value="29">SFE 0x29 — Start Field Extended</option>
+                <option value="11">SBA 0x11 — Set Buffer Address</option>
+                <option value="28">SA  0x28 — Set Attribute</option>
+                <option value="13">IC  0x13 — Insert Cursor</option>
+                <option value="3c">RA  0x3C — Repeat to Address</option>
+                <option value="12">EUA 0x12 — Erase Unprotected</option>
+                <option value="2c">MF  0x2C — Modify Field</option>
+                <option value="05">PT  0x05 — Program Tab</option>
+                <option value="ff">IAC 0xFF — Telnet escape</option>
+                <option value="00">NUL 0x00</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- SBA Mutation config (no extra config needed — uses preset cases) -->
+          <div id="fuzzCfg_sbaMutation" class="fuzz-mode-cfg" style="display:none;margin-bottom:6px">
+            <div style="font-size:10px;color:var(--text-muted)">Iterates 7 crafted SBA addresses: zero, max-14bit, all-bits-set, high-bit, both-top-bits, 12-bit-encoding, EBCDIC-boundary.</div>
+          </div>
+
+          <!-- z/TPF Handshake Fuzzer config (no extra config needed — uses preset cases) -->
+          <div id="fuzzCfg_tpfHandshake" class="fuzz-mode-cfg" style="display:none;margin-bottom:6px">
+            <div style="font-size:10px;color:var(--text-muted)">Fuzzes the negotiation phase itself, not post-connect 3270 data. 4 malformed Query Reply structured fields (AID 0x88 — truncated, oversized-length, invalid SFID, zero-length) plus 4 raw telnet IAC sequences (DO/unsolicited WILL TIMING-MARK, an unterminated TN3270E subnegotiation, a bare IAC). z/TPF's message router has almost no fuzzing coverage otherwise.</div>
+          </div>
+
+          <!-- Shared settings -->
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+            <label style="font-size:10px;color:var(--text-muted);white-space:nowrap">Timeout (ms)</label>
+            <input id="fuzzTimeout" type="number" value="3000" min="500" max="10000" step="100"
+              style="width:62px;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+            <label style="font-size:10px;color:var(--text-muted);white-space:nowrap">Delay (ms)</label>
+            <input id="fuzzDelay" type="number" value="300" min="50" max="5000" step="50"
+              style="width:62px;background:#0a0f14;border:1px solid #1a2a3a;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:2px 4px">
+          </div>
+
+          <div style="display:flex;gap:6px;margin-bottom:4px">
+            <button id="fuzzStartBtn" class="sec-inject-btn" onclick="startFuzz()" style="background:#1a2a1a">▶ START</button>
+            <button id="fuzzStopBtn"  class="sec-inject-btn" onclick="stopFuzz()"  style="background:#2a1a1a;display:none">■ STOP</button>
+            <button onclick="fuzzExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer">↓ CSV</button>
+            <button onclick="fuzzExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer">↓ JSON</button>
+          </div>
+          <div id="fuzzStatus" style="font-size:10px;color:var(--text-muted);min-height:14px;margin-bottom:2px"></div>
+          <div id="fuzzResultsTable"></div>
+        </div>
+      </div>
+
+      <!-- z/TPF TOOLS section — shown only when a z/TPF console is detected -->
+      <div class="sec-section" id="tpfSection" style="display:none">
+        <div class="sec-section-hdr" style="display:flex;align-items:center;gap:8px">
+          z/TPF CONSOLE
+          <span id="tpfDetectBadge" style="font-size:9px;background:#1a4a2a;color:#40d080;border:1px solid #2a6a3a;border-radius:3px;padding:0 5px;letter-spacing:0.05em">DETECTED</span>
+          <span id="tpfPrivBadge" style="display:none;font-size:9px;color:#fff;border-radius:3px;padding:0 5px;letter-spacing:0.05em;margin-left:2px">OPER</span>
+          <button class="tpf-tour-start" onclick="startTpfTour()" title="Walkthrough">?</button>
+        </div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:4px">
+            z/TPF operator console detected. Tools inject ZSHOW/ZTEST commands and parse responses. Connect as TPFOP01, SYSOP01, or ADMIN01 to test privilege boundaries. FOR AUTHORIZED USE ONLY.
+          </div>
+          <div id="tpfLogonHint" class="sec-panel-hint" style="display:none;margin-bottom:6px;border:1px solid #3a2e1a;background:#181410;padding:6px 8px;border-radius:3px;color:#d0b070">
+            At the operator logon screen. Before signing on, use <b>RACF PROBE</b> (above) to check for default operator credentials.
+            <button onclick="probeLoadList()" style="margin-top:5px;display:block;background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer;font-weight:700">Load default-account list</button>
+          </div>
+          <div class="sec-row">
+            <button id="tpfEnumBtn" class="sec-panel-btn" onclick="tpfEnumEcbs()">
+              <span class="sec-panel-btn-label">⊞ ECB Enumerator</span>
+              <span class="sec-panel-btn-sub">ZSHOW E — list all loaded entry control blocks + privilege flags</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="tpfPrivBtn" class="sec-panel-btn" onclick="tpfScanPriv()">
+              <span class="sec-panel-btn-label">⚡ Privilege Scanner</span>
+              <span class="sec-panel-btn-sub">Probe OPER / SYSOP / SYSPROG boundary with ZSTOP + ZEND</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="tpfProbeBtn" class="sec-panel-btn" onclick="tpfProbeEntries()">
+              <span class="sec-panel-btn-label">⬡ Entry Point Prober</span>
+              <span class="sec-panel-btn-sub">ZTEST each ECB — response time, status, privilege flags</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="tpfPoolBtn" class="sec-panel-btn" onclick="tpfCheckPools()">
+              <span class="sec-panel-btn-label">≣ Pool Monitor</span>
+              <span class="sec-panel-btn-sub">ZSHOW P — flag memory pools above 90% capacity</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="tpfDiagBtn" class="sec-panel-btn" onclick="tpfSysDiag()">
+              <span class="sec-panel-btn-label">◈ System Diagnostics</span>
+              <span class="sec-panel-btn-sub">ZSHOW UTIL / LOCK / MQP / ALLOC — resource containment sweep</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="tpfDebugBtn" class="sec-panel-btn" onclick="tpfDebugEntry()">
+              <span class="sec-panel-btn-label">⬚ Entry Point Debugger</span>
+              <span class="sec-panel-btn-sub">ZTEST START/BP/STEP/GO — attach the console debugger to a privileged ECB</span>
+            </button>
+          </div>
+          <div class="sec-row">
+            <button id="tpfHardenBtn" class="sec-panel-btn" onclick="tpfHardeningAudit()">
+              <span class="sec-panel-btn-label">⛨ Hardening Audit</span>
+              <span class="sec-panel-btn-sub">ZINET / ZCRAS / ZAUTH + /etc/passwd + /etc/shadow — training-lab exposure sweep</span>
+            </button>
+          </div>
+          <!-- Tool results panel -->
+          <div id="tpfResults" style="display:none;margin-top:6px;border:1px solid #0d2a1a;border-radius:3px;background:#020a05;max-height:260px;overflow-y:auto">
+            <div id="tpfResultsContent"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- IN-TRANSIT MONITOR section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">IN-TRANSIT MONITOR</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Detects and flags unencrypted TN3270 sessions. Plaintext traffic is shown with captured screen data as exposed bytes — proving what an on-path attacker sees. IND$FILE transfers are flagged individually. FOR AUTHORIZED USE ONLY.</div>
+          <div id="transitBanner" style="margin-bottom:8px"></div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+            <button onclick="transitRefresh()" class="sec-inject-btn" style="background:#1a2a1a">↺ Refresh</button>
+            <button onclick="transitClear()"   class="sec-inject-btn" style="background:#2a1a1a">✕ Clear Log</button>
+            <button onclick="transitExportCsv()" class="sec-inject-btn" style="background:#1a1a2a">↓ Export CSV</button>
+            <button onclick="transitExportJson()" class="sec-inject-btn" style="background:#1a1a2a">↓ JSON</button>
+          </div>
+          <div id="transitStatus" style="font-size:10px;color:var(--text-muted);margin-bottom:4px;min-height:14px"></div>
+          <div id="transitLog" style="max-height:240px;overflow-y:auto;font-size:10px"></div>
+        </div>
+      </div>
+
+      <!-- ESM FINGERPRINT section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">ESM FINGERPRINT</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Passive. Identifies the external security manager (RACF / ACF2 / Top Secret) from message-ID prefixes and banners already on screen. Sends nothing to the host.</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+            <button onclick="esmFingerprintReset()"  class="sec-inject-btn" style="background:#2a1a1a">✕ Reset</button>
+            <button onclick="esmFingerprintExport()" class="sec-inject-btn" style="background:#1a1a2a">↓ Export CSV</button>
+          </div>
+          <div id="esmFpBody" style="font-size:10px"></div>
+        </div>
+      </div>
+
+      <!-- RECON TOOLS section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">RECON TOOLS</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Host reconnaissance from TSO READY — RACF policy analysis, user/group enumeration, and dataset discovery. No special privileges required beyond normal TSO access. FOR AUTHORIZED USE ONLY.</div>
+
+          <!-- ── Tool 1: RACF Settings Analyzer ── -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">RACF SETTINGS ANALYZER</div>
+            <div style="font-size:10px;color:#555;margin-bottom:6px">Issues <code style="color:#8acce8">SETROPTS LIST</code> and parses password policy (interval, history, lockout, length) and security class activation. Flags NOREVOKE, weak rotation, and inactive DB2/CICS/IMS classes.</div>
+            <button id="reconSettingsBtn" class="sec-inject-btn" onclick="startReconSettings()" style="background:#1a2a1a">▶ ANALYZE</button>
+            <div id="reconSettingsStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="reconSettingsOut" style="margin-top:6px"></div>
+          </div>
+
+          <!-- ── Tool 2: RACF User/Group Enumerator ── -->
+          <div style="margin-bottom:10px;padding-top:8px;border-top:1px solid #111">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">RACF USER/GROUP ENUMERATOR</div>
+            <div style="font-size:10px;color:#555;margin-bottom:6px">Issues <code style="color:#8acce8">SEARCH CLASS(USER)</code> and <code style="color:#8acce8">SEARCH CLASS(GROUP)</code> — collects all RACF user IDs and group names, paging through output automatically.</div>
+            <div style="display:flex;gap:6px;margin-bottom:4px">
+              <button id="reconEnumStartBtn" class="sec-inject-btn" onclick="startReconEnum()" style="background:#1a2a1a">▶ ENUMERATE</button>
+              <button id="reconEnumStopBtn"  class="sec-inject-btn" onclick="stopReconEnum()"  style="background:#2a1a1a;display:none">■ STOP</button>
+            </div>
+            <div id="reconEnumStatus" style="font-size:10px;color:var(--text-muted);min-height:14px"></div>
+            <div id="reconEnumOut" style="margin-top:6px"></div>
+          </div>
+
+          <!-- ── Tool 3: Dataset Recon Scanner ── -->
+          <div style="padding-top:8px;border-top:1px solid #111">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">DATASET RECON SCANNER</div>
+            <div style="font-size:10px;color:#555;margin-bottom:4px">Issues <code style="color:#8acce8">LISTCAT LEVEL(prefix)</code> for each prefix — discovers datasets and flags sensitive names (PASSWORD, KEY, CERT, PARMLIB, PAYROLL, etc.).</div>
+            <div class="sec-row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="font-size:10px;color:var(--text-muted)">Level prefixes — one per line</span>
+              <button onclick="datasetLoadDefaults()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer">Load defaults</button>
+            </div>
+            <textarea id="reconDatasetPrefixes" rows="4"
+              placeholder="SYS1&#10;IBMUSER&#10;PROD&#10;# lines starting with # are comments"
+              style="width:100%;box-sizing:border-box;background:#000;border:1px solid #2a2a2a;border-radius:3px;color:#8acce8;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;outline:none"></textarea>
+            <div style="display:flex;gap:6px;margin-top:4px">
+              <button id="reconDatasetStartBtn" class="sec-inject-btn" onclick="startReconDataset()" style="background:#1a2a1a">▶ SCAN</button>
+              <button id="reconDatasetStopBtn"  class="sec-inject-btn" onclick="stopReconDataset()"  style="background:#2a1a1a;display:none">■ STOP</button>
+            </div>
+            <div id="reconDatasetStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="reconDatasetOut" style="max-height:180px;overflow-y:auto"></div>
+          </div>
+
+          <!-- ── Encryption Audit Scanner ── -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">ENCRYPTION AUDIT SCANNER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Audit specific datasets for DFSMS at-rest encryption status via LISTCAT ENT() ALL. Import flagged datasets from the recon scan above, or enter names manually.</div>
+            <textarea id="reconEncryptDatasets" rows="4"
+              placeholder="PAYROLL.MASTER.FILE&#10;SYS1.PARMLIB&#10;FINANCE.ACCOUNTS.DATA"
+              style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;border-radius:2px;margin-bottom:4px"></textarea>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+              <button onclick="encryptImportFlagged()" class="sec-inject-btn" style="background:#1a1a2a">⬆ Import Flagged</button>
+              <button id="reconEncryptStartBtn" class="sec-inject-btn" onclick="startReconEncrypt()" style="background:#1a2a1a">▶ AUDIT</button>
+              <button id="reconEncryptStopBtn"  class="sec-inject-btn" onclick="stopReconEncrypt()"  style="background:#2a1a1a;display:none">■ STOP</button>
+            </div>
+            <div id="reconEncryptStatus" style="font-size:10px;color:var(--text-muted);margin-bottom:4px;min-height:14px"></div>
+            <div id="reconEncryptOut" style="max-height:180px;overflow-y:auto"></div>
+          </div>
+
+          <!-- ── Tool 5: VTAM Applid Enumerator ── -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">VTAM APPLID ENUMERATOR</div>
+            <div style="font-size:10px;color:#555;margin-bottom:4px">Issues <code style="color:#8acce8">D NET,ID=applid</code> for each name in the wordlist — a genuine VTAM operator display command, non-destructive (unlike <code style="color:#8acce8">LOGON APPLID(x)</code>, which actually transfers the session). FOUND_ACTIVE/FOUND_INACTIVE discloses the resource exists and its state; NOT_FOUND discloses nothing.</div>
+            <div class="sec-row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="font-size:10px;color:var(--text-muted)">APPLIDs — one per line</span>
+              <button onclick="applidLoadDefaults()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer">Load defaults</button>
+            </div>
+            <textarea id="reconApplidWordlist" rows="4"
+              placeholder="TSO&#10;CICSPROD&#10;NETVIEW&#10;# lines starting with # are comments"
+              style="width:100%;box-sizing:border-box;background:#000;border:1px solid #2a2a2a;border-radius:3px;color:#8acce8;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;outline:none"></textarea>
+            <div style="display:flex;gap:6px;margin-top:4px">
+              <button id="reconApplidStartBtn" class="sec-inject-btn" onclick="startReconApplid()" style="background:#1a2a1a">▶ ENUMERATE</button>
+              <button id="reconApplidStopBtn"  class="sec-inject-btn" onclick="stopReconApplid()"  style="background:#2a1a1a;display:none">■ STOP</button>
+            </div>
+            <div id="reconApplidStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="reconApplidOut" style="max-height:180px;overflow-y:auto"></div>
+          </div>
+
+          <!-- ── Shared export ── -->
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="reconExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export all Recon results CSV</button>
+            <button onclick="reconExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SYSTEM ACCESS CHECKS section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">SYSTEM ACCESS CHECKS</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">APF library RACF coverage and SYS1.PARMLIB member read access — both from TSO READY. Unprotected APF libraries allow privilege escalation; readable PARMLIB members expose system configuration. FOR AUTHORIZED USE ONLY.</div>
+
+          <!-- APF Library Scanner -->
+          <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">APF LIBRARY SCANNER</div>
+          <div class="sec-panel-hint" style="margin-bottom:6px">LISTAPF enumerates all APF-authorized libraries. Each is checked for a RACF profile via LISTDSD — a missing or weak profile means any authenticated user can write a backdoor program and gain superuser authority.</div>
+          <button id="apfScanBtn" class="sec-inject-btn" onclick="startApfScan()" style="background:#1a2a1a">▶ SCAN APF LIST</button>
+          <div id="apfStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="apfOut" style="max-height:160px;overflow-y:auto;margin-top:4px"></div>
+
+          <!-- PARMLIB Access Check -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">PARMLIB ACCESS CHECK</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Tests read access to SYS1.PARMLIB members via ALLOC SHR — non-destructive. Readable members expose SMF config, APF list, SVC table, and z/OS UNIX parameters.</div>
+            <textarea id="parmlibMembers" rows="4"
+              placeholder="IEASYS00&#10;SMFPRM00&#10;BPXPRM00"
+              style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;border-radius:2px;margin-bottom:4px"></textarea>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+              <button onclick="parmlibLoadDefaults()" class="sec-inject-btn" style="background:#1a1a2a">Load defaults</button>
+              <button id="parmlibStartBtn" class="sec-inject-btn" onclick="startParmlibCheck()" style="background:#1a2a1a">▶ CHECK</button>
+            </div>
+            <div id="parmlibStatus" style="font-size:10px;color:var(--text-muted);min-height:14px"></div>
+            <div id="parmlibOut" style="max-height:160px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- APF Writability Checker -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">APF WRITABILITY CHECKER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">The scanner above only checks whether a RACF profile exists on each APF library. This one actually attempts the write (ALLOC...SHR, then FREE) against every library LISTAPF returns, to prove exploitability rather than just flag a missing profile.</div>
+            <button id="apfWriteBtn" class="sec-inject-btn" onclick="startApfWriteCheck()" style="background:#1a2a1a">▶ TEST WRITE ACCESS</button>
+            <div id="apfWriteStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="apfWriteOut" style="max-height:160px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="syscheckExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export System Checks CSV</button>
+            <button onclick="syscheckExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SSH NO-CREDENTIAL ACCESS CHECKER section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">SSH ACCESS AUDIT</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">For z/TPF and other IBM ported-OpenSSH targets. Attempts a connection offering the 'none' auth method, then — only if the server actually offers password auth — a single empty-password attempt for the named account. One attempt per check, never a sweep. FOR AUTHORIZED USE ONLY.</div>
+
+          <select id="sshAuditHostSelect" onfocus="sshAuditLoadHosts()" onchange="sshAuditHostChanged()" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:inherit;font-size:10px;padding:4px 6px;border-radius:2px;margin-bottom:6px">
+            <option value="">— Pick a saved host, or type one below —</option>
+          </select>
+
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input id="sshAuditHost" placeholder="host or IP" style="flex:2;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <input id="sshAuditPort" placeholder="22" value="22" style="flex:1;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <input id="sshAuditUser" placeholder="username" style="flex:2;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+          </div>
+
+          <button id="sshAuditBtn" class="sec-inject-btn" onclick="startSshAudit()" style="background:#1a2a1a">▶ RUN AUDIT</button>
+          <div id="sshAuditStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="sshAuditOut" style="margin-top:4px"></div>
+
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="sshAuditExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="sshAuditExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- HTTP ADMIN GUI AUDIT (IBM i) section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">IBM i HTTP ADMIN GUI AUDIT</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Read-only exposure check for the IBM i HTTP Server Administration GUI (ports 2001 and 2010). Reports reachability, cleartext sign-in, TLS protocol and certificate state, and the server fingerprint. Optionally give one profile to read the OS release and whether the CVE-2026-96119 fix is installed. GETs only, one attempt, nothing submitted. FOR AUTHORIZED USE ONLY.</div>
+
+          <input id="httpAdminAuditHost" placeholder="host or IP" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px;margin-bottom:6px">
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input id="httpAdminAuditHttpPort" placeholder="2001" value="2001" title="Plain HTTP admin port" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <input id="httpAdminAuditTlsPort" placeholder="2010" value="2010" title="TLS admin port" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input id="httpAdminAuditUser" placeholder="profile (optional)" autocomplete="off" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <input id="httpAdminAuditPass" type="password" placeholder="password (optional)" autocomplete="off" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+          </div>
+
+          <button id="httpAdminAuditBtn" class="sec-inject-btn" onclick="startHttpAdminAudit()" style="background:#1a2a1a">▶ RUN AUDIT</button>
+          <div id="httpAdminAuditStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="httpAdminAuditOut" style="margin-top:4px"></div>
+
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="httpAdminAuditExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="httpAdminAuditExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- FTP SERVICE AUDIT (IBM i) section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">IBM i FTP SERVICE AUDIT</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Read-only exposure check for the IBM i FTP server (ports 21 and 990). Reports the banner and what SYST gives away before login, whether clear text sign-on is accepted, TLS protocol and certificate, and anonymous sign-on. Optionally give one profile to see what it can browse in the IFS and libraries (RCMD is detected, never run). Trying default profiles is opt-in and needs the ftp-login-probe activity in the RoE scope. Each failed sign-on counts toward QMAXSIGN. FOR AUTHORIZED USE ONLY.</div>
+
+          <input id="ftpAuditHost" placeholder="host or IP" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px;margin-bottom:6px">
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input id="ftpAuditPort" placeholder="21" value="21" title="FTP port" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <input id="ftpAuditTlsPort" placeholder="990" value="990" title="Implicit TLS port" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input id="ftpAuditUser" placeholder="profile (optional)" autocomplete="off" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <input id="ftpAuditPass" type="password" placeholder="password (optional)" autocomplete="off" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+          </div>
+          <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:4px"><input id="ftpAuditClear" type="checkbox"> allow the profile password over clear text if TLS is not available</label>
+          <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:6px"><input id="ftpAuditDefaults" type="checkbox"> also try default profiles (2 tries each, needs ftp-login-probe in scope)</label>
+
+          <button id="ftpAuditBtn" class="sec-inject-btn" onclick="startFtpAudit()" style="background:#1a2a1a">▶ RUN AUDIT</button>
+          <div id="ftpAuditStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="ftpAuditOut" style="margin-top:4px"></div>
+
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="ftpAuditExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="ftpAuditExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- IBM i HOST SERVER RECON section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">IBM i HOST SERVER RECON</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Read-only look at what an IBM i tells anyone on the network before a sign-on. The server mapper (449) names the port of every host server, plain and TLS, so a server with no TLS twin shows up. The sign-on server gives the OS release, the password level (QPWDLVL) and the job that answered. No profile or password is asked for or sent, and the remote command server is never contacted, only named. The same checks run from the command line as the mainframe-nse scripts ibmi-svrmap-info, ibmi-signon-info and tn5250-info.</div>
+
+          <input id="ibmiReconHost" placeholder="host or IP" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px;margin-bottom:6px">
+          <input id="ibmiReconPort" placeholder="449" value="449" title="Server mapper port" style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px;margin-bottom:6px">
+          <label style="display:block;font-size:10px;color:var(--text-muted);margin-bottom:4px"><input id="ibmiReconBanner" type="checkbox"> also read the 5250 sign-on screen. Opens a telnet session for a moment, no user ID or device name is sent</label>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <input id="ibmiReconTelnetPort" placeholder="23" value="23" title="5250 telnet port (the mock listens on 3272)" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+            <input id="ibmiReconTelnetTlsPort" placeholder="992" value="992" title="5250 telnet TLS port" style="flex:1;min-width:0;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;border-radius:2px">
+          </div>
+
+          <button id="ibmiReconBtn" class="sec-inject-btn" onclick="startIbmiRecon()" style="background:#1a2a1a">▶ READ HOST SERVERS</button>
+          <div id="ibmiReconStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="ibmiReconOut" style="margin-top:4px"></div>
+
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="ibmiReconExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="ibmiReconExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- CICS TRANSACTION SCANNER section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">CICS TRANSACTION SCANNER</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">At a CICS clear screen, probe transaction IDs from a wordlist. DFHAC2001 "not authorized" means the transaction EXISTS — the attacker knows it is defined even without access. FOR AUTHORIZED USE ONLY.</div>
+          <textarea id="cicsTxnList" rows="5"
+            placeholder="CEDA&#10;CEMT&#10;CEDF&#10;CESF&#10;SIGN"
+            style="width:100%;box-sizing:border-box;background:#0d0d0d;border:1px solid #222;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;border-radius:2px;margin-bottom:4px"></textarea>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px">
+            <button onclick="cicsLoadDefaults()" class="sec-inject-btn" style="background:#1a1a2a">Load defaults</button>
+            <button id="cicsScanBtn"  class="sec-inject-btn" onclick="startCicsScan()" style="background:#1a2a1a">▶ SCAN</button>
+            <button id="cicsStopBtn"  class="sec-inject-btn" onclick="stopCicsScan()"  style="background:#2a1a1a;display:none">■ STOP</button>
+          </div>
+          <div id="cicsStatus" style="font-size:10px;color:var(--text-muted);min-height:14px"></div>
+          <div id="cicsOut" style="max-height:200px;overflow-y:auto;margin-top:4px"></div>
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="cicsExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CICS Scan CSV</button>
+            <button onclick="cicsExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- IBM i (AS/400) SECURITY section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">IBM i SECURITY (AS/400)</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">TN5250 targets only. Sign on and stop at an AS/400 menu (with a "Selection or command" line) before running. FOR AUTHORIZED USE ONLY.</div>
+
+          <!-- Default Credential Audit — runs BEFORE sign-on, at the Sign On screen -->
+          <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">DEFAULT CREDENTIAL AUDIT <span style="font-weight:400;text-transform:none">(run at the Sign On screen, before signing on)</span></div>
+          <div class="sec-panel-hint" style="margin-bottom:6px">Tries the standard IBM i default pairs plus your own pre-audit intel (userids from a kickoff call, a directory export, a prior report). Bare userids are tried as userid=userid. Capped and interleaved per profile so a long list does not trip QMAXSIGN. FOR AUTHORIZED USE ONLY.</div>
+          <div class="sec-row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+            <span style="font-size:10px;color:var(--text-muted)">Pre-audit intel — USERID:PASSWORD or bare USERID per line</span>
+            <span style="display:flex;gap:4px">
+              <input id="credAuditFile" type="file" accept=".txt,.csv" style="display:none" onchange="credAuditLoadFile(this)">
+              <button onclick="document.getElementById('credAuditFile').click()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer" title="Load a local file of pre-audit intel">Load file</button>
+              <button onclick="credAuditLoadList()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer" title="Read default-accounts.txt on the bridge host">Load from host</button>
+              <button onclick="credAuditClear()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer">Clear</button>
+            </span>
+          </div>
+          <textarea id="credAuditIntel" rows="4" oninput="credAuditPreview()"
+            placeholder="jsmith:Summer24&#10;bjones&#10;# lines starting with # are comments"
+            style="width:100%;box-sizing:border-box;background:#000;border:1px solid #2a2a2a;border-radius:3px;color:#8acce8;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;outline:none"></textarea>
+          <div class="sec-row" style="gap:10px;align-items:center;margin-top:4px;flex-wrap:wrap">
+            <label style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;cursor:pointer" title="Also try the built-in IBM-supplied / common-default pairs">
+              <input type="checkbox" id="credAuditStd" checked style="margin:0" onchange="credAuditPreview()"> Standard list
+            </label>
+            <label style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;cursor:pointer" title="For every userid seen, also try userid as its own password">
+              <input type="checkbox" id="credAuditUserPass" checked style="margin:0" onchange="credAuditPreview()"> Try userid=password
+            </label>
+            <label style="font-size:10px;color:var(--text-muted);display:flex;align-items:center;gap:4px;cursor:pointer" title="On each match, sign the account off and keep trying the rest of the list">
+              <input type="checkbox" id="credAuditEnumAll" style="margin:0"> Keep going after a match
+            </label>
+          </div>
+          <div class="sec-row" style="gap:8px;align-items:center;margin-top:4px">
+            <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">Max attempts / profile</span>
+            <input id="credAuditCap" type="number" value="2" min="0" max="10" step="1" oninput="credAuditPreview()"
+              style="width:48px;background:#000;border:1px solid #333;border-radius:3px;color:#ccc;font-family:inherit;font-size:10px;padding:2px 6px;outline:none" title="0 = no cap. Default 2, one under the stock QMAXSIGN of 3.">
+            <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">Delay (ms)</span>
+            <input id="credAuditDelay" type="number" value="1500" min="500" max="10000" step="100"
+              style="width:68px;background:#000;border:1px solid #333;border-radius:3px;color:#ccc;font-family:inherit;font-size:10px;padding:2px 6px;outline:none">
+            <div style="flex:1"></div>
+            <button id="credAuditStartBtn" class="sec-inject-btn" onclick="startAs400CredAudit()" style="background:#1a2a1a">▶ START</button>
+            <button id="credAuditStopBtn"  class="sec-inject-btn" onclick="stopProbe()" style="background:#2a1a1a;display:none">■ STOP</button>
+          </div>
+          <div id="credAuditStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+          <div id="credAuditResults"></div>
+          <div style="margin-top:6px">
+            <button onclick="credAuditExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="credAuditExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+
+          <!-- System Value Security Analyzer -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">SYSTEM VALUE SECURITY ANALYZER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKSYSVAL reads the security system values in one screen and flags weak settings — QSECURITY &lt; 40, QMAXSIGN(*NOMAX), QAUDCTL(*NONE), weak QPWD* / QCRTAUT / QALWOBJRST — with a recommended value.</div>
+            <button id="as400SysvalBtn" class="sec-inject-btn" onclick="startAs400SysvalScan()" style="background:#1a2a1a">▶ ANALYZE SYSTEM VALUES</button>
+            <div id="as400SysvalStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400SysvalOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- User Profile & Special-Authority Enumerator -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">USER PROFILE &amp; SPECIAL-AUTHORITY ENUMERATOR</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKUSRPRF enumerates user profiles, then DSPUSRPRF reads each one. Profiles with *ALLOBJ/*SECADM, a default password (password = profile name), or LMTCPB(*NO) are privilege-escalation risks.</div>
+            <button id="as400UsrprfBtn" class="sec-inject-btn" onclick="startAs400UserScan()" style="background:#1a2a1a">▶ ENUMERATE PROFILES</button>
+            <div id="as400UsrprfStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400UsrprfOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Shipped Profile Audit (IBM-supplied Q* profiles) -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">SHIPPED PROFILE AUDIT (IBM-SUPPLIED Q* PROFILES)</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKUSRPRF then DSPUSRPRF for every IBM-supplied (Q*) profile. IBM ships these for daemons and base services so they can't be deleted — the control is to make them non-interactive. A Q* profile that is STATUS(*ENABLED) with a password other than *NONE is a finding; a default password (password = profile name) is CRITICAL. QSECOFR is treated as the break-glass account.</div>
+            <button id="as400ShipprfBtn" class="sec-inject-btn" onclick="startAs400ShippedAudit()" style="background:#1a2a1a">▶ AUDIT SHIPPED PROFILES</button>
+            <div id="as400ShipprfStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400ShipprfOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Default Password Report (ANZDFTPWD, report only) -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">DEFAULT PASSWORD REPORT <span style="font-weight:400;text-transform:none">(client-assisted audit, signed on with *ALLOBJ and *SECADM)</span></div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Runs ANZDFTPWD ACTION(*NONE): IBM i checks its own password hashes against the profile names, so nothing is guessed at a sign-on screen and no profile can lock out. Report only, the tool never runs an action that disables or expires a profile. Use this for an audit the client knows about. The Default Credential Audit above guesses at the Sign On screen and belongs to a pentest whose ROE names it. A real ANZDFTPWD writes a spooled report, this reads the mock's screen version of it.</div>
+            <button id="as400DftpwdBtn" class="sec-inject-btn" onclick="startAs400DftpwdScan()" style="background:#1a2a1a">▶ REPORT DEFAULT PASSWORDS</button>
+            <div id="as400DftpwdStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400DftpwdOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Group Profile Review -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">GROUP PROFILE REVIEW</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Reads QSYS2.GROUP_PROFILE_ENTRIES (supplemental groups) and QSYS2.USER_INFO (primary groups, and who holds *ALLOBJ and *SECADM) via STRSQL. Flags group profiles that are themselves privileged, and users who reach one only through a supplemental group, which the primary group field never shows. Results are paged, nothing is capped at a screen. A group with no members does not appear in either read. Confirm column names on your release.</div>
+            <button id="as400GrprevBtn" class="sec-inject-btn" onclick="startAs400GrpRevScan()" style="background:#1a2a1a">▶ REVIEW GROUP PROFILES</button>
+            <div id="as400GrprevStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400GrprevOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Exit Program Integrity and Authority -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">EXIT PROGRAM INTEGRITY AND AUTHORITY</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">A registered exit program runs on every request through its exit point, so one anyone can replace is a backdoor on every channel it guards. Lists the registered programs outside Q* libraries (QSYS2.EXIT_PROGRAM_INFO), then reads *PUBLIC on each program and its library, the owner, and the audit journal for the program being changed, restored or created in the last 90 days. *PUBLIC *ALL on a program is CRITICAL, *CHANGE high, and a writable library is high on its own. Ownership alone does not make an exit program safe, so the owner is shown, not rated. CHKOBJITG is not run: it needs a scope you choose on the box, run it by hand. Confirm view and column names on your release.</div>
+            <button id="as400ExitpgmBtn" class="sec-inject-btn" onclick="startAs400ExitPgmScan()" style="background:#1a2a1a">▶ REVIEW EXIT PROGRAMS</button>
+            <div id="as400ExitpgmStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400ExitpgmOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Audit Journal Review -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">AUDIT JOURNAL REVIEW</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Reads QSYS/QAUDJRN through QSYS2.DISPLAY_JOURNAL for restores (OR RA RO RP), creates (CO), changes (ZC), spool (SF) and print (PO), grouped by user, after checking that auditing is on and each entry type's audit level is set. Zero entries only counts as good news when the level is set. Anything done as QSECOFR rates one step higher. Needs *USE authority to the journal. Reads stop at 600 rows per group and say so. The journal parameters and columns follow IBM's published examples and were not run on a live IBM i here, confirm them.</div>
+            <input id="as400JrnDays" type="text" placeholder="Days back, 1 to 365 (blank = 30)" style="width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #333;border-radius:3px;color:#ccc;font-family:inherit;font-size:10px;padding:3px 6px;margin-bottom:4px">
+            <button id="as400JrnBtn" class="sec-inject-btn" onclick="startAs400JrnScan()" style="background:#1a2a1a">▶ REVIEW AUDIT JOURNAL</button>
+            <div id="as400JrnStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400JrnOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Output Queue and Spool Audit -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">OUTPUT QUEUE AND SPOOL AUDIT</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Reads QSYS2.OUTPUT_QUEUE_INFO and QSYS2.OBJECT_PRIVILEGES via STRSQL for who can read what is spooled: DSPDTA (can any reader display any file), OPRCTL (can anyone with *JOBCTL), *PUBLIC's authority on each queue, remote queues, QPJOBLOG and QPRINT, who holds *SPLCTL, and whether QAUDLVL carries *SPLFDTA and *PRTDTA so spool activity is audited at all. A queue where DSPDTA lets any reader see any file and *PUBLIC can read is CRITICAL. Which queues are sensitive is the client's call, get a signed list. Name the libraries that hold output queues (blank reads every library not named Q*, which can be slow). Confirm view, column and value names on your release.</div>
+            <input id="as400OutqLibs" type="text" placeholder="PAYROLL, HRLIB (blank = every library not named Q*)" style="width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #333;border-radius:3px;color:#ccc;font-family:inherit;font-size:10px;padding:3px 6px;margin-bottom:4px">
+            <button id="as400OutqBtn" class="sec-inject-btn" onclick="startAs400OutqScan()" style="background:#1a2a1a">▶ AUDIT OUTPUT QUEUES</button>
+            <div id="as400OutqStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400OutqOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Static Adopted-Authority Scan -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">STATIC ADOPTED-AUTHORITY SCAN</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">The Adopted-Authority Runtime Scanner above only sees programs on the call stack right now. This reads whole libraries via STRSQL: every program with USRPRF(*OWNER), who owns it, and what *PUBLIC may do to it (QSYS2.PROGRAM_INFO and QSYS2.OBJECT_PRIVILEGES), judged against who holds *ALLOBJ or *SECADM. A privileged owner with *PUBLIC able to run it is HIGH, with more than *USE it is CRITICAL. Leave the box blank to read every library not named Q*, which can run a long time on a big system, so name the libraries there. Confirm view and column names on your release.</div>
+            <input id="as400AdoptLibs" type="text" placeholder="APPLIB, TOOLLIB (blank = every library not named Q*)" style="width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #333;border-radius:3px;color:#ccc;font-family:inherit;font-size:10px;padding:3px 6px;margin-bottom:4px">
+            <button id="as400AdoptBtn" class="sec-inject-btn" onclick="startAs400AdoptScan()" style="background:#1a2a1a">▶ SCAN FOR ADOPTING PROGRAMS</button>
+            <div id="as400AdoptStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400AdoptOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Library CRTAUT vs QCRTAUT -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">LIBRARY CRTAUT REVIEW</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">QCRTAUT is only the fallback for the authority *PUBLIC gets on a new object. Every library carries its own CRTAUT, which wins unless it says *SYSVAL. Reads QCRTAUT with DSPSYSVAL, then DSPLIBD for each application library (not Q*, plus QGPL) and rates the authority new objects actually get: *ALL critical, *CHANGE high, *USE or *EXCLUDE fine. CRTAUT only affects objects created from now on, existing ones are untouched.</div>
+            <button id="as400CrtautBtn" class="sec-inject-btn" onclick="startAs400CrtautScan()" style="background:#1a2a1a">▶ REVIEW LIBRARY CRTAUT</button>
+            <div id="as400CrtautStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400CrtautOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Objects owned by QSECOFR -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">QSECOFR-OWNED OBJECTS</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Reads QSYS2.OBJECT_OWNERSHIP via STRSQL for objects QSECOFR owns outside the IBM-supplied Q* libraries. Application objects belong to a dedicated application owner profile, not the security officer. A library that holds QSECOFR-owned programs is HIGH (one that adopts its owner runs as QSECOFR), data only is MEDIUM. "Application library" means a library not named Q*, which misjudges the odd exception either way. Confirm the view and column names on your release.</div>
+            <button id="as400OwnsecBtn" class="sec-inject-btn" onclick="startAs400OwnSecScan()" style="background:#1a2a1a">▶ FIND QSECOFR-OWNED OBJECTS</button>
+            <div id="as400OwnsecStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400OwnsecOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Object / *PUBLIC Authority Scanner -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">OBJECT / *PUBLIC AUTHORITY SCANNER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKOBJ lists objects, then DSPOBJAUT reads each one's *PUBLIC authority and private grants. *PUBLIC *ALL (CRITICAL) or *CHANGE (HIGH) on sensitive objects (PAYROLL, EMPMAST, CONFIG) means any user can read or alter protected data; a risky private grant (named user with *ALL/*CHANGE) raises a sensitive object to MEDIUM.</div>
+            <button id="as400ObjBtn" class="sec-inject-btn" onclick="startAs400ObjScan()" style="background:#1a2a1a">▶ SCAN OBJECT AUTHORITY</button>
+            <div id="as400ObjStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400ObjOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Network Attributes Analyzer -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">NETWORK ATTRIBUTES ANALYZER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">DSPNETA reads the network attributes and flags remote-access exposure: JOBACN(*FILE) auto-runs inbound job streams (RCE), DDMACC(*ALL) opens DDM/DRDA, PCSACC / ALWANYNET widen the client/APPC surface.</div>
+            <button id="as400NetattrBtn" class="sec-inject-btn" onclick="startAs400NetattrScan()" style="background:#1a2a1a">▶ ANALYZE NETWORK ATTRS</button>
+            <div id="as400NetattrStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400NetattrOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Job Description Privilege-Escalation Scanner -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">JOB DESCRIPTION PRIVESC SCANNER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKJOBD flags job descriptions that name a fixed USER() and are usable by *PUBLIC — any user can SBMJOB with that JOBD and run code as that user. CRITICAL when the user is the security officer.</div>
+            <button id="as400JobdBtn" class="sec-inject-btn" onclick="startAs400JobdScan()" style="background:#1a2a1a">▶ SCAN JOB DESCRIPTIONS</button>
+            <div id="as400JobdStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400JobdOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Authorization List Scanner -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">AUTHORIZATION LIST SCANNER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKAUTL then DSPAUTL per list. An over-permissive *PUBLIC on an authorization list (*ALL/*CHANGE) cascades to every object it secures — the scan lists those objects.</div>
+            <button id="as400AutlBtn" class="sec-inject-btn" onclick="startAs400AutlScan()" style="background:#1a2a1a">▶ SCAN AUTH LISTS</button>
+            <div id="as400AutlStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400AutlOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Active Job Scanner -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">ACTIVE JOB SCANNER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKACTJOB flags jobs running under a privileged profile and network host servers (a remote attack surface). Run the User Profile Enumerator first — this scan cross-references the profiles it rated CRITICAL/HIGH.</div>
+            <button id="as400ActjobBtn" class="sec-inject-btn" onclick="startAs400ActjobScan()" style="background:#1a2a1a">▶ SCAN ACTIVE JOBS</button>
+            <div id="as400ActjobStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400ActjobOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Exit Point & Service Registration Audit -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">EXIT POINT &amp; SERVICE REGISTRATION AUDIT</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKREGINF reads the registration-facility exit points in one screen. An exit point with no registered program means nothing validates requests coming through it — the classic way a restricted shell (LMTCPB(*YES)) turns out not to matter: FTP (CRITICAL), NetServer file-serving (CRITICAL), and remote command call (CRITICAL) all bypass it untouched. Remote SQL/ODBC init unregistered is HIGH.</div>
+            <button id="as400ReginfBtn" class="sec-inject-btn" onclick="startAs400ReginfScan()" style="background:#1a2a1a">▶ AUDIT EXIT POINTS</button>
+            <div id="as400ReginfStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400ReginfOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- NetServer / SMB Configuration Audit -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">NETSERVER / SMB CONFIGURATION AUDIT</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Reads the NetServer (SMB) configuration in one screen. A set guest profile (GUESTUSRPRF) means unauthenticated SMB clients get mapped to it (HIGH); SMB signing not required means requests can be tampered with or replayed in transit (MEDIUM).</div>
+            <button id="as400NetsvrBtn" class="sec-inject-btn" onclick="startAs400NetsvrScan()" style="background:#1a2a1a">▶ AUDIT NETSERVER CONFIG</button>
+            <div id="as400NetsvrStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400NetsvrOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- IFS Permission Sweep -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">IFS PERMISSION SWEEP</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKLNK lists IFS object links and flags *PUBLIC authority: world-writable objects (HIGH, or CRITICAL on a sensitive-looking path) and world-readable objects on a path that looks like credentials or key material (HIGH). Shops that lock DB2 libraries down tight often leave the IFS wide open by comparison.</div>
+            <button id="as400IfsBtn" class="sec-inject-btn" onclick="startAs400IfsScan()" style="background:#1a2a1a">▶ SWEEP IFS PERMISSIONS</button>
+            <div id="as400IfsStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400IfsOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Adopted-Authority Runtime Scanner -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">ADOPTED-AUTHORITY RUNTIME SCANNER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">WRKJOB OPTION(*PGMSTK) reads the current job's call stack, then DSPPGM reads each adopting level's owner. A program running under adopted authority runs the OWNER's authority — any caller, including an unchecked CL/RPG parameter, gets that authority for free. CRITICAL when the owner is QSECOFR, HIGH otherwise (still needs cross-referencing).</div>
+            <button id="as400PgmstkBtn" class="sec-inject-btn" onclick="startAs400PgmstkScan()" style="background:#1a2a1a">▶ SCAN CALL STACK</button>
+            <div id="as400PgmstkStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400PgmstkOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Menu/Command-Line Bypass Probe -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">MENU/COMMAND-LINE BYPASS PROBE</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">LMTCPB(*YES) only gates the sign-on session's own command line. This drives a fixed set of stock "Work with X" utilities and actually executes a command from each one's command line, contrasted against DSPJOB's numeric-only options screen. CRITICAL = a live command line reachable via ordinary menu navigation.</div>
+            <button id="as400BypassBtn" class="sec-inject-btn" onclick="startAs400BypassProbe()" style="background:#1a2a1a">▶ PROBE FOR BYPASSES</button>
+            <div id="as400BypassStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400BypassOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- PTF/CVE Currency Checker -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">PTF/CVE CURRENCY CHECKER</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Runs SYSTOOLS.CVE_INFO() and SYSTOOLS.GROUP_PTF_CURRENCY_LOCAL() via STRSQL, IBM i's own built-in SQL services, and classifies whatever rows come back against NVD's published CVSS bands and PTF-group level gaps. No CVE list is baked into this tool — it only reports what the partition itself says, so it can't go stale.</div>
+            <button id="as400PtfcveBtn" class="sec-inject-btn" onclick="startAs400PtfCveScan()" style="background:#1a2a1a">▶ CHECK PTF/CVE CURRENCY</button>
+            <div id="as400PtfcveStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400PtfcveOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <!-- Listening Services Inventory -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">LISTENING SERVICES INVENTORY</div>
+            <div class="sec-panel-hint" style="margin-bottom:6px">Runs one narrow QSYS2.NETSTAT_INFO query per service group via STRSQL (Telnet 23 vs 992, FTP, host servers 8470 to 8476 vs 9470 to 9476, DDM, TFTP, REXEC, LPD, SNMP, NFS, NetServer, web and Navigator, SSH) and rates what is listening. A port that is not listening is the pass for a clear text service. Ratings are a judgment call, not IBM's. Confirm column names and UDP rows on your release, and cross-check WRKTCPSVR.</div>
+            <button id="as400SvcinvBtn" class="sec-inject-btn" onclick="startAs400SvcInvScan()" style="background:#1a2a1a">▶ INVENTORY LISTENING SERVICES</button>
+            <div id="as400SvcinvStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="as400SvcinvOut" style="max-height:220px;overflow-y:auto;margin-top:4px"></div>
+          </div>
+
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="as400ExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export IBM i Audit CSV</button>
+            <button onclick="as400ExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- TN3270E NEGOTIATION ANALYZER section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">TN3270E NEGOTIATION ANALYZER</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Displays TLS version, cipher suite, and certificate details for every active session. Also surfaces TN3270E negotiation status, terminal model, and LU. Flags plaintext sessions, weak ciphers, self-signed or expired certs, and missing TN3270E negotiation.</div>
+
+          <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px">
+            <button onclick="negotiateRefresh()" style="background:none;border:1px solid #446688;border-radius:3px;color:#446688;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↺ Refresh</button>
+            <button onclick="negotiateExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="negotiateExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            <span id="negotiateStatus" style="font-size:9px;color:var(--text-muted)">Click Refresh to analyze active sessions</span>
+          </div>
+
+          <div id="negotiateOut" style="min-height:30px"></div>
+        </div>
+      </div>
+
+      <!-- VTAM-OPERATOR POOL/SESSION DASHBOARD section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">VTAM-OPERATOR POOL/SESSION DASHBOARD</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Groups every active session by LPAR, showing live count against an optional configured threshold (pool-limits.json — WARN at 80%, CRITICAL at 100%) and each session's LU requested vs. granted. CRITICAL also fires immediately if a session's first screen matched a configured shop-specific "no session available" reject pattern, regardless of count.</div>
+
+          <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px">
+            <button onclick="poolRefresh()" style="background:none;border:1px solid #446688;border-radius:3px;color:#446688;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↺ Refresh</button>
+            <button onclick="poolExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+            <button onclick="poolExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            <span id="poolStatus" style="font-size:9px;color:var(--text-muted)">Click Refresh to group active sessions by LPAR</span>
+          </div>
+
+          <div id="poolOut" style="min-height:30px"></div>
+        </div>
+      </div>
+
+      <!-- SDSF JOB SCANNER + STC PROFILE SCANNER section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">SDSF JOB &amp; STC SCANNER</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Two tools: (1) SDSF Screen Parser — navigate to an SDSF ST or DA panel, then click Refresh to parse visible jobs and flag system STCs visible from your privilege level. (2) STC Profile Scanner — at TSO READY, checks each STC's RACF STARTED class profile. Missing profiles mean STCs run under the default user. FOR AUTHORIZED USE ONLY.</div>
+
+          <!-- ── SDSF Screen Parser ── -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">SDSF JOB PARSER</div>
+            <div style="font-size:9px;color:#555;margin-bottom:4px">Navigate to SDSF → ST or DA panel in the terminal, then click Refresh. No commands are sent — the tool reads the visible screen.</div>
+            <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px">
+              <button onclick="sdsfRefresh()" style="background:none;border:1px solid #446688;border-radius:3px;color:#446688;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↺ Refresh</button>
+              <button onclick="sdsfExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+              <button onclick="sdsfExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+              <span id="sdsfStatus" style="font-size:9px;color:var(--text-muted)">Navigate to SDSF first</span>
+            </div>
+            <div style="font-size:9px;color:#555;font-family:'IBM Plex Mono',monospace;margin-bottom:2px">RISK         JOBNAME         JOBID           OWNER           PRTY    QUEUE</div>
+            <div id="sdsfOut" style="min-height:20px"></div>
+          </div>
+
+          <!-- ── STC Profile Scanner ── -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">STC PROFILE SCANNER</div>
+            <div style="font-size:9px;color:#555;margin-bottom:4px">Requires TSO READY prompt. Checks RACF STARTED class profile for each STC — missing profile means the STC runs without a dedicated user ID.</div>
+            <div style="margin-bottom:4px">
+              <label style="font-size:9px;color:var(--text-muted);display:block;margin-bottom:2px">STC NAMES (comma or space separated)</label>
+              <textarea id="stcWordlist" rows="3" style="width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #2a2a2a;color:#aaa;font-family:'IBM Plex Mono',monospace;font-size:9px;padding:4px;resize:vertical" placeholder="JES2, VTAM, TCPIP, RACF, …"></textarea>
+            </div>
+            <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <button id="stcStartBtn" onclick="startStcScan()" style="background:none;border:1px solid #a06040;border-radius:3px;color:#a06040;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">▶ Start Scan</button>
+              <button onclick="stopStcScan()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">■ Stop</button>
+              <button onclick="stcImportFromSdsf()" style="background:none;border:1px solid #446688;border-radius:3px;color:#446688;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">⇦ Import STCs from SDSF</button>
+              <button onclick="stcExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+              <button onclick="stcExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            </div>
+            <div style="font-size:9px;color:var(--text-muted)" id="stcStatus">Idle</div>
+            <div id="stcOut" style="margin-top:6px;min-height:20px"></div>
+          </div>
+
+          <!-- ── SDSF Job Output Harvester ── -->
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid #1a1a1a">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">SDSF JOB OUTPUT HARVESTER</div>
+            <div style="font-size:9px;color:#555;margin-bottom:4px">The parser above only reads the list row. This actively navigates into each job's real output (S jobname), flagging non-zero condition codes and sensitive-looking keywords instead of just the list-level status. Navigate to the SDSF ST/DA panel first — submit a job or two so there's something to harvest.</div>
+            <button id="sdsfHarvestBtn" class="sec-inject-btn" onclick="startSdsfHarvest()" style="background:#1a2a1a">▶ HARVEST OUTPUT</button>
+            <div id="sdsfHarvestStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="sdsfHarvestOut" style="max-height:200px;overflow-y:auto;margin-top:4px"></div>
+            <div style="margin-top:6px">
+              <button onclick="sdsfHarvestExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export CSV</button>
+              <button onclick="sdsfHarvestExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- DB2 TOOLS section -->
+      <div class="sec-section">
+        <div class="sec-section-hdr">DB2 TOOLS</div>
+        <div class="sec-section-body">
+          <div class="sec-panel-hint" style="margin-bottom:8px">Three tools for DB2 security reconnaissance: subsystem enumeration, RACF authority scanning, and connection profile analysis. All require a TSO READY prompt. FOR AUTHORIZED USE ONLY.</div>
+
+          <!-- ── Tool 1: Subsystem Scanner ── -->
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">SUBSYSTEM SCANNER</div>
+            <div style="font-size:10px;color:#555;margin-bottom:4px">Tries <code style="color:#8acce8">DSN SYSTEM(xxx)</code> for each ID — classifies ACCESSIBLE / DENIED / NOT_FOUND, extracts version from connection banner.</div>
+            <div class="sec-row" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="font-size:10px;color:var(--text-muted)">Subsystem IDs — one per line</span>
+              <button onclick="db2LoadDefaults()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:1px 8px;cursor:pointer">Load defaults</button>
+            </div>
+            <textarea id="db2Wordlist" rows="5"
+              placeholder="DB2&#10;DB21&#10;DBPD&#10;# lines starting with # are comments"
+              style="width:100%;box-sizing:border-box;background:#000;border:1px solid #2a2a2a;border-radius:3px;color:#8acce8;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:4px 6px;resize:vertical;outline:none"></textarea>
+            <div class="sec-row" style="gap:8px;align-items:center;margin-top:4px">
+              <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">Delay (ms)</span>
+              <input id="db2ScanDelay" type="number" value="1500" min="500" max="10000" step="100"
+                style="width:68px;background:#000;border:1px solid #333;border-radius:3px;color:#ccc;font-family:inherit;font-size:10px;padding:2px 6px;outline:none">
+              <div style="flex:1"></div>
+              <button id="db2ScanStartBtn" class="sec-inject-btn" onclick="startDb2Scan()" style="background:#1a2a1a">▶ START</button>
+              <button id="db2ScanStopBtn"  class="sec-inject-btn" onclick="stopDb2Scan()"  style="background:#2a1a1a;display:none">■ STOP</button>
+            </div>
+            <div id="db2ScanStatus" style="font-size:10px;color:var(--text-muted);margin-top:4px;min-height:14px"></div>
+            <div id="db2ScanResults"></div>
+          </div>
+
+          <!-- ── Tool 2: RACF-DB2 Authority Scan ── -->
+          <div style="margin-bottom:10px;padding-top:8px;border-top:1px solid #111">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">RACF-DB2 AUTHORITY SCAN</div>
+            <div style="font-size:10px;color:#555;margin-bottom:6px">Issues <code style="color:#8acce8">SEARCH CLASS(xxx)</code> for four DB2 RACF resource classes — maps which DB2 objects are RACF-protected and lists profile names.</div>
+            <div style="font-size:10px;color:#3a3a4a;margin-bottom:6px">
+              Classes: <span style="color:#e0a060">DSNR</span> (connections) · <span style="color:#8acce8">MDSNPN</span> (plans) · <span style="color:#c0a0e0">MDSNTB</span> (tables) · <span style="color:#6acca0">MDSNSP</span> (procs)
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:4px">
+              <button id="db2AuthStartBtn" class="sec-inject-btn" onclick="startDb2AuthScan()" style="background:#1a2a1a">▶ SCAN</button>
+              <button id="db2AuthStopBtn"  class="sec-inject-btn" onclick="stopDb2Auth()"      style="background:#2a1a1a;display:none">■ STOP</button>
+            </div>
+            <div id="db2AuthStatus" style="font-size:10px;color:var(--text-muted);min-height:14px"></div>
+            <div id="db2AuthResults"></div>
+          </div>
+
+          <!-- ── Tool 3: DB2 Permission Detail ── -->
+          <div style="padding-top:8px;border-top:1px solid #111">
+            <div style="font-size:10px;color:var(--text-muted);font-weight:600;letter-spacing:.06em;margin-bottom:4px">CONNECTION PERMISSION PROBE</div>
+            <div style="font-size:10px;color:#555;margin-bottom:6px">Issues <code style="color:#8acce8">RLIST DSNR subsys.TYPE ALL</code> for BATCH / DB2CALL / DDF / SPACENAM. Highlights PUBLIC access grants — a common misconfiguration.</div>
+            <div class="sec-row" style="gap:6px;align-items:center;margin-bottom:6px">
+              <span style="font-size:10px;color:var(--text-muted);flex-shrink:0">Subsystem</span>
+              <input id="db2PermSubsys" type="text" value="DB2" maxlength="4" placeholder="DB2"
+                style="width:52px;background:#000;border:1px solid #333;border-radius:3px;color:#8acce8;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 6px;outline:none;text-transform:uppercase">
+              <div style="flex:1"></div>
+              <button id="db2PermStartBtn" class="sec-inject-btn" onclick="startDb2PermProbe()" style="background:#1a2a1a">▶ PROBE</button>
+              <button id="db2PermStopBtn"  class="sec-inject-btn" onclick="stopDb2Perm()"       style="background:#2a1a1a;display:none">■ STOP</button>
+            </div>
+            <div id="db2PermStatus" style="font-size:10px;color:var(--text-muted);min-height:14px"></div>
+            <div id="db2PermResults"></div>
+          </div>
+
+          <!-- ── Shared export ── -->
+          <div style="margin-top:8px;padding-top:6px;border-top:1px solid #111">
+            <button onclick="db2ExportCsv()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ Export all DB2 results CSV</button>
+            <button onclick="db2ExportJson()" style="background:none;border:1px solid #333;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">↓ JSON</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- end panelSecurity -->
+
+  </div><!-- end right-panel -->
+</div><!-- end main-layout -->
+
+<!-- ADD MACRO MODAL -->
+<div class="modal-overlay hidden" id="addMacroModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Add Macro</div>
+      <div class="modal-close" onclick="hideAddMacroModal()">&times;</div>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:14px">
+        <div class="setting-label" style="margin-bottom:6px">Saved Macros</div>
+        <div id="modalMacroList" style="max-height:160px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1a3050 transparent;margin-bottom:4px"></div>
+        <div style="font-size:10px;color:var(--text-muted)">Click a macro to load it for editing.</div>
+      </div>
+      <hr style="border-color:var(--border);margin:12px 0">
+      <div class="form-group">
+        <div class="form-label">Macro Name</div>
+        <input type="text" id="macroName" placeholder="e.g. TSO ISPF Login" style="width:100%">
+      </div>
+      <div class="form-group">
+        <div class="form-label">Description (optional)</div>
+        <input type="text" id="macroDesc" placeholder="Brief description" style="width:100%">
+      </div>
+      <div class="form-group">
+        <div class="form-label">Macro JSON</div>
+        <textarea id="macroJson" rows="8" placeholder='{"name":"My Macro","steps":[{"op":"aid","aid":"ENTER"}]}' style="width:100%;font-family:'IBM Plex Mono',monospace;font-size:11px;background:var(--bg-elevated);border:1px solid var(--border-bright);color:var(--text-primary);padding:8px;border-radius:3px;resize:vertical;outline:none"></textarea>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px">Paste a macro JSON or leave blank to create an empty macro skeleton.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <input type="hidden" id="editingMacroId">
+      <button class="btn btn-secondary" onclick="hideAddMacroModal()">Cancel</button>
+      <button class="btn btn-secondary" onclick="importMacroFromFile()">&#x2B06; Import JSON</button>
+      <button class="btn btn-primary" onclick="saveMacroFromModal()">Save Macro</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="macroFileInput" accept=".json" style="display:none" onchange="loadMacroFile(event)">
+
+<!-- CONNECT MODAL -->
+<div class="modal-overlay hidden" id="connectModal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="connectModalTitle">New 3270 Session</div>
+      <div class="modal-close" onclick="hideConnectModal()">&times;</div>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:14px">
+        <div class="setting-label" style="margin-bottom:8px">Saved Profiles</div>
+        <div id="modalProfileList"></div>
+      </div>
+      <hr style="border-color:var(--border);margin:16px 0">
+      <div class="setting-label" style="margin-bottom:12px">Manual Connection</div>
+      <div class="form-row">
+        <div class="form-group"><div class="form-label">Hostname / IP</div><input type="text" id="connHost" placeholder="10.x.x.x"></div>
+        <div class="form-group" style="max-width:80px"><div class="form-label">Port</div><input type="number" id="connPort" value="23"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><div class="form-label">Session Name</div><input type="text" id="connName" placeholder="My LPAR"></div>
+        <div class="form-group"><div class="form-label">LU Name (opt)</div><input type="text" id="connLu" placeholder="LU3A0001"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Protocol</div>
+          <select id="connProtocol" onchange="onConnProtocolChange()">
+            <option value="3270" selected>TN3270 (z/OS, z/VM, TPF...)</option>
+            <option value="5250">TN5250 (AS/400, IBM i)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <div class="form-label">Session Type</div>
+          <select id="connType"><option>TSO</option><option>CICS</option><option>JES2</option><option>ZVM</option><option>AS400</option><option>Other</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <div class="form-label">Terminal Model</div>
+          <select id="connModel"></select>
+        </div>
+      </div>
+      <div class="setting-row" style="margin-top:8px">
+        <label style="font-size:11px;color:var(--text-dim)">TLS / SSL</label>
+        <div class="toggle" id="connTls" onclick="this.classList.toggle('on')"></div>
+        <label style="font-size:11px;color:var(--text-dim)" id="connTn3270eLabel">TN3270E</label>
+        <div class="toggle on" id="connTn3270e" onclick="this.classList.toggle('on')"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="hideConnectModal()">Cancel</button>
+      <button class="btn btn-secondary" id="saveProfileBtn" onclick="saveProfileFromForm()">Save Profile</button>
+      <button class="btn btn-primary" onclick="connectManual()">Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Macro recording indicator — floats above OIA bar while recording -->
+<div id="macroRecIndicator" style="display:none;position:fixed;bottom:48px;left:50%;transform:translateX(-50%);background:#1a0000;border:1px solid #e06060;border-radius:4px;padding:6px 14px;z-index:8000;align-items:center;gap:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;white-space:nowrap">
+  <span style="color:#e06060;animation:rec-blink 1s step-end infinite">●</span>
+  <span style="color:#ccc">RECORDING</span>
+  <span style="color:var(--text-muted)">— <span id="macroRecStepCount">0</span> steps</span>
+  <button onclick="stopMacroRecord()" style="background:#2a0000;border:1px solid #e06060;border-radius:3px;color:#e06060;font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer;margin-left:4px">■ STOP</button>
+  <button onclick="cancelMacroRecord()" style="background:none;border:1px solid #444;border-radius:3px;color:#666;font-family:inherit;font-size:10px;padding:2px 8px;cursor:pointer">CANCEL</button>
+</div>
+
+<!-- Macro recording save modal -->
+<div id="macroRecSaveModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9100;align-items:center;justify-content:center;">
+  <div style="background:#0d1a0d;border:1px solid #2a4a2a;border-radius:6px;padding:24px 28px;min-width:290px;font-family:'IBM Plex Mono',monospace;">
+    <div style="color:var(--accent-amber);font-size:13px;margin-bottom:4px;letter-spacing:0.08em">● SAVE MACRO RECORDING</div>
+    <div style="color:var(--text-muted);font-size:11px;margin-bottom:14px">Name this macro to add it to your library</div>
+    <input id="macroRecName" type="text" placeholder="Macro name"
+      style="width:100%;box-sizing:border-box;background:#000;border:1px solid #333;border-radius:3px;color:var(--text-primary);font-family:inherit;font-size:12px;padding:6px 8px;outline:none;margin-bottom:6px"
+      onkeydown="if(event.key==='Enter')saveMacroRecord();if(event.key==='Escape')cancelMacroRecord();" />
+    <input id="macroRecDesc" type="text" placeholder="Description (optional)"
+      style="width:100%;box-sizing:border-box;background:#000;border:1px solid #2a2a2a;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:5px 8px;outline:none;margin-bottom:10px"
+      onkeydown="if(event.key==='Enter')saveMacroRecord();if(event.key==='Escape')cancelMacroRecord();" />
+    <label style="display:flex;align-items:center;gap:7px;margin-bottom:14px;cursor:pointer;user-select:none;">
+      <input id="macroRecSecurity" type="checkbox" style="accent-color:var(--accent-amber);width:13px;height:13px;cursor:pointer;" />
+      <span style="font-size:10px;color:var(--text-muted);">&#128274; Security macro — hidden until panel is unlocked</span>
+    </label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button onclick="cancelMacroRecord()" style="background:none;border:1px solid #444;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:4px 12px;cursor:pointer">Discard</button>
+      <button onclick="saveMacroRecord()" style="background:#1a3a1a;border:1px solid var(--accent-amber);border-radius:3px;color:var(--accent-amber);font-family:inherit;font-size:11px;padding:4px 12px;cursor:pointer">Save Macro</button>
+    </div>
+  </div>
+</div>
+
+<!-- Macro prompt modal — shown mid-run when a macro has a { op: "prompt" } step -->
+<div id="macroPromptModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9200;align-items:center;justify-content:center;">
+  <div style="background:#0a1220;border:1px solid #1e3a5f;border-radius:6px;padding:24px 28px;min-width:300px;max-width:380px;font-family:'IBM Plex Mono',monospace;">
+    <div style="color:var(--accent-blue);font-size:13px;margin-bottom:4px;letter-spacing:0.08em">⏸ MACRO INPUT REQUIRED</div>
+    <div id="macroPromptLabel" style="color:var(--text-muted);font-size:11px;margin-bottom:14px;line-height:1.5"></div>
+    <input id="macroPromptInput" type="text" placeholder="Enter value…"
+      style="width:100%;box-sizing:border-box;background:#000;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-primary);font-family:inherit;font-size:12px;padding:6px 8px;outline:none;margin-bottom:14px"
+      onkeydown="if(event.key==='Enter')_submitMacroPrompt();if(event.key==='Escape')_cancelMacroPrompt();" />
+    <input id="macroPromptVarName" type="hidden" />
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button onclick="_cancelMacroPrompt()" style="background:none;border:1px solid #444;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:4px 12px;cursor:pointer">Cancel (stop macro)</button>
+      <button onclick="_submitMacroPrompt()" style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:var(--accent-blue);font-family:inherit;font-size:11px;padding:4px 14px;cursor:pointer;font-weight:700">Continue →</button>
+    </div>
+  </div>
+</div>
+
+<!-- SESSION MANAGER modal -->
+<div id="sessionManagerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9400;align-items:center;justify-content:center;"
+     onclick="if(event.target===this)sessionManagerClose()">
+  <div style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:6px;width:860px;max-width:95vw;max-height:85vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.9);font-family:'IBM Plex Mono',monospace">
+    <div style="background:#0d1a2d;border-bottom:1px solid #1e3a5f;padding:12px 16px;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;font-weight:700;color:#4a9fd4">&#x229F; Session Manager</div>
+      <button onclick="sessionManagerClose()" style="background:none;border:none;color:var(--text-muted);font-size:16px;cursor:pointer;padding:0 2px">&#x2715;</button>
+    </div>
+    <div style="padding:12px 16px">
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">
+        Every TN3270 / TN5250 session the bridge currently holds. Killing one drops the host connection and disconnects the browser tab using it, without restarting the bridge. <span style="color:#e0a060">orphaned</span> = the browser socket is already gone.
+      </div>
+      <div id="sessionManagerBody"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">
+        <div id="sessionManagerStatus" style="font-size:10px;color:var(--text-muted)"></div>
+        <button onclick="sessionManagerRefresh()" style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:10px;padding:3px 12px;cursor:pointer">&#x21BB; Refresh</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Security unlock modal -->
+<div id="secUnlockOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9000;align-items:center;justify-content:center;">
+  <div style="background:#0d1a0d;border:1px solid #2a4a2a;border-radius:6px;padding:24px 28px;min-width:280px;max-width:340px;font-family:'IBM Plex Mono',monospace;">
+    <div style="color:var(--accent-amber);font-size:13px;margin-bottom:4px;letter-spacing:0.08em;">🔒 SECURITY TOOLS</div>
+    <div style="color:var(--text-muted);font-size:11px;margin-bottom:16px;">Enter access password to continue</div>
+    <input id="secUnlockInput" type="password" placeholder="Password"
+      style="width:100%;box-sizing:border-box;background:#000;border:1px solid #333;border-radius:3px;color:var(--text-primary);font-family:inherit;font-size:12px;padding:6px 8px;outline:none;margin-bottom:8px;"
+      onkeydown="if(event.key==='Enter')secUnlockSubmit();if(event.key==='Escape')secUnlockCancel();" />
+    <div id="secUnlockError" style="display:none;color:#e06060;font-size:11px;margin-bottom:8px;">Incorrect password</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button onclick="secUnlockCancel()" style="background:none;border:1px solid #444;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:4px 12px;cursor:pointer;">Cancel</button>
+      <button onclick="secUnlockSubmit()" style="background:#1a3a1a;border:1px solid var(--accent-amber);border-radius:3px;color:var(--accent-amber);font-family:inherit;font-size:11px;padding:4px 12px;cursor:pointer;">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- SSH connect modal -->
+<div id="sshConnectModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9300;align-items:center;justify-content:center;">
+  <div style="background:#0a0f14;border:1px solid #1e4a2f;border-radius:6px;width:380px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.9);font-family:'IBM Plex Mono',monospace">
+    <div style="background:#0d1f15;border-bottom:1px solid #1e4a2f;padding:12px 16px;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;font-weight:700;color:#3a9a6a">🔒 SSH Connect</div>
+      <button onclick="closeSshConnect()" style="background:none;border:none;color:var(--text-muted);font-size:16px;cursor:pointer;padding:0 2px">✕</button>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">HOST</label>
+        <div style="display:flex;gap:4px;align-items:center">
+          <select id="sshHostSelect" onchange="sshHostChanged()"
+            style="flex:1;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px">
+            <option value="">— Select SSH host —</option>
+          </select>
+          <button onclick="sshEditHost()" title="Edit host"
+            style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:11px;padding:3px 7px;cursor:pointer;flex-shrink:0">✎</button>
+          <button onclick="sshDeleteHost()" title="Delete host"
+            style="background:#1a0d0d;border:1px solid #4a1e1e;border-radius:3px;color:#c0392b;font-family:inherit;font-size:11px;padding:3px 7px;cursor:pointer;flex-shrink:0">✕</button>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">USERNAME</label>
+        <input id="sshUser" type="text" autocomplete="off" spellcheck="false"
+          style="width:100%;box-sizing:border-box;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px"
+          placeholder="userid">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">PASSWORD</label>
+        <input id="sshPassword" type="password" autocomplete="current-password"
+          style="width:100%;box-sizing:border-box;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px"
+          placeholder="••••••••"
+          onkeydown="if(event.key==='Enter')sshConnect()">
+      </div>
+      <div id="sshConnectErr" style="font-size:10px;color:#c0392b;min-height:14px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="closeSshConnect()"
+          style="background:transparent;border:1px solid #2a3a4a;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:4px 14px;cursor:pointer">Cancel</button>
+        <button onclick="sshConnect()"
+          style="background:#0d2a1a;border:1px solid #1e4a2f;border-radius:3px;color:#3a9a6a;font-family:inherit;font-size:11px;padding:4px 16px;cursor:pointer;font-weight:700">Connect</button>
+      </div>
+      <details id="sshAddHostDetails" style="margin-top:4px">
+        <summary style="font-size:10px;color:var(--text-muted);cursor:pointer;user-select:none">+ Add / edit host</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+          <input id="sshNewId"   type="text" placeholder="id (no spaces)"  style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="sshNewName" type="text" placeholder="Display name"    style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="sshNewHost" type="text" placeholder="hostname or IP"  style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="sshNewPort" type="number" placeholder="port (22)"     style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px" value="22">
+          <input id="sshNewUser" type="text" placeholder="default user"    style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <button type="button" onclick="sshSaveHost()"
+            style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:10px;padding:3px 8px;cursor:pointer">Save host</button>
+        </div>
+        <div id="sshSaveHostStatus" style="font-size:10px;min-height:12px;margin-top:6px"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- Walkthrough picker modal (Help menu → Walkthroughs) -->
+<div id="wtPickerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9200;align-items:center;justify-content:center;">
+  <div style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:6px;width:460px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.8);font-family:'IBM Plex Mono',monospace">
+    <div style="background:#0d1a2a;border-bottom:1px solid #1e3a5f;padding:12px 16px;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;font-weight:700;color:var(--accent-amber)">Walkthroughs</div>
+      <button onclick="closeWalkthroughPicker()" style="background:none;border:none;color:var(--text-muted);font-size:16px;cursor:pointer;padding:0 2px">✕</button>
+    </div>
+    <div style="padding:4px 16px 12px;overflow-y:auto;flex:1">
+      <div style="font-size:10px;color:var(--text-muted);margin:8px 0 6px">Step-by-step guides for common WebTerm/3270 tasks. The walkthrough panel appears at the bottom-right of the terminal — you can interact with the UI normally while it is open.</div>
+      <div id="wtPickerList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Walkthrough overlay -->
+<div id="wtOverlay" style="display:none;position:fixed;bottom:56px;right:12px;z-index:7500;width:310px;background:#0a0f14;border:1px solid #1e3a5f;border-radius:6px;box-shadow:0 4px 24px rgba(0,0,0,0.7);flex-direction:column;font-family:'IBM Plex Mono',monospace">
+  <div id="wtDragHandle" style="background:#0d1a2a;border-bottom:1px solid #1e3a5f;padding:8px 12px;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:space-between;cursor:grab;user-select:none">
+    <div>
+      <div id="wtTitle" style="font-size:11px;font-weight:700;color:var(--accent-amber)"></div>
+      <div id="wtProgress" style="font-size:9px;color:var(--text-muted);margin-top:1px"></div>
+    </div>
+    <button onclick="closeWalkthrough()" style="background:none;border:none;color:var(--text-muted);font-size:16px;cursor:pointer;line-height:1;padding:0 2px" title="Close walkthrough">✕</button>
+  </div>
+  <div style="padding:10px 12px;flex:1">
+    <div id="wtStepTitle" style="font-size:11px;font-weight:700;color:var(--text-main);margin-bottom:6px"></div>
+    <div id="wtStepBody"  style="font-size:10px;color:#aaa;line-height:1.55"></div>
+  </div>
+  <div style="padding:8px 12px;border-top:1px solid #1a2030;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+    <button id="wtAutoBtn" onclick="wtAutoStep()"
+      style="display:none;background:#0d1f0d;border:1px solid #2a4a2a;border-radius:3px;color:#6db86d;font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer;flex:1">Do it for me</button>
+    <div style="display:flex;gap:4px;margin-left:auto">
+      <button id="wtPrevBtn" onclick="walkthroughPrev()"
+        style="background:none;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:10px;padding:2px 10px;cursor:pointer">← Prev</button>
+      <button id="wtNextBtn" onclick="walkthroughNext()"
+        style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:var(--accent-blue,#4a9fd4);font-family:inherit;font-size:10px;padding:2px 12px;cursor:pointer;font-weight:700">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- xterm.js for SSH terminal rendering (must load before ES6 module) -->
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

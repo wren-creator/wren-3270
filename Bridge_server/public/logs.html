@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WebTerm/3270 — Proxy Viewer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: #030508;
+  color: #8aaccc;
+  font-family: 'IBM Plex Mono', 'Courier New', monospace;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Toolbar ──────────────────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #05090f;
+  border-bottom: 1px solid #0d1a2a;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.toolbar-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: #2a4a6a;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  margin-right: 2px;
+}
+.sep { width: 1px; height: 16px; background: #0d1f2d; flex-shrink: 0; }
+.spacer { flex: 1; min-width: 8px; }
+
+.btn {
+  background: none;
+  border: 1px solid #1a2f44;
+  border-radius: 3px;
+  color: #6a8aaa;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.btn:hover { border-color: #4af; color: #acd; }
+.btn.active { border-color: #fa0; color: #fa0; background: rgba(255,170,0,0.06); }
+.btn.action { border-color: #1a3a5a; }
+.btn.action:hover { border-color: #4a8fcc; color: #8acdff; }
+.btn.window-ctrl { border-color: #111d2a; font-size: 12px; padding: 1px 7px; }
+.btn.window-ctrl:hover { border-color: #3a6a9a; color: #9acdff; }
+
+/* ── Search ───────────────────────────────────────────────────────── */
+.search-input {
+  background: #05090f;
+  border: 1px solid #1a2f44;
+  border-radius: 3px;
+  color: #8aaccc;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 7px;
+  width: 160px;
+  outline: none;
+}
+.search-input:focus { border-color: #4af; }
+.search-input::placeholder { color: #2a4a6a; }
+
+/* ── Status dot ───────────────────────────────────────────────────── */
+.status { font-size: 9px; color: #3a5a7a; white-space: nowrap; }
+.status.ok  { color: #3a8a3a; }
+.status.err { color: #8a3a3a; }
+
+/* ── Log list ─────────────────────────────────────────────────────── */
+.log-list {
+  flex: 1;
+  overflow-y: scroll;
+  padding: 2px 0;
+}
+.log-list::-webkit-scrollbar { width: 5px; }
+.log-list::-webkit-scrollbar-thumb { background: #1a3050; border-radius: 3px; }
+.log-list::-webkit-scrollbar-track { background: transparent; }
+
+.entry {
+  display: flex;
+  gap: 8px;
+  padding: 1px 10px;
+  line-height: 1.6;
+}
+.entry:hover { background: rgba(255,255,255,0.025); }
+.entry.hidden { display: none; }
+.entry.match .msg { background: rgba(255,200,0,0.1); }
+
+.ts  { color: #2a4060; flex-shrink: 0; }
+.lvl { flex-shrink: 0; width: 5ch; }
+.lvl-debug { color: #2a5a7a; }
+.lvl-info  { color: #3a7a5a; }
+.lvl-warn  { color: #9a7020; }
+.lvl-error { color: #9a3030; }
+.msg { color: #8aaccc; word-break: break-all; }
+mark { background: rgba(255,200,0,0.25); color: inherit; border-radius: 1px; }
+
+.resize-handle {
+  height: 5px;
+  background: #080e18;
+  border-top: 1px solid #0d1a2a;
+  cursor: ns-resize;
+  flex-shrink: 0;
+  user-select: none;
+}
+.resize-handle:hover { background: #0d1a2a; }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <span class="toolbar-title">≡ Proxy Viewer</span>
+  <div class="sep"></div>
+
+  <!-- Level filters -->
+  <button class="btn active" id="btnAll"   onclick="setFilter('all')">ALL</button>
+  <button class="btn" id="btnInfo"  onclick="setFilter('info')">INFO</button>
+  <button class="btn" id="btnWarn"  onclick="setFilter('warn')">WARN</button>
+  <button class="btn" id="btnError" onclick="setFilter('error')">ERROR</button>
+  <button class="btn" id="btnDebug" onclick="setFilter('debug')">DEBUG</button>
+  <div class="sep"></div>
+  <button class="btn" id="btnHex" onclick="toggleHex()" title="Show/hide hex-dump lines (very noisy)">HEX</button>
+
+  <!-- Search -->
+  <input class="search-input" id="searchInput" placeholder="filter text…" oninput="applySearch(this.value)" title="Filter visible lines by text">
+
+  <div class="spacer"></div>
+
+  <!-- Actions -->
+  <span class="status" id="status">connecting…</span>
+  <div class="sep"></div>
+  <button class="btn active" id="btnTail" onclick="toggleTail()"
+          title="TAIL — auto-scroll to newest entries. Click to pause; click again to resume and jump to bottom.">▼ TAIL</button>
+  <button class="btn action" onclick="downloadCsv()" title="Download buffered logs as CSV">↓ CSV</button>
+  <button class="btn action" onclick="clearDisplay()" title="Clear display">✕</button>
+  <div class="sep"></div>
+
+  <!-- Window controls -->
+  <button class="btn window-ctrl" id="btnFullscreen" onclick="toggleFullscreen()" title="Toggle full screen">⊡</button>
+  <button class="btn window-ctrl" id="btnMinimize"   onclick="toggleMinimize()"   title="Collapse to toolbar">—</button>
+</div>
+
+<div class="log-list" id="logList"></div>
+<div class="resize-handle" id="resizeHandle"></div>
+
+<script>
+const MAX_ENTRIES = 4000;
+let currentFilter = 'all';
+let showHex       = false;
+let tailing       = true;   // explicit tail state — not derived from scroll position
+let searchTerm    = '';
+let minimized     = false;
+let _rafPending   = false;  // one pending requestAnimationFrame for scroll
+
+const list     = document.getElementById('logList');
+const statusEl = document.getElementById('status');
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function isHexLine(msg) {
+  return msg.includes('hexdump') || /\b[0-9a-f]{16,}\b/.test(msg);
+}
+
+function entryVisible(level, hex, msg) {
+  if (currentFilter !== 'all' && level !== currentFilter) return false;
+  if (!showHex && hex) return false;
+  if (searchTerm && !msg.toLowerCase().includes(searchTerm)) return false;
+  return true;
+}
+
+function highlightMatch(text) {
+  if (!searchTerm) return escHtml(text);
+  const idx = text.toLowerCase().indexOf(searchTerm);
+  if (idx < 0) return escHtml(text);
+  return escHtml(text.slice(0, idx))
+    + '<mark>' + escHtml(text.slice(idx, idx + searchTerm.length)) + '</mark>'
+    + escHtml(text.slice(idx + searchTerm.length));
+}
+
+function scheduleScroll() {
+  if (_rafPending) return;
+  _rafPending = true;
+  requestAnimationFrame(() => {
+    _rafPending = false;
+    list.scrollTop = list.scrollHeight;
+  });
+}
+
+// ── Add entry ─────────────────────────────────────────────────────
+
+function addEntry(entry) {
+  const { ts, level, msg } = entry;
+  const lv  = level || 'info';
+  const hex  = isHexLine(msg);
+  const show = entryVisible(lv, hex, msg);
+
+  const div = document.createElement('div');
+  div.className = 'entry' + (show ? '' : ' hidden');
+  div.dataset.level = lv;
+  div.dataset.hex   = hex ? '1' : '0';
+  div.dataset.msg   = msg.toLowerCase();
+  div.innerHTML =
+    `<span class="ts">${escHtml(ts.slice(11,23))}</span>` +
+    `<span class="lvl lvl-${lv}">${lv.toUpperCase()}</span>` +
+    `<span class="msg">${highlightMatch(msg)}</span>`;
+
+  list.appendChild(div);
+  if (list.children.length > MAX_ENTRIES) list.removeChild(list.firstChild);
+  if (tailing && show) scheduleScroll();
+}
+
+// ── Tail toggle ───────────────────────────────────────────────────
+
+function setTailing(on) {
+  tailing = on;
+  const btn = document.getElementById('btnTail');
+  btn.classList.toggle('active', tailing);
+  btn.textContent = tailing ? '▼ TAIL' : '‖ TAIL';
+  if (tailing) scheduleScroll();
+}
+
+function toggleTail() {
+  setTailing(!tailing);
+}
+
+// When user scrolls up, pause tailing. When they reach the bottom, resume.
+list.addEventListener('scroll', () => {
+  const atBottom = (list.scrollTop + list.clientHeight) >= (list.scrollHeight - 60);
+  if (!atBottom && tailing) {
+    setTailing(false);
+  } else if (atBottom && !tailing) {
+    setTailing(true);
+  }
+});
+
+// ── Filters ───────────────────────────────────────────────────────
+
+function setFilter(f) {
+  currentFilter = f;
+  ['all','info','warn','error','debug'].forEach(k => {
+    const id = 'btn' + k.charAt(0).toUpperCase() + k.slice(1);
+    document.getElementById(id)?.classList.toggle('active', k === f);
+  });
+  reapplyVisibility();
+}
+
+function toggleHex() {
+  showHex = !showHex;
+  document.getElementById('btnHex').classList.toggle('active', showHex);
+  reapplyVisibility();
+}
+
+function applySearch(val) {
+  searchTerm = val.toLowerCase().trim();
+  reapplyVisibility();
+  for (const el of list.children) {
+    const msgEl = el.querySelector('.msg');
+    if (msgEl) msgEl.innerHTML = highlightMatch(el.dataset.msg || '');
+  }
+}
+
+function reapplyVisibility() {
+  for (const el of list.children) {
+    const show = entryVisible(el.dataset.level, el.dataset.hex === '1', el.dataset.msg || '');
+    el.classList.toggle('hidden', !show);
+  }
+  if (tailing) scheduleScroll();
+}
+
+function clearDisplay() {
+  list.innerHTML = '';
+}
+
+// ── Window controls ───────────────────────────────────────────────
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen();
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  const btn = document.getElementById('btnFullscreen');
+  if (btn) btn.textContent = document.fullscreenElement ? '⊠' : '⊡';
+});
+
+function toggleMinimize() {
+  minimized = !minimized;
+  list.style.display = minimized ? 'none' : '';
+  document.getElementById('btnMinimize').textContent = minimized ? '□' : '—';
+  try {
+    if (minimized) { window._ph = window.outerHeight; window.resizeTo(window.outerWidth, 46); }
+    else           { window.resizeTo(window.outerWidth, window._ph || 400); }
+  } catch {}
+}
+
+// ── CSV download ──────────────────────────────────────────────────
+
+function downloadCsv() {
+  const ts   = new Date().toISOString().slice(0,19).replace(/[:.]/g,'-');
+  const name = `bridge-logs-${ts}.csv`;
+  promptSaveAs(name, async finalName => {
+    if (window.showSaveFilePicker) {
+      try {
+        const handle   = await showSaveFilePicker({ suggestedName: finalName, types: [{ description: 'CSV', accept: { 'text/csv': ['.csv'] } }] });
+        const r        = await fetch('/api/logs/csv');
+        const writable = await handle.createWritable();
+        await writable.write(await r.blob());
+        await writable.close();
+        return;
+      } catch (e) { if (e.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a');
+    a.href = '/api/logs/csv'; a.download = finalName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  });
+}
+
+function promptSaveAs(suggestedName, onSave) {
+  const old = document.getElementById('saveAsDialog');
+  if (old) old.remove();
+  const el = document.createElement('div');
+  el.id = 'saveAsDialog';
+  el.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#0e0e1c;border:2px solid #2a4a6a;border-radius:6px;padding:20px 22px;z-index:99999;min-width:340px;font-family:IBM Plex Mono,monospace;box-shadow:0 8px 32px rgba(0,0,0,0.9)';
+  el.innerHTML = `<div style="font-size:10px;font-weight:700;letter-spacing:0.1em;color:#2a6a8a;margin-bottom:12px;text-transform:uppercase">Save File</div>
+    <input id="saveAsName" type="text" value="${suggestedName.replace(/"/g,'')}"
+      style="width:100%;box-sizing:border-box;background:#08081a;border:1px solid #2a5a7a;border-radius:3px;color:#8acce8;font-family:inherit;font-size:12px;padding:7px 10px;outline:none;margin-bottom:14px;" spellcheck="false" />
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button id="saveAsCancel" style="background:#12121f;border:1px solid #333;border-radius:3px;color:#666;font-family:inherit;font-size:11px;padding:5px 14px;cursor:pointer;">Cancel</button>
+      <button id="saveAsOk" style="background:#0a2040;border:1px solid #2a5a8a;border-radius:3px;color:#5a9acc;font-family:inherit;font-size:11px;font-weight:700;padding:5px 14px;cursor:pointer;">Save</button>
+    </div>`;
+  document.body.appendChild(el);
+  const input = el.querySelector('#saveAsName');
+  input.focus();
+  const dotIdx = suggestedName.lastIndexOf('.');
+  input.setSelectionRange(0, dotIdx > 0 ? dotIdx : suggestedName.length);
+  function confirm() { const n = input.value.trim() || suggestedName; el.remove(); onSave(n); }
+  el.querySelector('#saveAsOk').addEventListener('click', confirm);
+  el.querySelector('#saveAsCancel').addEventListener('click', () => el.remove());
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') confirm(); if (e.key === 'Escape') el.remove(); });
+}
+
+// ── SSE connection ────────────────────────────────────────────────
+
+const es = new EventSource('/api/logs/stream');
+
+es.onopen = () => {
+  statusEl.textContent = '● live';
+  statusEl.className = 'status ok';
+};
+
+es.onmessage = e => {
+  try { addEntry(JSON.parse(e.data)); } catch {}
+};
+
+es.onerror = () => {
+  statusEl.textContent = '○ disconnected — reconnecting…';
+  statusEl.className = 'status err';
+};
+
+// ── Resize handle ─────────────────────────────────────────────────
+(function() {
+  const handle = document.getElementById('resizeHandle');
+  let startY, startH;
+  handle.addEventListener('mousedown', e => {
+    startY = e.screenY;
+    startH = window.outerHeight;
+    const onMove = ev => {
+      const delta = ev.screenY - startY;
+      try { window.resizeTo(window.outerWidth, Math.max(120, startH + delta)); } catch {}
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
+  });
+})();
+</script>
+</body>
+</html>

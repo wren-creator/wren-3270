@@ -1,0 +1,3254 @@
+# WebTerm/3270 — Security Tools Tutorial
+## Field analysis · Traffic capture · Live intercept · Protocol fuzzing · Host recon · z/OS · IBM i · z/TPF
+
+**Prerequisites:** WebTerm/3270 running at `http://localhost:8081`
+
+### Accessing the Security Tools
+
+All security tools live in the **🔒 Sec** tab of the right panel — hidden by default. The tab does not appear until you authenticate.
+
+**To unlock:**
+
+1. Click the **`🔒`** button in the bottom OIA bar
+2. A password modal appears — enter the access password and press **Unlock** (or Enter)
+3. On success, the **🔒 Sec** tab appears in the right panel and the panel switches to it automatically
+4. The lock button highlights amber to indicate the panel is active
+
+**To re-lock:** click **`🔒`** again — the Security tab disappears and focus switches to the Settings tab. The right panel stays open; only the Security tab is hidden.
+
+> Every unlock attempt is logged server-side with the session LU name, client IP address, and UTC timestamp. Failed attempts are logged as warnings. The password is set via the `SECURITY_TOOLS_PASSWORD` environment variable (default: `2970`).
+
+Once unlocked, the Security panel is organised into collapsible accordion sections. The first five — **FIELD ANALYSIS**, **TRAFFIC**, **INTERCEPT**, **MONITOR**, **INJECT** — hold the original tool set. Later waves added their own sections: **WALKTHROUGHS**, **RACF PROBE**, **PROTOCOL FUZZER**, **SESSION HYGIENE**, **VM MINIDISK SECURITY**, **IN-TRANSIT MONITOR**, **ESM FINGERPRINT**, **RECON TOOLS**, **SYSTEM ACCESS CHECKS**, **DB2 TOOLS**, **SDSF JOB & STC SCANNER**, **TN3270E NEGOTIATION ANALYZER**, and the platform consoles **IBM i SECURITY (AS/400)** and **z/TPF CONSOLE**. The two platform consoles stay hidden until that host type is detected on screen — connect to an IBM i or z/TPF target and the matching section appears on its own.
+
+### Guided walkthroughs
+
+The app ships **74 built-in narrated walkthroughs** (`public/js/walkthrough.js`). Open the **WALKTHROUGHS** section at the top of the Security panel, pick one from the dropdown, and click **▶ Start** — an overlay steps through the tool one instruction at a time, highlighting the control it's talking about, with an optional **"Do it for me"** button that fires the action. Six are general (connecting, multi-session tabs, split screen, macros, file transfer, AI assist); the other 68 map almost one-to-one to the parts in this document, including one each for the four z/TPF Security Console tools. The **z/TPF CONSOLE** section additionally has a combined tour of all four of its tools, launched with the **`?`** button in that section's header. These in-app walkthroughs and this document cover the same ground — use the walkthroughs for hands-on lab time, this document for reference and lesson planning.
+
+### Contents
+
+| Part | Tool | Part | Tool |
+|---|---|---|---|
+| 1 | Field Map Overlay (FMO) | 18 | In-Transit Encryption Monitor |
+| 2 | Attribute Byte Inspector (ABI) | 19 | CICS Transaction Scanner |
+| 3 | FA Mutation (via ABI) | 20 | System Access Checks (APF · PARMLIB) |
+| 4 | FUNC KEY Inject | 21 | Encryption At Rest Audit Scanner |
+| 5 | Session Viewer | 22 | DB2 Security Tools |
+| 6 | Proxy Viewer | 23 | TN3270E Negotiation Analyzer |
+| 7 | Extended Field Attribute Rendering (SFE / SA) | 24 | SDSF Job Scanner |
+| 8 | MITM Live Traffic Modification | 25 | STC Profile Scanner, 25A SDSF Job Output Harvester |
+| 9 | Screen Fingerprinting · Session Broadcast · Color Reveal | 26 | LU Name Fixation |
+| 10 | Traffic Recorder | 27 | TN3270E Handshake Trace, 27A VTAM Pool Dashboard |
+| 11 | Session Anomaly Annotations (ANOM) | 28 | Field Length Disclosure |
+| 12 | RACF Auto-Probe | 29 | Cross-Session Buffer Bleed |
+| 13 | Macro Recorder | 30 | VM Minidisk Password Exposure |
+| 14 | Protocol Fuzzer | 31 | Wire Inspector |
+| 15 | Security Macros | 32 | **z/TPF Security Console** |
+| 16 | Mock z/OS LPAR | 33 | IBM i (AS/400) Security Tools — 33A/B/C |
+| 17 | Recon Tools | 34 | IBM i Security Tools, Wave 2 — 34A/B/C/D |
+| — | | 35 | IBM i Shipped Profile Audit |
+| — | | 36 | z/TPF Security Console, Wave 2 |
+| — | | 37 | IBM i Exit Point / IFS / NetServer Audit — 37A/B/C |
+| — | | 38 | IBM i Adopted-Authority Scanner / Menu Bypass Probe — 38A/B |
+| — | | 39 | VTAM Applid Enumerator |
+| — | | 40 | IBM i PTF/CVE Currency Checker |
+| — | | 41 | IBM i Default Credential Audit |
+| — | | 42 | IBM i Listening Services Inventory |
+| — | | 43 | IBM i Default Password Report (ANZDFTPWD) |
+| — | | 44 | IBM i Group Profile Review |
+| — | | 45 | IBM i QSECOFR-Owned Objects |
+| — | | 46 | IBM i Library CRTAUT Review |
+| — | | 47 | IBM i Static Adopted-Authority Scan |
+| — | | 48 | IBM i Output Queue and Spool Audit |
+| — | | 49 | IBM i Audit Journal Review |
+| — | | 50 | IBM i Exit Program Integrity and Authority |
+| — | | 51 | IBM i FTP Service Audit |
+
+Appendices — Structured JSON findings export, the `.rec.json` format.
+
+---
+
+## Part 1 — Field Map Overlay (FMO)
+
+The FMO visualizes the 3270 screen's underlying field structure — the same information a protocol analyzer would show you, rendered directly on top of the live terminal.
+
+### What it shows
+
+Every 3270 screen is divided into fields defined by **Field Attribute (FA) bytes**. Each FA byte controls whether a field is protected (read-only), unprotected (input), hidden, or intensified. The FMO makes these invisible control bytes visible.
+
+| Color | Meaning |
+|---|---|
+| 🔴 Red `▸` | Protected field — host data, labels, titles |
+| 🟢 Green `▸` | Unprotected field — user input area |
+| 🟣 Purple `▸` | Nondisplay field — password or hidden data |
+| 🟡 Yellow `▸` | Intensified field — highlighted/alert text |
+| `•` superscript | MDT bit set — field has been modified since last read |
+
+Data cells are tinted to match their containing field type.
+
+### How to use it
+
+1. Open WebTerm/3270 at **http://localhost:8081** and connect to an LPAR
+2. Click **`🔒`** in the OIA bar, enter the password to unlock the Security panel
+3. Click **`FMO`** — the button turns amber and the screen re-renders with field boundaries visible:
+   - Every `▸` marker is a field attribute byte at that exact screen position
+   - Hover any `▸` to see a tooltip: `FA 0x60 — PROT · NORMAL`
+4. Click `FMO` again to return to normal view
+
+### Teaching use cases
+
+**Identifying input fields without guessing** — on a RACF login panel, the FMO immediately shows which fields accept input (green) and which are labels (red). The password field shows purple.
+
+**Understanding field protection** — protected fields (red) cannot be modified by the user. This is a 3270 protocol guarantee enforced by the host, not the client. Students can see this is not a CSS trick — it is enforced at the data stream layer.
+
+**MDT bit awareness** — the `•` marker on a modified field shows exactly what data the host will read when Enter is pressed. Only fields with MDT set are transmitted. This matters for understanding how 3270 credential capture works — an attacker only needs the fields the host asks for.
+
+**Spotting hidden fields** — purple nondisplay fields on screens that don't look like login screens can indicate stored session data or invisible input buffers. Try the FMO on the ISPF Primary Menu.
+
+---
+
+## Part 2 — Attribute Byte Inspector (ABI)
+
+The ABI lets you click any cell on a live screen and get a full bit-level breakdown of the FA byte governing that field.
+
+### How to use it
+
+1. Open the Security panel (🔒 Sec tab) and click **`ABI`** — the button turns amber
+2. Click any cell on the screen — a floating inspector panel appears showing:
+   - FA byte in hex and binary (`0x60` · `01100000`)
+   - Each bit decoded individually: Protected, Numeric, Intensity (bits 3-2), MDT
+   - Field address in `R01 C01` format and linear buffer address
+   - Field content length
+   - Color-coded tags: `PROTECTED`, `UNPROTECTED`, `NONDISPLAY`, `INTENSIFIED`, `MDT SET`
+3. Click outside the panel or press `Escape` to dismiss
+4. Click **`ABI`** again to deactivate — cells return to normal click behavior
+
+The inspector works on any cell, not just FA cells. Clicking a regular data cell automatically walks backwards in the buffer to find its governing FA byte.
+
+### Teaching use cases
+
+**Bit-level protocol education** — students can see exactly which bits control field behavior rather than reading about it. Clicking the RACF password field shows `NONDISPLAY` at the bit level with the exact hex value.
+
+**FA byte encoding exercises** — give students a hex value and ask them to predict the field behavior before clicking to verify. `0xE0` = protected, intensified. `0x40` = unprotected, normal. `0x4C` = unprotected, numeric, MDT set.
+
+**MDT forensics** — with ABI active, click fields after typing into them. The MDT bit flips from 0 to 1, showing students exactly which fields will be transmitted on the next AID key.
+
+---
+
+## Part 3 — FA Mutation (via ABI)
+
+The ABI inspector includes a live **MUTATE FA →** row at the bottom of every popup. These buttons write directly to the bridge session buffer — the change is real and persists until the host redraws that field with a Write command.
+
+> **Important:** The host is never notified of a mutation. Mutations survive the next AID key press (the host sees the mutated field data) but are overwritten the next time the host sends a Write command that covers that FA cell.
+
+### Mutation controls
+
+| Button | FA bit | Effect |
+|---|---|---|
+| **UNPROTECT / PROTECT** | bit 5 `0x20` | Toggle field between read-only and writable |
+| **ALPHA / NUMERIC** | bit 4 `0x10` | Toggle numeric-only restriction |
+| **👁 REVEAL** | bits 3-2 `0x0C` | Clear nondisplay → normal; makes password fields visible on screen |
+| **HIDE** | bits 3-2 `0x0C` | Set nondisplay; hides a field from screen rendering |
+| **SET MDT / CLR MDT** | bit 0 `0x01` | Force or suppress field transmission on the next AID key |
+
+### How to use it
+
+1. Open the Security panel (🔒 Sec tab) and activate **`ABI`**
+2. Click any field on screen — the inspector popup appears
+3. The amber **MUTATE FA →** row shows context-relevant buttons:
+   - On a protected label field: `UNPROTECT` appears — click to make it writable
+   - On a nondisplay password field: `👁 REVEAL` appears — click to see the field content
+   - On any field: `SET MDT` or `CLR MDT` to control whether it transmits
+4. The button fires immediately, the inspector closes, and the screen repaints with the new FA byte
+
+### Teaching use cases
+
+**Unprotecting a label to type in it** — most 3270 screens have protected title and label fields. UNPROTECT one, click into it, and type. This demonstrates that field protection is a host-set attribute in the FA byte, not a client-side restriction — any 3270 client that writes directly to the buffer can bypass it.
+
+**Revealing hidden fields** — click a nondisplay password field and press **👁 REVEAL**. The field content appears on screen. This demonstrates how a MITM proxy sitting between the browser and host can observe or reveal credentials — the encryption is between the terminal and the bridge, not between the bridge and the screen buffer.
+
+**Forcing field transmission with SET MDT** — type nothing in a field and click **SET MDT**. Press ENTER. The empty field transmits. This shows students that the host can't distinguish a "user typed here" MDT from a programmatically set one — the MDT bit has no authentication.
+
+**Suppressing field transmission with CLR MDT** — clear MDT on a field you've already typed into. Press ENTER. The field does not transmit. Demonstrates selective omission of fields in an AID response.
+
+---
+
+## Part 4 — FUNC KEY Inject
+
+The **FUNC KEY** dropdown and **INJECT** button let you fire any 3270 AID key directly to the host from the security toolbar — no need to press a physical key.
+
+### Why this matters
+
+A standard PC keyboard only has F1–F12. A real IBM 3270 terminal has PF1–PF24 plus PA1–PA3, CLEAR, and SYSREQ — 30 AID keys total. PF13–PF24 (Shift+F1–F12) are mapped in WebTerm but many lab keyboards don't register them. This control also lets you fire AID keys programmatically without interacting with the terminal at all, which is the basis of automated 3270 scripting.
+
+### How to use it
+
+1. Open the Security panel (🔒 Sec tab)
+2. Use the **FUNC KEY** dropdown to select the key:
+   - **ENTER / CLEAR / SYSREQ** — transmit AID keys
+   - **PA1 (Attn/Break) / PA2 / PA3** — interrupt host without sending field data
+   - **PF1–PF12** — same as pressing F1–F12
+   - **PF13–PF24** — Shift+F1–F12 (not reachable on all keyboards)
+3. Click **▶ INJECT** — a green `✓ injected PF13` confirmation flashes briefly
+4. If not connected: a red `not connected` message appears instead
+
+> **Note:** INJECT does not type text at the cursor. For text input, click the terminal and type normally. INJECT sends only the AID byte + current cursor position + any fields already modified by typing.
+
+### Teaching use cases
+
+**PA1 as an interrupt** — fire PA1 against a hung TSO session. Unlike CLEAR, PA1 sends the interrupt signal without transmitting field data, demonstrating the distinction between the three PA key types.
+
+**SYSREQ demonstration** — SYSREQ (System Request) breaks the session to a secondary LU or interrupts the primary application. Many students have never seen this key; firing it from the dropdown shows the host response clearly.
+
+**PF13–PF24 in lab environments** — some ISPF functions (e.g., PF15 for RFIND in split screen) require PF13+. The inject control gives every student access to the full key range regardless of keyboard mapping.
+
+---
+
+## Part 5 — Session Viewer
+
+The **Session Viewer** shows a live-queryable table of every AID key sent to the host and every screen received from the host during the current bridge session.
+
+> Session Viewer captures **protocol events** (what was sent and received). For the raw bridge log, use the Proxy Viewer.
+
+### How to open it
+
+Click **⇄ SESSION Viewer** in the Security panel. A popup opens bottom-right (900×480) showing a table:
+
+| Column | Content |
+|---|---|
+| Time | HH:MM:SS.mmm timestamp |
+| Session | WebSocket session ID |
+| Direction | → client→host (amber) or ← host→client (green) |
+| AID Key | Key sent (purple, e.g. `ENTER`, `PF3`) |
+| Screen Text | First ~300 chars of non-blank rows; click to expand |
+
+### Controls
+
+- **ALL / → OUT / ← IN** — filter by direction
+- **Session dropdown** — filter to a single session when multiple tabs are open
+- **Search box** — filter by AID key name or screen text content
+- **↺ Refresh** — re-fetches from the server (ring buffer holds last 1000 entries)
+- **↓ CSV** — downloads the filtered log as a CSV file
+- **✕ Clear** — clears the server-side ring buffer (with confirmation)
+- **Click any row** — expands full screen text for that event
+
+### Teaching use cases
+
+**AID key sequencing** — students can see the exact order of keys sent and screens returned, making the request/response nature of 3270 visible. Every ENTER is a discrete transaction, not a streaming connection.
+
+**Credential capture demonstration** — a login sequence shows the ENTER key event followed by a screen update. The session viewer makes clear that credentials exist in the AID transmission path between the terminal and the host.
+
+**Multi-session comparison** — with two sessions open (split-screen mode), the session filter shows each independently. Students can compare how two different userids navigate the same screen sequence.
+
+---
+
+## Part 6 — Proxy Viewer
+
+The **Proxy Viewer** streams the bridge's internal log in real time — every connection event, TN3270 negotiation step, screen parse, and error — as it happens.
+
+> Proxy Viewer shows **bridge/proxy internals**. For the 3270 protocol traffic (keys and screens), use the Session Viewer.
+
+### How to open it
+
+Click **≡ PROXY Viewer** in the Security panel. A popup opens bottom-right (760×400) and immediately begins streaming live log entries over SSE (Server-Sent Events). It replays the last 2000 log entries on open, then tails live.
+
+### Controls
+
+- **ALL / INFO / WARN / ERROR / DEBUG** — level filter (amber = active)
+- **HEX** — show/hide hex dump lines (very noisy; useful when `TN3270_HEXDUMP=1` is set)
+- **Search** — real-time text filter with yellow highlights on matches
+- **▼ TAIL** — auto-scrolls to newest entries (amber = tailing); pauses automatically when you scroll up, resumes when you reach the bottom
+- **↓ CSV** — downloads the bridge log buffer as CSV
+- **✕** — clears the display (does not affect the server buffer)
+- **⊡ / —** — fullscreen and minimize window controls
+
+### Teaching use cases
+
+**TN3270E negotiation walkthrough** — connect to an LPAR while watching the Proxy Viewer. Students see the Telnet DO/WILL exchange, the TN3270E sub-negotiation, LU binding, and QueryReply in real time — the same sequence visible in Wireshark, but annotated in human-readable form.
+
+**Error diagnosis** — if a connection fails, the Proxy Viewer shows the exact error (TLS handshake failure, refused connection, EBCDIC decode error) with full context — far faster than digging through `docker compose logs`.
+
+**Protocol noise vs. protocol signal** — toggle HEX on with `TN3270_HEXDUMP=1` set. Students see the volume of raw bytes underneath every screen update. Filtering to WARN/ERROR shows only anomalous events. This demonstrates the signal-to-noise problem in protocol analysis.
+
+---
+
+## Part 7 — Extended Field Attribute Rendering (SFE / SA Colors)
+
+Wave 3 adds full rendering support for **ORDER_SFE** (Start Field Extended) and **ORDER_SA** (Set Attribute) — the 3270 orders that carry color and highlight metadata alongside field definitions. Real mainframe applications (ISPF, SDSF, TSO, vendor panels) use these orders extensively. Before Wave 3, WebTerm rendered all fields in the default terminal green regardless of what the host sent.
+
+### What changed in the protocol engine
+
+The `session.js` buffer now tracks two additional properties on every cell:
+- `color` — the 3270 extended color code (type `0x42` in SFE/SA pairs)
+- `highlight` — the highlight attribute (type `0x41` in SFE/SA pairs)
+
+These are populated from two 3270 orders:
+
+| Order | Byte | How it works |
+|---|---|---|
+| `ORDER_SFE` (`0x29`) | Start Field Extended | Like `ORDER_SF` but carries extra type/value attribute pairs. Type `0xC0` = basic FA; type `0x42` = color; type `0x41` = highlight. Covers the entire following field. |
+| `ORDER_SA` (`0x28`) | Set Attribute | Applies a single attribute to subsequent characters until the next SA reset or field boundary. Used for character-level coloring within a field. |
+
+### Color codes (type 0x42)
+
+| Code | Color | CSS class |
+|---|---|---|
+| `0xF1` | Blue | `.c-blue` |
+| `0xF2` | Red | `.c-red` |
+| `0xF3` | Pink | `.c-pink` |
+| `0xF4` | Green | `.c-green` |
+| `0xF5` | Turquoise | `.c-turq` |
+| `0xF6` | Yellow | `.c-yellow` |
+| `0xF7` | White | `.c-white` |
+
+### Highlight codes (type 0x41)
+
+| Code | Effect | CSS class |
+|---|---|---|
+| `0xF1` | Blink | `.hl-blink` |
+| `0xF2` | Reverse video | `.hl-reverse` |
+| `0xF4` | Underscore | `.hl-under` |
+| `0xF8` | Intensify (bright) | `.hl-intens` |
+
+### What to expect from the mock LPAR
+
+The mock z/OS LPAR (port 3270) now sends SFE and SA orders on every screen. Connect and you'll see a realistic color scheme matching real IBM equipment:
+
+| Screen element | Color | Notes |
+|---|---|---|
+| Screen title bars | White + intensified | SFE with `0xC0` FA + `0x42 0xF7` + `0x41 0xF8` |
+| Label fields ("Userid ===>") | Blue | SFE with `0x42 0xF1` |
+| Input fields | Green | SFE with `0x42 0xF4` |
+| Info text / descriptions | Turquoise | SFE with `0x42 0xF5` |
+| ISPF option numbers (0–6, M, X) | Yellow | SA with `0x42 0xF6` inside a turquoise field |
+| Function key bar | Blue | SFE with `0x42 0xF1` |
+| Error messages | Red + intensified | SFE with `0x42 0xF2` + `0x41 0xF8` |
+| RACF lockout message | Red + blinking | SFE with `0x42 0xF2` + `0x41 0xF1` |
+| LISTAPF `*** WRITABLE ***` | Red + blinking | SA orders within field: `0x42 0xF2` + `0x41 0xF1` |
+
+### Verifying SFE/SA rendering
+
+Use the **ABI** to confirm extended attributes are being parsed:
+
+1. Connect to the mock z/OS LPAR and log in
+2. Open the Security panel and click **`ABI`**
+3. Click the title bar at row 0 — the inspector shows the FA byte plus the color/highlight attribute pair in the raw SFE data
+4. Click `LISTAPF` from the READY prompt and observe the `*** WRITABLE ***` text in blinking red — SA orders in action
+
+> **Note:** The **FMO** still marks fields by their FA byte attributes (protected, unprotected, nondisplay). Color rendering is additive — the ABI FA mutation controls still work on SFE fields. Changing protect/unprotect on a colored field retains the color.
+
+### Teaching use cases
+
+**Real mainframe fidelity** — the color scheme is a close approximation of what real ISPF, SDSF, and TSO screens look like. Students can build accurate mental models before touching a real system.
+
+**SFE vs. SA distinction** — field-level color (SFE) applies to the entire field; character-level color (SA) can change mid-field. The LISTAPF screen demonstrates both: the field body is turquoise (SFE), and the warning text is overridden to red+blink by inline SA orders.
+
+**Protocol dissection** — in the Proxy Viewer with `TN3270_HEXDUMP=1` set, students can identify the `0x29` (SFE) and `0x28` (SA) order bytes in the raw TN3270 datastream and decode their attribute pairs manually. This exercise connects the visible color change to the byte-level protocol event that caused it.
+
+**Security implication** — a host can use `HL_BLINK` + red to draw attention to security-relevant information (writable APF libraries, RACF lockout messages). Understanding how these are encoded means understanding how to suppress or spoof them at the proxy layer.
+
+---
+
+## Part 8 — MITM Live Traffic Modification
+
+Wave 4 adds the most powerful tool in the security toolbar: a live **man-in-the-middle intercept** that sits between the browser and the mainframe host. When active, every outbound AID record (keypress + field data) is held by the bridge before it reaches the host. The instructor can inspect it, edit any field value, then release (original or modified), drop it entirely, or replay a previous record.
+
+### How it works
+
+The intercept point is in `server.js` at the `case 'key':` WebSocket handler — the exact moment the browser hands a keystroke to the bridge. When MITM is active, instead of forwarding the record to `session.sendAid()`, the bridge parks it in memory and pushes a `sec.mitm.held` event back to the browser. The terminal keyboard locks (no new keys accepted) until the instructor acts.
+
+```
+Browser ──key──► server.js ──(MITM active)──► HOLD ──► instructor panel
+                                                             │
+                                              edit fields    │
+                                                             ▼
+                           session.sendAid() ◄─── RELEASE / DROP / REPLAY
+                                 │
+                                 ▼
+                            mainframe host
+```
+
+### How to use it
+
+1. Open the Security panel (🔒 Sec tab) and click **`⚡ MITM`** — button turns amber
+2. Navigate the mainframe normally. The next time you press a key (ENTER, PF key, etc.), instead of the keystroke reaching the host, a panel appears:
+   ```
+   ⚡ INTERCEPTED   ENTER   cursor R05 C14
+   ─────────────────────────────────────────
+   addr 322 · R05 C03
+   [ DEMO                                  ]  ← editable
+   addr 402 · R06 C14  🔐 NONDISPLAY — value visible to MITM proxy
+   [ DEMO                                  ]  ← password, shown in plain text
+   ─────────────────────────────────────────
+   [ ▶ RELEASE ]  [ ⊠ DROP ]  [ ↺ REPLAY ]
+   ```
+3. Choose an action:
+   - **▶ RELEASE** — sends the record to the host with any edits applied
+   - **⊠ DROP** — discards the record; host receives nothing, keyboard unlocks
+   - **↺ REPLAY** — re-sends the last released record without a new keypress
+
+### Teaching use cases
+
+**Live credential interception** — activate MITM and have a student log in. The panel shows userid and password in plain text before they reach RACF. Students see that a proxy has full credential visibility regardless of TLS — the data is plaintext at the bridge layer.
+
+**Credential substitution** — intercept a logon ENTER, change the userid from `DEMO` to `IBMUSER`, release. The host receives a different userid than the student typed. Demonstrates silent traffic modification with no indication to the user.
+
+**TSO command injection** — intercept an ENTER from the TSO READY prompt, replace the command field (e.g., change `WHOAMI` to `LISTAPF`), release. The host executes a different command. Core demonstration of 3270 MITM command injection.
+
+**Replay attack** — log in successfully, release. At the next screen click `↺ REPLAY`. The bridge re-sends the same credentials. 3270 AID records have no nonce or timestamp — they are trivially replayable.
+
+**Drop as denial of service** — drop every ENTER the student sends. The host sees nothing; screens never update. Demonstrates that a malicious proxy can silently block interactions.
+
+**NONDISPLAY field revelation** — password fields display plain text in the panel, labeled `🔐 NONDISPLAY — value visible to MITM proxy`. Connects Wave 3 (nondisplay FA rendering) with Wave 4 — the nondisplay flag is a display hint only, not encryption.
+
+> **Note:** Session Viewer records MITM-released traffic tagged `[MITM]` and replays tagged `[MITM-replay]` for post-exercise review.
+
+---
+
+## Part 9 — Screen Fingerprinting, Session Broadcast & Color Reveal
+
+Wave 6 adds three tools to the Security panel (🔒 Sec tab → right panel).
+
+---
+
+### Screen Fingerprinting
+
+The **APP** field in the OIA bar (bottom status bar) automatically identifies the subsystem currently displayed. Detection runs on every screen update — no manual action required.
+
+| Label | Detected when screen shows |
+|---|---|
+| `ISPF` | `OPTION ===>`, `ISREDIT`, `ISPF PRIMARY`, `PDF` menu |
+| `SDSF` | `SDSF OUTPUT/STATUS/LOG/DA/H/JES` header |
+| `CICS` | `DFHCE3501`, `CESN`, `CICS TRANSACTION SERVER` header |
+| `IMS` | `IMS MASTER`, `DFS` messages |
+| `RACF` | `IRROCP`, `RACF PANEL`, `ICH` prefix messages |
+| `TSO` | `READY` prompt |
+| `z/VM` | `VM READ`, `CP READ`, `z/VM CP` header |
+| `LOGON` | `ENTER USERID`, `TSO LOGON`, `VM LOGON` screen |
+| `—` | No match / disconnected |
+
+**Teaching use case:** Students can see at a glance which subsystem they are interacting with, and instructors can verify students have navigated to the correct screen before demonstrating an attack.
+
+---
+
+### ESM Fingerprint
+
+**ESM Fingerprint** (🔒 Sec tab → **ESM FINGERPRINT** section) is the same idea taken further: it works out which **external security manager** is installed, IBM RACF, Broadcom ACF2, or Broadcom Top Secret, from what is already on screen. It is fully passive. Nothing is sent to the host; it only reads the screens the session is already receiving.
+
+It runs on every screen update and accumulates weighted evidence over the life of the session:
+
+| Evidence kind | Example | Weight |
+|---|---|---|
+| Message-ID prefix (definitive) | `ICHnnnnI` / `IRRnnnnI` → RACF, `ACF0nnnn` → ACF2, `TSSnnnnE` → Top Secret | high |
+| Product banner / logon label | `RACF LOGON parameters`, `LOGONID ===>`, `TOP SECRET/MVS LOGON` | medium |
+| Product-typical wording | `HAS BEEN REVOKED`, `ACCESSOR ID`, `TSSUTIL` | low |
+
+The panel shows the current product, a confidence bar, the runner-up, the raw per-product scores, and an evidence table (which screen, where on it, what matched, which rule). A product-specific message ID floors confidence at 85%, since those identifiers belong to exactly one product. **Reset** clears the running tally for the session; **Export CSV** dumps the evidence trail.
+
+A read-only HTTP endpoint returns the same verdict for every live session:
+
+```
+GET /api/esm-fingerprint
+[ { "wsId": 1, "host": "...", "product": "ACF2", "confidence": 0.85,
+    "runnerUp": null, "scores": { "RACF": 0, "ACF2": 23, "TopSecret": 0 },
+    "evidence": [ ... ], "firstSeen": 1787952098435 } ]
+```
+
+**Demo it:** the z/OS mock simulates all three. `MOCK_ESM=ACF2 npm run mock:lpar` (or `npm run mock:lpar:acf2` / `mock:lpar:tss`, default is RACF) sets the one it starts with, swapping the logon header and the wrong-password / lockout message IDs. Connect to `MOCK-ZOS`, open the panel, and enter a wrong password, the verdict lands on the logon screen and firms up as the error message appears.
+
+To cycle through all three in one session without restarting the daemon: log in, then at the TSO `READY` prompt type **`ESM ACF2`** (or `RACF` / `TOPSECRET` / `TSS`). The mock switches and drops you back at the logon screen with the new product's banner. `ESM` on its own reports the current one. The bridge-side verdict latches evidence, so hit **Reset** in the panel after switching to watch it re-decide from scratch.
+
+**Teaching use cases:**
+- Show that the security product is inferable from ordinary screen output, no privileged command needed.
+- Contrast passive fingerprinting (this) with an active probe (RACF Auto-Probe): one leaves no trace, the other sends logon attempts.
+- Explain why message-ID prefixes are a reliable tell, they are assigned per product and don't overlap.
+
+---
+
+### Session Broadcast
+
+**Session Broadcast** (INJECT section → `📡 Session Broadcast`) sends every keystroke and AID record to **all open sessions simultaneously** — not just the active one.
+
+When active, the button turns amber. Type a command and press ENTER — the same command (with the same field data) is transmitted to every connected session.
+
+```
+Active session types: "LISTAPF"
+Broadcast ON → ENTER sent to ws:1, ws:2, ws:3 … all with "LISTAPF" in the input field
+```
+
+**How it works:** The client sends the active session's field data to every session WebSocket. The bridge uses the provided fields directly (`msg.fields`) rather than each session's own buffer — so the typed text reaches the host on all sessions even though the user only typed it once.
+
+**Teaching use cases:**
+- Run the same enumeration command across multiple LPARs at once
+- Demonstrate that a single compromised proxy can fan out commands to every connected user
+- Verify identical screen layouts across cloned sessions
+
+> **Note:** Broadcast works best when all sessions are on the same host or hosts with identical screen layouts (same field addresses). Sessions on different screens may receive fields at mismatched addresses.
+
+---
+
+### Color Reveal
+
+**Color Reveal** (FIELD ANALYSIS section → `🎨 Color Reveal`) strips all 3270 color attributes and renders every character in the terminal's default foreground color.
+
+This makes the raw character data visible independent of the host's color scheme — useful when:
+- A host uses unusual or hard-to-read color assignments
+- You want to see nondisplay fields (passwords) that have been unhidden via FA mutation without the color distracting from the content
+- You are capturing a screen export and want a clean monochrome output
+
+Toggle on/off with the button — screen re-renders immediately. The setting persists until toggled off or the page reloads.
+
+---
+
+## Part 10 — Traffic Recorder
+
+The Traffic Recorder captures every screen update from the host and every keypress from the user into a `.rec.json` file you can replay later — frame by frame.
+
+### Recording a session
+
+1. Connect to an LPAR at **http://localhost:8081**
+2. Wait for the session to fully connect (OIA bar shows system status)
+3. Open the Security panel (🔒 Sec tab) and click **`REC`** — it turns red and shows `⏹ REC`
+4. Navigate the mainframe normally — log in, run commands, explore menus
+5. Click **`⏹ REC`** to stop — your browser downloads a file named something like:
+   ```
+   webterm-mock-zos-3270-2026-06-12T19-40-00.rec.json
+   ```
+
+The recording captures host→client screen events and client→host keypresses with millisecond timestamps. Credentials typed into nondisplay fields are recorded as the characters the user typed — keep recordings of real sessions in a secure location.
+
+### Replaying a recording
+
+1. Click **`REPLAY`** in the Security panel — opens **http://localhost:8081/replay** in a new tab
+2. Drag and drop your `.rec.json` file onto the drop zone, or click **`📂 Open…`**
+3. The first screen loads immediately. The event log on the right shows every event in the session.
+
+**Playback controls:**
+
+| Control | Action |
+|---|---|
+| `⏮` | Jump to first screen |
+| `◀` | Step back one screen |
+| `▶` | Play / Pause |
+| `▶\|` | Step forward one screen |
+| `⏭` | Jump to last screen |
+| Scrubber | Drag to any point in the session |
+| Speed selector | 0.25× · 0.5× · 1× · 2× · 5× · Max |
+
+Clicking any event in the right-hand panel jumps directly to the screen state at that moment. The replay viewer has its own `FMO` button — toggle it to see field structure on any captured screen.
+
+### Teaching use cases
+
+**Step-through attack walkthroughs** — record a demonstration of privilege escalation or enumeration against the mock LPAR, then walk students through it one screen at a time in the replay viewer.
+
+**Timing analysis** — the event timestamps in the `.rec.json` are in milliseconds from session start. Open the file in any text editor to see the raw timing between a login attempt and the host response — the basis of the RACF userid enumeration timing attack.
+
+**Student lab submissions** — students can record their lab sessions and submit the `.rec.json` as proof of completion. The instructor replays it to verify the correct commands were run in the correct order.
+
+---
+
+## Part 11 — Session Anomaly Annotations (ANOM)
+
+The anomaly detector watches the raw 3270 datastream as it arrives and flags unusual command codes and Write Control Character (WCC) bit patterns. Anomalies accumulate in a session log accessible via the `ANOM` button.
+
+### What gets flagged
+
+| Code | Severity | Meaning |
+|---|---|---|
+| `ALARM` | ⚠ warn | WCC alarm bit set — host rang the terminal bell, typically on error or lockout |
+| `EAU` | ⚠ warn | Erase All Unprotected — host wiped all input fields without a full screen redraw |
+| `EWA` | ℹ info | Erase Write Alternate — host switched to alternate screen dimensions |
+| `KBD-RESTORE` | ℹ info | WCC keyboard restore without MDT reset — host unlocked keyboard but kept modified field data |
+| `RA` | ℹ info | Repeat to Address order — host used bulk-fill screen construction |
+
+### How to use it
+
+1. Open the Security panel (🔒 Sec tab) — anomaly detection runs automatically on every screen event, no activation needed
+2. When anomalies are detected, the `ANOM` button shows a red badge with a count
+3. Click **`ANOM`** to expand the log panel — shows all anomalies for the session with timestamps, codes, and descriptions
+4. Click **`✕`** to clear the log and reset the badge
+
+A brief flash bar also appears above the OIA bar showing the most recent anomalies as they arrive, then fades automatically.
+
+### Teaching use cases
+
+**RACF lockout detection** — a RACF invalid password response triggers `ALARM` (bell) and `EAU` (input fields wiped). Students can see the exact protocol sequence that accompanies a lockout — useful for understanding both detection and evasion.
+
+**WCC bit analysis** — the `KBD-RESTORE` annotation teaches students that the WCC byte carries independent control over keyboard unlock and MDT reset. A host that restores the keyboard without clearing MDT is preserving field state — worth examining why.
+
+**Screen construction fingerprinting** — the `RA` order is uncommon in normal ISPF screens but appears in certain vendor applications and VTAM-era panels. Its presence can help identify the application generating the screen.
+
+**Anomaly as indicator of compromise** — in a real environment, unexpected `EWA` (alternate screen) or `ALARM` events outside of known error workflows can indicate unusual host behavior worth investigating.
+
+---
+
+## Part 12 — RACF Auto-Probe
+
+Wave 7 adds a reactive credential probe that iterates a wordlist against live TSO, z/VM, CICS, z/TPF, or IBM i (TN5250) logon screens and classifies each response — faster and more informative than hand-editing the static security macros.
+
+### How it works
+
+The probe sends each credential pair through the active session's WebSocket connection using the same `type` + `ENTER` mechanism the terminal keyboard uses. After each ENTER it waits for the host's screen response, reads the full text, and classifies the result:
+
+| Result | Condition detected |
+|---|---|
+| **SUCCESS** | READY prompt (TSO), CP READ/CMS (z/VM), CICS application screen, `ENTER TPF COMMAND` console (z/TPF), a menu with a `Selection or command` line (IBM i) |
+| **FAILURE** | ICH error codes, "LOGON unsuccessful", wrong-password messages, `ZTPF901E INVALID OPER ID OR PASSWORD` (z/TPF) |
+| **LOCKOUT** | IKJ56421I, AUTHORIZATION FAILURE, REVOKED, "User revoked". z/TPF has no sign-on lockout. On IBM i only `CPF1393` (profile disabled *by* failed attempts) counts — a pre-disabled profile (`CPF1394`), `*NONE` password (`CPF1118`) or unknown user (`CPF1120`) is a FAILURE and the probe keeps going. |
+
+On LOCKOUT the probe stops immediately. On SUCCESS it stops too, unless **Keep going after a match** is checked — then it signs the account off (`LOGOFF` for TSO, `SIGNOFF` for IBM i, `#CP LOGOFF` for z/VM, `CESF LOGOFF` for CICS, `PF3` for z/TPF), waits to land back on the logon screen, and carries on with the rest of the list, enumerating every set of valid default credentials. Each attempt is spaced by a configurable delay (default 1500 ms).
+
+### Subsystem detection
+
+The probe reads the current screen text plus the OIA APP field to detect which subsystem is active before running. No manual configuration is needed.
+
+| Subsystem | Detection pattern | Userid field | Password field |
+|---|---|---|---|
+| TSO | `TSO/E LOGON`, `ENTER USERID` | row 5, col 15 | row 6, col 15 |
+| z/VM | `z/VM`, `USERID ==>` | row 9, col 14 | row 10, col 14 |
+| CICS | `CESN`, `SIGN ON TO CICS` | row 5, col 25 | row 6, col 25 |
+| z/TPF | `OPER ID ==>` (logon + logon-error, not the console) | row 4, col 15 | row 6, col 15 |
+| IBM i | `Sign On` + `Password` + `Subsystem`/`Current library` (not a menu) | row 7, col 54 | row 8, col 54 |
+
+### How to use it
+
+1. Unlock the Security panel (🔒 Sec tab) and scroll to **RACF PROBE**
+2. Navigate the terminal to a TSO, z/VM, CICS, z/TPF, or IBM i Sign On screen
+3. Populate the wordlist — **Load defaults** fills it with the built-in list for the detected subsystem; **Load list** reads a file on the bridge host (one `userid:pass` per line, `#` comments) and uses it verbatim. The bridge reads `DEFAULT_ACCOUNTS_FILE` if set, otherwise `~/mainframe/default-accounts.txt`. The shipped `docker-compose.yml` bind-mounts `Bridge_server/default-accounts.txt` to `/app/default-accounts.txt` and points the env var at it, so on the Docker setup you edit `Bridge_server/default-accounts.txt` on the host and it takes effect live. The status line shows the path it read (or failed to read).
+4. Adjust the wordlist if needed (one `USERID,PASSWORD` per line; lines starting with `#` are comments)
+5. Set the delay between attempts (500–10000 ms; default 1500 ms)
+6. Click **▶ START** — the probe begins immediately, updating the results table after each attempt
+7. Click **■ STOP** to abort early
+
+Results are shown in a live table (userid, masked password, result). Click **↓ Export CSV** to download the full log including timestamps.
+
+### Default credential lists
+
+**TSO:** IBMUSER/SYS1, IBMUSER/IBMUSER, MAINT/MAINT, MAINT/SYS1, SYSPROG/SYSPROG, SYSADM/SYSADM, TSTADMIN/TSTADMIN, BATCH/BATCH, CICS/CICS, DB2/DB2, MQ/MQ
+
+**z/VM:** OPERATOR/OPERATOR, MAINT/MAINT, MAINT730/MAINT730, PMAINT/PMAINT, TCPMAINT/TCPMAINT, AUTOLOG1/AUTOLOG1
+
+**CICS:** CICSUSER/CICSUSER, CICS/CICS, ADMIN/ADMIN, IBMUSER/SYS1, SYSADM/SYSADM
+
+**z/TPF:** TPFOP01/TPF1, SYSOP01/SYS1, ADMIN01/ADMIN, PRIME/PRIME, CRAS/CRAS, OPER/OPER, TPFOPER/TPFOPER, SYSOP/SYSOP
+
+**IBM i:** QSECOFR/QSECOFR, QSRV/QSRV, QUSER/QUSER, QPGMR/QPGMR, QSYSOPR/QSYSOPR, QSECADM/QSECADM, QSYS/QSYS, QSYSOPR/SYSOPR
+
+### Teaching use cases
+
+**Default credential enumeration** — run the probe against the mock TSO LPAR with defaults loaded. IBMUSER/SYS1 succeeds on the first attempt, demonstrating that the most common IBM-supplied default is also the first credential an attacker tries.
+
+**z/TPF operator logon** — connect to the mock z/TPF host and stop at the operator logon (`OPER ID ==>`). Load defaults and run: the first pair, `TPFOP01/TPF1`, succeeds and the probe stops as the operator console appears. The point for a review is that the z/TPF operator console has well-known default operator IDs and no sign-on lockout, so an unthrottled credential probe against it carries none of the account-suspension risk it would on RACF.
+
+**IBM i Sign On** — connect to the mock AS/400 host and stop at the Sign On screen. Load defaults and run: `QSECOFR/QSECOFR` succeeds on the first attempt and the probe stops as the MAIN MENU appears — the single most common IBM-supplied default, still live. `QYSPJ/QYSPJ` also succeeds — a planted blend-in backdoor (a `Q`-named `*ALLOBJ` profile IBM never ships) with a lazy password. Harden `QSECOFR` (`CHGUSRPRF USRPRF(QSECOFR) PASSWORD(...)` from a signed-in session, or the Shipped Profile Audit's remediation step) and re-run.
+
+The `CPF` codes in the returned screen are a **user-enumeration oracle**: `CPF1120` ("does not exist") is the only one that means the profile is not real — the probe marks that `FAILURE`. `CPF1107` (wrong password), `CPF1118` (`PASSWORD(*NONE)`), and `CPF1394` (disabled) all confirm the **profile exists**, so the probe marks those `EXISTS` (amber) and keeps sweeping. Run the full `Q*` list against the mock with all-wrong passwords and the probe still reports every real profile it found: "N valid credential(s) … · K valid profile(s) enumerated: …". This is why the Shipped Profile Audit's job is really "is there a `Q`-named profile here that shouldn't be" — `QYSPJ` is the answer.
+
+**Lockout threshold demonstration** — add three wrong passwords before a correct one and show students exactly when the IKJ56421I lockout fires. The probe stops and marks the locked account — a clean example of RACF's lockout counter in action.
+
+**Cross-platform credential reuse** — load TSO defaults, then switch to the z/VM mock and load z/VM defaults. Many sites use the same passwords across subsystems. The probe makes this comparison fast and repeatable.
+
+**Timing as a side channel** — watch the delay between probe attempts and the screen response. Consistent fast failures may indicate a valid userid with wrong password; unusually fast responses can indicate an invalid userid rejected before password processing. Combine with the Session Viewer timestamps for a precise timing log.
+
+> **Note:** The probe uses `FOR AUTHORIZED USE ONLY` language in the UI. Remind students that running credential probes against real systems without written authorization is illegal under the Computer Fraud and Abuse Act and equivalent laws.
+
+---
+
+## Part 13 — Macro Recorder
+
+Wave 7 adds a UI-driven macro recorder that captures real interactions with the terminal and saves them as reusable JSON macros — no hand-editing required.
+
+### How to record a macro
+
+1. Connect to an LPAR and navigate to the screen where you want the macro to start
+2. Click **● REC** in the sidebar Macros header — a floating indicator appears at the bottom of the terminal: `● RECORDING — 0 steps`
+3. Interact with the terminal normally: type into fields, press ENTER, PF keys, or any AID key — every keystroke is captured as a step
+4. The step counter increments in real time as you interact
+5. Click **■ STOP** on the floating indicator — a save dialog appears
+6. Enter a name (required) and optional description
+7. **Optional:** check **🔒 Security macro** to save the macro to the security library — it will only be visible while the security panel is unlocked (see below)
+8. Click **Save Macro** — the macro appears in the sidebar immediately and is ready to run
+
+Click **CANCEL** on the indicator at any time to discard the recording without saving.
+
+### What gets recorded
+
+| Action | Recorded as |
+|---|---|
+| Typing text into a field | `{ op: "type", row, col, text }` |
+| Pressing ENTER, PF1–PF24, PA1–PA3, CLEAR | `{ op: "aid", aid: "ENTER", fields: [...] }` |
+| Automatic wait for keyboard unlock | `{ op: "wait", condition: "unlock" }` |
+
+Cursor movements are not recorded — they add noise and are implied by field positions. A `wait: unlock` step is automatically inserted before each AID to ensure screen-synchronised replay.
+
+### Running a recorded macro
+
+Click the macro name in the sidebar (or use the Macros menu). The macro replays screen-synchronised — each step waits for the keyboard to unlock before proceeding, so replay timing adjusts automatically to host response time rather than using fixed delays.
+
+### Editing a recorded macro
+
+Click the **✎** button on any macro to open it in the JSON editor. Recorded macros use the same step format as hand-authored macros — you can add `wait: text` conditions, `branch` steps, or `comment` labels directly in the JSON. See the macro step schema at the top of `macros/engine.js` for the full reference.
+
+### Teaching use cases
+
+**Record once, replay many times** — record a login sequence (navigate to ISPF option 6, run LISTAPF) once, then replay it across multiple student sessions or against different LPARs. Eliminates the need for students to navigate manually before each lab exercise.
+
+**Student lab submission** — students record their own lab sessions (demonstrating a privilege escalation or enumeration step) and submit the `.rec.json` traffic recording alongside the macro. The instructor replays both to verify the correct sequence was followed.
+
+**Building security macros** — record the manual steps of a new attack workflow, save as a macro, then open in the JSON editor to add branch steps (check for RACF lockout, branch to stop) and wait conditions. The recorder generates the tedious boilerplate; editing adds the intelligence.
+
+---
+
+## Part 14 — Protocol Fuzzer
+
+The Protocol Fuzzer sends intentionally malformed or mutated 3270 AID records directly to the host and classifies each response. This surfaces host-side parsing anomalies, unusual handling of invalid AID bytes, and how the host responds to buffer-address attacks — without modifying a production session.
+
+**Location:** Security panel → PROTOCOL FUZZER section (unlock with 🔒 first).
+
+### Five Modes
+
+**AID Sweep**
+Iterates a configurable range of AID byte values (0x00–0xFF). For each byte it sends the minimal valid-structure record `[AID byte][cursor addr 00 00]` with no field data. Most bytes outside the standard AID map will produce no-response; standard AIDs will get a screen update; invalid bytes sometimes cause the host to disconnect.
+
+*Configuration:*
+- **Start / End (hex):** byte range to sweep. Default `00`–`FF` (256 packets). Narrow the range for targeted testing, e.g. `60`–`6F` to focus on PA / CLEAR / NONE variants.
+
+**Field Overflow**
+Sends a single ENTER AID with one oversized field payload — more bytes than the field's declared length. The host should truncate cleanly; some implementations may behave unexpectedly when the payload extends into adjacent field attribute bytes.
+
+*Configuration:*
+- **Field addr:** buffer address of the target field (decimal). Default 415 = row 5, col 16 on an 80-column screen — where the TSO USERID field lives.
+- **Length:** number of bytes to send (max 4096).
+- **Pattern:** `EBCDIC A–Z repeat`, `Null bytes 0x00`, or `All 0xFF`.
+
+**Order Injection**
+Injects a 3270 order byte as the first character of a field payload. The host parser must decide whether to treat it as data or as a protocol order. Order bytes that duplicate `SF (0x1D)` or `SBA (0x11)` are particularly interesting — they can confuse field-boundary detection.
+
+*Configuration:*
+- **Field addr:** target field (decimal).
+- **Order byte:** select a specific order or choose "Sweep all orders" to iterate all 11 orders automatically (SF, SFE, SBA, SA, IC, RA, EUA, MF, PT, IAC, NUL).
+
+**SBA Mutation**
+Sends an ENTER AID with a single field whose SBA (Set Buffer Address) contains a crafted address. Runs 7 preset cases:
+- `0x0000` — zero address
+- `0x3FFF` — maximum 14-bit value
+- `0xFFFF` — all bits set
+- `0x8000` — high bit set (invalid in 14-bit encoding)
+- `0xC000` — both top bits
+- `0x4000` — 12-bit encoding bit pattern
+- `0x7E7F` — EBCDIC boundary bytes
+
+**z/TPF Handshake Fuzzer**
+The other four modes all mutate 3270 data sent *after* a session is already up and negotiated. This one targets the handshake itself — the negotiation phase a real terminal and host go through before any 3270 data flows at all. Works against any TN3270 host, but z/TPF is the intended target: it has almost no fuzzing coverage today outside the login profile (`racf-probe`'s `TPF` detection profile). Two case groups, 8 packets total, no extra configuration:
+
+- *Query Reply mutations* (still ride the normal 3270 data path, `sendRawAid`): four malformed versions of the structured-field reply (`AID 0x88`) a real terminal sends back when the host issues a Read Partition Query during negotiation — truncated length, an oversized length claim versus actual body, an invalid SFID byte, and a zero-length structured field.
+- *Negotiation mutations* (raw telnet bytes, bypass 3270 framing entirely via a new `sendRawTelnet()` on the bridge session — a malformed IAC sequence was never going to arrive wrapped in TN3270E data-record framing on a real terminal either): `IAC DO TIMING-MARK`, an unsolicited `IAC WILL TIMING-MARK`, a `TN3270E` subnegotiation with no `IAC SE` terminator, and a bare `IAC` with no command byte following it.
+
+Verified live against the mock z/TPF host: all 8 cases currently classify `no-response` — the mock silently drops malformed negotiation input rather than echoing or crashing, a reasonably robust baseline. A `screen` result would mean the host processed the malformed data and actually repainted (worth a closer look at what it did with it); a `disconnect` is the finding that matters most, a negotiation-layer input took the session down before any real work started.
+
+### Shared settings
+
+| Field | Default | Meaning |
+|---|---|---|
+| Timeout (ms) | 3000 | How long to wait for a host screen response before classifying as `no-response` |
+| Delay (ms) | 300 | Wait between successive packets (prevents flooding) |
+
+### Response classes
+
+| Class | Colour | Meaning |
+|---|---|---|
+| `screen` | Green | Host replied with a screen update |
+| `no-response` | Grey | No screen arrived within the timeout |
+| `disconnect` | Red | Host closed the TN3270 session |
+| `error` | Amber | Bridge-side error (no active session, empty payload) |
+
+### Workflow
+
+1. Connect to a host or mock LPAR.
+2. Unlock the Security panel with 🔒.
+3. In the **PROTOCOL FUZZER** section, choose a mode and configure it.
+4. Click **▶ START**. The status line shows live progress; the table populates row by row.
+5. **■ STOP** halts mid-run. The table retains all results collected so far.
+6. Use **↓ CSV** to export the full result log for offline analysis.
+
+> **Disconnect handling:** If a fuzz packet causes the host to terminate the session, the fuzzer stops automatically and marks the last entry as `disconnect`. You will need to reconnect before fuzzing further.
+
+---
+
+## Part 15 — Security Macros
+
+Security macros live in `macros-security.json` — a separate file from the main `macros.json`. They are **hidden from the macro sidebar and menu unless the security panel is unlocked** — this keeps sensitive attack automation invisible to students browsing the tool.
+
+### Visibility behaviour
+
+| Panel state | Regular macros | Security macros |
+|---|---|---|
+| Locked (default) | Visible | Hidden |
+| Unlocked | Visible | Visible |
+
+Locking the panel immediately removes security macros from the sidebar without a page reload.
+
+### Available macros
+
+**APF List Scanner** — navigates ISPF option 6 (TSO Command Shell) and runs `LISTAPF`. Output shows all APF-authorized libraries including any writable ones flagged with `*** WRITABLE ***`. Works against the mock z/OS LPAR and real z/OS systems. Use the Traffic Recorder to capture the output for offline analysis.
+
+**RACF Brute Force Template** — automates credential attempts against the RACF logon panel. Targets userid and password fields at exact screen positions. The mock LPAR enforces a 3-attempt lockout — the template demonstrates the attack pattern and the lockout response. **FOR AUTHORIZED TRAINING USE ONLY.**
+
+### Running a security macro
+
+1. Unlock the security panel (🔒 button → enter password)
+2. Connect to the mock z/OS LPAR (port 3270)
+3. Security macros now appear in the sidebar alongside regular macros
+4. Click a security macro to run it — it executes against the active session
+5. Lock the panel again to hide security macros from view
+
+### Recording a security macro
+
+In the macro recorder save dialog, check **🔒 Security macro** before saving. The macro is written to `macros-security.json` and will only appear while the panel is unlocked. This lets instructors record new attack workflows during a session without exposing them to students.
+
+### Adding macros to the security library manually
+
+Edit `macros-security.json` directly — it is bind-mounted so changes take effect immediately without a Docker rebuild. Reload the page to pick up new macros. The format is a flat JSON array; each macro follows the same step schema as regular macros with the addition of `"source": "security"`.
+
+---
+
+## Part 16 — Mock z/OS LPAR
+
+The mock z/OS LPAR (port 3270) is a fully interactive TN3270 server that simulates a real z/OS environment for training. It was made fully functional in the security branch — previously it was display-only and did not process keystrokes.
+
+### Credentials
+
+| Userid | Password | Notes |
+|---|---|---|
+| `IBMUSER` | `SYS1` | Classic default — first thing any attacker tries |
+| `DEMO` | `DEMO` | General training account |
+| `USER1` | `PASS1` | Additional test account |
+
+Three consecutive wrong passwords locks the account with `IKJ56421I RACF AUTHORIZATION FAILURE`.
+
+### Navigation flow
+
+```
+TSO/E LOGON → TSO READY prompt → ISPF (type ISPF) or TSO commands directly
+```
+
+**From the READY prompt:**
+
+| Command | Result |
+|---|---|
+| `ISPF` | ISPF Primary Option Menu |
+| `LISTAPF` | APF-authorized library list |
+| `LISTA` | Allocated dataset list |
+| `WHOAMI` | Current userid and group info |
+| `PROFILE` | TSO profile settings |
+
+**From ISPF:**
+
+| Option | Result |
+|---|---|
+| `2` | ISPF Edit |
+| `3` / `3.4` | Dataset List |
+| `6` | TSO Command Shell |
+| `M` | SDSF |
+| `X` | Logoff |
+
+**From ISPF option 6 (TSO Command Shell):** same commands as the READY prompt. PF3 returns to ISPF.
+
+### Color scheme
+
+The mock LPAR sends full SFE/SA color attributes on every screen (Wave 3). Screen titles render in bright white, labels in blue, input fields in green, info text in turquoise, and function key bars in blue — matching real IBM equipment. Error conditions use red with intensify or blink highlights. See **Part 7** for a full breakdown.
+
+### Notable APF output
+
+`LISTAPF` returns a realistic APF list including `USER.LOADLIB` on volume `WORK01` flagged as potentially writable — the intended target for privilege escalation exercises. The `*** WRITABLE ***` warning is rendered in **blinking red** via SA orders, making it immediately visible as a high-severity finding.
+
+---
+
+## Part 17 — Recon Tools (Wave 11)
+
+Wave 11 adds a **RECON TOOLS** section to the Security panel with three host reconnaissance tools, a timing extension to the RACF probe, and ACF2/TopSecret detection in the screen fingerprinter. All tools operate from a TSO READY prompt and require no elevated RACF authority.
+
+---
+
+### ACF2 / TopSecret Fingerprinting
+
+The screen fingerprinter in the OIA bar now detects ACF2 and CA Top Secret in addition to RACF. Patterns:
+
+| Label | Detection patterns |
+|---|---|
+| `ACF2` | `ACF2`, `LOGONID:`, `ACF LOGON`, `NULLID` |
+| `TopSecret` | `CA Top Secret`, `TSSUTIL`, `TSS LOGON`, `Accessor` |
+
+Both display in orange in the APP field. The RACF probe and DB2 tools are designed for RACF — if the fingerprinter shows ACF2 or TopSecret, note it as context and adjust the probe approach accordingly (ACF2 and TopSecret use different error codes and field layouts).
+
+---
+
+### RACF Probe — Timing Column
+
+The RACF Auto-Probe results table now includes a **ms** column showing the round-trip time between sending the ENTER key and receiving the host's response screen. This enables timing side-channel analysis:
+
+- **Fast responses (<800ms, amber)** — RACF may have rejected the userid before evaluating the password (early-exit path). Consistent fast responses for specific userids across multiple runs suggest those userids do not exist.
+- **Slower responses** — RACF evaluated the password hash. The userid is likely valid regardless of whether the result is SUCCESS or FAILURE.
+- **Use with wrong passwords** — Run the probe with a known-wrong password against a list of target userids. Sort the exported CSV by `response_ms` — the fastest responses cluster around invalid userids.
+
+The `response_ms` field is included in the CSV export.
+
+> **Note:** This technique works best on LAN-adjacent targets where network jitter is low (<50ms). Over high-latency connections, the timing signal drowns in noise.
+
+---
+
+### Tool 1 — RACF Settings Analyzer
+
+**Location:** Security panel → RECON TOOLS → RACF SETTINGS ANALYZER
+
+**Command:** `SETROPTS LIST`
+
+**What it parses:**
+
+| Section | Fields extracted |
+|---|---|
+| Password policy | Expiry interval (days), history count, lockout threshold, NOREVOKE flag, min/max length |
+| Class activation | Which of 8 key security classes are ACTIVE, WARNING, or INACTIVE |
+
+**Key findings surfaced:**
+
+| Finding | Severity |
+|---|---|
+| `NOREVOKE` — lockout disabled | CRITICAL |
+| Password interval > 90 days | HIGH |
+| Password history < 8 | MEDIUM |
+| Minimum length < 8 chars | MEDIUM |
+| Passphrases disabled | LOW |
+| Security class INACTIVE | HIGH (varies by class) |
+| Security class in WARNING mode | MEDIUM — logging but not enforcing |
+
+**Classes checked:**
+
+| Class | Protects |
+|---|---|
+| `DSNR` | DB2 subsystem connections |
+| `MDSNPN` | DB2 application plan names |
+| `MDSNTB` | DB2 table/view names |
+| `GCICSTRN` | CICS transactions |
+| `DCICSDCT` | CICS tables |
+| `STARTED` | Started task authority |
+| `FACILITY` | Facility resources |
+| `UNIXPRIV` | z/OS UNIX privileges |
+
+**NOREVOKE significance:** When NOREVOKE is set globally, the RACF Auto-Probe can run without any risk of triggering lockouts — no matter how many failed attempts accumulate, no account will be suspended. This dramatically changes the risk calculus for credential testing.
+
+---
+
+### Tool 2 — RACF User/Group Enumerator
+
+**Location:** Security panel → RECON TOOLS → RACF USER/GROUP ENUMERATOR
+
+**Commands:** `SEARCH CLASS(USER)` then `SEARCH CLASS(GROUP)`
+
+**What it does:** Collects every RACF user profile name and every group name, paging through `***MORE***` output automatically. Displays both lists with counts.
+
+**Authority required:** `SEARCH CLASS(USER)` typically requires READ access to the RACF database — available to most TSO users by default. No RACF SPECIAL or AUDITOR attribute is needed.
+
+**What to look for:**
+
+*Users:*
+- `IBMUSER` — IBM default superuser; often has RACF SPECIAL authority and a default password
+- `MAINT`, `SYS1`, `SYSPROG`, `SYSADM` — elevated privilege naming conventions
+- Service accounts: `DB2`, `CICS`, `MQ`, `IMS` — often share passwords with their subsystem name
+- Vendor/contractor IDs — may have relaxed password rules or be inactive but not removed
+
+*Groups:*
+- `SYS1` — typically contains users with RACF-privileged authority
+- Application admin groups: `MQADMIN`, `DB2ADMIN`, `CICSADM` — high-value targets
+- Group names reveal the site's organizational structure and naming conventions
+
+**Practical use:**
+1. Export the user list and cross-reference with the RACF probe wordlist
+2. Look for userids matching subsystem names (DB2/DB2, CICS/CICS) — these are in the default probe wordlist
+3. Group names often suggest credential naming patterns (e.g., a group `FINANCE` suggests userid `FINUSER` or `FINADM`)
+
+---
+
+### Tool 3 — Dataset Recon Scanner
+
+**Location:** Security panel → RECON TOOLS → DATASET RECON SCANNER
+
+**Command:** `LISTCAT LEVEL(prefix)` per prefix in the wordlist
+
+**What it does:** Runs LISTCAT for each high-level qualifier (HLQ) prefix and collects all dataset names returned. Flags entries matching sensitive name patterns:
+
+| Pattern | Examples of what it catches |
+|---|---|
+| `PASSWORD`, `PASSWD` | `PAYROLL.PASSWORD.FILE`, `USER.PASSWD.CNTL` |
+| `KEY`, `CERT` | `SECURITY.PRIVATE.KEYS`, `TLS.CERT.STORE` |
+| `SECRET`, `PRIVATE` | `SYS1.PRIVATE.PARMLIB`, `ADMIN.SECRET.DATA` |
+| `PARMLIB` | `SYS1.PARMLIB`, `USER.PARMLIB` |
+| `PAYROLL`, `SSN` | Any HR/payroll dataset |
+| `MASTER` | `PAYROLL.MASTER`, `DB2.MASTER.CATALOG` |
+| `PROD` | Production datasets in non-prod environments |
+
+**Default prefixes:** `SYS1`, `SYS2`, `IBMUSER`, `ADMIN`, `PROD`, `PAYROLL`, `FINANCE`, `HR`, `SECURITY`
+
+**Important note on DATASET class:** If the RACF Settings Analyzer shows the `DATASET` class is in WARNING mode or the class is not referenced in CLASSACT, RACF is not enforcing dataset access control — every catalogued dataset is readable by default. In that case, every flagged dataset is immediately accessible, not just potentially accessible.
+
+**Follow-up:** Flagged datasets should be opened in ISPF Browse (option 1) or Edit (option 2) to confirm read access. A dataset named `ADMIN.PRIVATE.KEYS` that opens without an authorization error is a critical finding.
+
+---
+
+### Combined CSV export
+
+All three Recon tools share a single CSV export via **↓ Export all Recon results CSV** at the bottom of the RECON TOOLS section.
+
+| Column | Values |
+|---|---|
+| `tool` | `racf-settings`, `racf-enum`, `dataset-recon` |
+| `key` | Setting name, userid/group name, or dataset name |
+| `value` | Setting value or empty |
+| `flag` | Severity label or matched keyword |
+| `timestamp` | ISO 8601 |
+
+---
+
+### Teaching scenarios (Recon Tools)
+
+**NOREVOKE demonstration:** Run SETROPTS LIST and show the NOREVOKE flag. Explain that the RACF probe can now run indefinitely with no risk. Run the probe with a 10-entry wordlist at 500ms delay — show that no lockout occurs regardless of failure count.
+
+**Userid timing oracle:** Run the RACF probe with 5 real userids (wrong passwords) and 5 random strings. Export the CSV and sort by `response_ms`. Show students how the timing clusters reveal valid vs invalid userids without a single success.
+
+**Service account enumeration:** Run SEARCH CLASS(USER) and highlight `DB2`, `CICS`, `MQ` in the results. Load those into the RACF probe wordlist with their subsystem name as the password (DB2/DB2, CICS/CICS). Demonstrate that service accounts with default credentials are a common path to DB2/CICS access.
+
+**Dataset discovery → access chain:** Run the dataset scanner on prefix `SYS1`. Find `SYS1.PARMLIB`. Attempt ISPF Browse — if it opens without authorization error, the system's entire configuration is readable. Combine with RACF Settings Analyzer showing DATASET class inactive to explain why.
+
+> **Note:** All Recon tools display `FOR AUTHORIZED USE ONLY` in the Security panel. Running SEARCH CLASS or LISTCAT against a system without written authorization may constitute unauthorized access under applicable law.
+
+---
+
+## Part 18 — In-Transit Encryption Monitor (Wave 12)
+
+Classic TN3270 runs over raw TCP on port 23 — no encryption, no integrity protection. Every keystroke, every screen update, every RACF password and DB2 query crosses the wire in plaintext. TN3270E on port 992 adds TLS, but legacy port-23 connections, misconfigured TLS, or admin oversight leaves sessions exposed. The In-Transit Monitor makes this visible by capturing traffic with TLS state and surfacing plaintext data as "exposed bytes."
+
+---
+
+### Location
+
+Security panel → IN-TRANSIT MONITOR (topmost section, above RECON TOOLS)
+
+---
+
+### Session banner
+
+The banner at the top of the section reflects the active session's TLS state immediately on refresh:
+
+| Banner | Meaning |
+|---|---|
+| Red — ⚠ PLAINTEXT SESSION | TN3270 on port 23 or TLS negotiation failed — all data unencrypted |
+| Green — ✓ ENCRYPTED | TLS negotiated — shows version (TLSv1.2, TLSv1.3) |
+
+The OIA bar TLS field shows the same value: `3270` = plaintext, `TLSv1.3` = encrypted. Both update on connection.
+
+---
+
+### Traffic log
+
+Click **↺ Refresh** to fetch the server-side traffic log. Each entry shows:
+
+| Column | Content |
+|---|---|
+| Time | HH:MM:SS of event |
+| Direction | `client→host` (keystrokes) or `host→client` (screen updates) |
+| AID | Key sent (ENTER, PF3, etc.) or `IND$FILE` for transfers |
+| TLS state | `⚠ PLAIN` (red) or `🔒 TLSv1.x` (green) |
+
+For **plaintext entries**, the captured screen text appears below the row in a red box — the literal data that crossed the wire. This is what `tcpdump` or Wireshark would capture on the same network segment.
+
+---
+
+### IND$FILE transfer logging
+
+File uploads and downloads via IND$FILE are logged as individual events tagged **TRANSFER** in amber. On a plaintext session, the log entry shows the transfer byte count — the entire file content traversed the wire unencrypted. On a TLS session, the entry still appears but shows 🔒 encrypted.
+
+This makes the exposure concrete: "PAYROLL.MASTER.FILE download: 48,320 bytes — PLAIN" is a finding, not a hypothetical.
+
+---
+
+### How TLS state is captured
+
+The bridge server stores the negotiated TLS version when the TCP connection completes (`session.tlsVersion`). Every subsequent `logTraffic()` call tags the entry with that value. Entries logged before TLS negotiation completes (rare) fall back to `PLAIN`. The TLS version comes from Node.js's `tls.TLSSocket.getProtocol()`.
+
+---
+
+### CSV export
+
+Click **↓ Export CSV** to download the full traffic log with columns:
+
+| Column | Values |
+|---|---|
+| `timestamp` | ISO 8601 |
+| `wsId` | WebSocket session ID |
+| `direction` | `client→host` / `host→client` |
+| `aid` | AID key or `IND$FILE` |
+| `tls` | `PLAIN`, `TLSv1.2`, `TLSv1.3` |
+| `plaintext_exposed` | `YES` / `NO` |
+| `screenText` | Captured screen content |
+
+Filter `plaintext_exposed=YES` in a spreadsheet to produce the evidence table for a pentest report.
+
+---
+
+### Teaching scenario
+
+Connect to the same mainframe host twice — once on port 23 (TN3270, no TLS) and once on port 992 (TN3270E, TLS). Switch between sessions. Open the IN-TRANSIT MONITOR and click Refresh after each. Show students the red vs green banner switching, then compare the traffic logs: the port-23 session shows all screen data as exposed bytes; the port-992 session shows 🔒 on every entry. Run an IND$FILE download on each and compare the TRANSFER entries. The point is visceral — the same file, one session safe, one session exposed.
+
+> **Note:** The traffic log is server-side memory (max 1000 entries, FIFO). Click **✕ Clear Log** between test scenarios to keep the view clean.
+
+---
+
+## Part 19 — CICS Transaction Scanner (Wave 13)
+
+CICS returns different error codes for "transaction not defined" vs "transaction exists but not authorized." The scanner exploits this distinction: DFHAC2001 ("not authorized") proves a transaction is defined without needing authority to run it. DFHAC2206 ("not defined") means it genuinely does not exist.
+
+---
+
+### Location
+
+Security panel → CICS TRANSACTION SCANNER
+
+### Prerequisites
+
+Must be at a CICS clear screen — blank screen, cursor at top-left, ready to accept a transaction ID. The OIA APP field shows CICS in orange. Press PA2 (CLEAR) to ensure a clean state before starting.
+
+### Response classification
+
+| Code | Result | Meaning |
+|---|---|---|
+| `DFHAC2206` | NOT FOUND | Transaction not defined in this CICS region |
+| `DFHME0102` | NOT FOUND | Alternate "not defined" message |
+| `DFHAC2001` | DENIED | Transaction defined — user not authorized |
+| `DFHAC2004` | DENIED | Not authorized to attach |
+| Screen changes | ACCESSIBLE | Transaction ran |
+
+DENIED is the high-value result — it confirms existence.
+
+### Default wordlist
+
+`CEDA` (resource definitions), `CEMT` (task management), `CEDF` (debugger), `CEBR` (queue browser), `CESF` (sign off), `CESN` (sign on), `CEST` (statistics), `CEVS` (event services), `SIGN`, `LOGO`, `ABRF`, `AUTR`, `DBDC`, `DSNC` (DB2 connection), `MQSC` (MQ commands).
+
+### Teaching scenario
+
+Run the scanner against a CICS development region. Point out that CEDA DENIED is a critical finding even without access — it confirms the region can define and modify CICS resources. Cross-reference DENIED results: an attacker who later gains access to CEDA can alter transaction definitions to inject code into running transactions.
+
+---
+
+## Part 20 — System Access Checks (Wave 13)
+
+Two TSO-based checks that probe system library protection: APF library RACF coverage and SYS1.PARMLIB member read access.
+
+---
+
+### Tool 1 — APF Library Scanner
+
+**Location:** Security panel → SYSTEM ACCESS CHECKS → APF LIBRARY SCANNER
+
+**Commands:** `LISTAPF` then `LISTDSD DATASET('libname')` per library
+
+**Why it matters:** APF (Authorized Program Facility) libraries hold programs that run with z/OS supervisor authority. Any program loaded from an APF library can bypass RACF and acquire superuser status. An unprotected APF library — one with no RACF dataset profile — is writable by any authenticated user and is a direct privilege escalation path.
+
+**Risk levels:**
+
+| RACF Status | Risk | Condition |
+|---|---|---|
+| UNPROTECTED | CRITICAL | `ICH10006I` — no RACF profile defined |
+| WEAK | HIGH | RACF profile exists, UACC=UPDATE or ALTER |
+| UNKNOWN | — | LISTDSD denied — likely protected |
+| PROTECTED | OK | UACC READ or NONE |
+
+**What to do with CRITICAL:** In ISPF, attempt to edit the library (option 3.4). If editable, a member containing `MODESET KEY=ZERO` and an SVC 11 call acquires supervisor state. Remediation: `ADDSD 'libname' UACC(NONE)` and restrict ALTER to the systems programming group.
+
+---
+
+### Tool 2 — PARMLIB Access Check
+
+**Location:** Security panel → SYSTEM ACCESS CHECKS → PARMLIB ACCESS CHECK
+
+**Method:** `ALLOC FI(PTEST) DA('SYS1.PARMLIB(member)') SHR REUSE` — shared read-only allocation, non-destructive. If ALLOC succeeds (no IKJ/ICH error), the current user can read the member.
+
+**Default members checked:**
+
+| Member | Contains |
+|---|---|
+| `IEASYS00` | Main system parameters — buffer sizes, paging, console config |
+| `SMFPRM00` | SMF record types and subtypes being logged — maps security monitoring gaps |
+| `BPXPRM00` | z/OS UNIX parameters — file system config, UID/GID limits |
+| `IEAAPF00` | Static APF library list (compare with LISTAPF dynamic list) |
+| `LNKLST00` | LNKLST library concatenation — programs searched on every load |
+| `IEASVC00` | SVC dispatch table — which SVCs are installed |
+| `IEFSSN00` | Subsystem names — JES2/JES3, RACF, DB2, CICS subsystem IDs |
+| `IEFJOBS00` | Job-related parameters |
+
+**High-priority findings:** `SMFPRM00` readable = attacker knows which security events are NOT logged. `IEAAPF00` readable = static APF list known. `IEASVC00` readable = SVC table structure known, aids exploit development.
+
+---
+
+### Tool 3 — APF Writability Checker
+
+**Location:** Security panel → SYSTEM ACCESS CHECKS → APF WRITABILITY CHECKER
+
+**Commands:** `LISTAPF`, then `ALLOC FI(APFWR) DA('libname') SHR REUSE` per library — the same real command the PARMLIB check above uses, reused against every APF library LISTAPF returns instead of a fixed member list.
+
+**Why it's different from Tool 1:** The APF Library Scanner only checks whether a RACF profile *exists* on a library (`LISTDSD`). That's necessary but not sufficient, a library can have no profile and still reject the write for some other reason, or carry a profile and still be writable through a UACC or access-list gap `LISTDSD`'s parsing never catches. This tool skips the inference and actually attempts the write, reading back the real RACF authority decision instead.
+
+**Risk levels:**
+
+| Risk | Condition |
+|---|---|
+| CRITICAL | `IKJ56650I` — the allocation succeeded, the library is writable right now |
+| OK | `IKJ56231I` — RACF denied the allocation |
+| UNKNOWN | neither message matched, worth a manual look |
+
+A successful allocation is immediately `FREE`d; nothing stays allocated or gets modified.
+
+**What a CRITICAL finding means:** unlike Tool 1's UNPROTECTED (which infers exploitability from a missing profile), CRITICAL here is proof, a write attempt against this exact library actually succeeded during this session. Drop a backdoor program there and it runs with supervisor authority on the next load.
+
+---
+
+## Part 21 — Encryption At Rest Audit Scanner (Wave 12)
+
+Most z/OS shops have enabled DFSMS at-rest encryption for new datasets but never went back to encrypt older ones. The Encryption Audit Scanner surfaces exactly this gap: it runs `LISTCAT ENT(dsname) ALL` against a list of datasets and looks for the `ENCRYPTION-KEY-LABEL` field that indicates DFSMS encryption is active.
+
+---
+
+### How z/OS at-rest encryption works
+
+z/OS DFSMS encryption uses the IBM ICSF (Integrated Cryptographic Service Facility) subsystem. When a dataset is created with an encryption key label (via the SMS data class or `DFSMS PARMLIB`), all writes are encrypted in hardware before hitting disk. The key label appears in the IDCAMS catalog entry and is visible in `LISTCAT ENT() ALL` output.
+
+If the `ENCRYPTION-KEY-LABEL` field is absent from the catalog entry — the dataset is in plaintext on disk. No key label = no encryption, regardless of what the security policy says.
+
+---
+
+### Location
+
+Security panel → RECON TOOLS → ENCRYPTION AUDIT SCANNER (below Dataset Recon Scanner)
+
+---
+
+### Workflow
+
+**Step 1 — Get a dataset list**
+
+Two options:
+- Run the Dataset Recon Scanner first, then click **⬆ Import Flagged** to pull all sensitivity-flagged dataset names into the audit textarea
+- Paste names manually (one fully qualified dataset name per line)
+
+**Step 2 — Run the audit**
+
+Click **▶ AUDIT**. For each dataset the tool issues:
+```
+LISTCAT ENT(dsname) ALL
+```
+
+The full IDCAMS catalog record is parsed for encryption indicators.
+
+**Step 3 — Read the results**
+
+| Risk | Condition |
+|---|---|
+| CRITICAL | Sensitive name pattern (PASSWORD, KEY, CERT, TOKEN, SSN, CRED) + no encryption |
+| HIGH | Production/system dataset (PROD, PAYROLL, FINANCE, PARMLIB, SYS1.*) + no encryption |
+| MEDIUM | Any unencrypted dataset |
+| INFO | Encrypted — key label shown in KEY LABEL column |
+| ERR | LISTCAT failed — dataset not found or not catalogued |
+
+Results sort CRITICAL → HIGH → MEDIUM → INFO automatically.
+
+---
+
+### What the scanner detects
+
+The parser looks for two patterns in LISTCAT ALL output:
+
+1. `ENCRYPTION-KEY-LABEL - keyname` — present on DFSMS-encrypted datasets; the key label identifies which ICSF key protects the data
+2. `ENCRYPTED YES/NO` — present on some z/OS releases
+
+Absence of both = unencrypted.
+
+---
+
+### Why the import-from-recon workflow matters
+
+The two-stage approach (Dataset Recon → Encryption Audit) mirrors a real attacker's process:
+
+1. Map the data estate with LISTCAT LEVEL() — find every dataset under high-value prefixes
+2. Flag sensitive-named datasets from the results
+3. Audit only the flagged ones for encryption — avoid running LISTCAT ALL on hundreds of datasets
+
+This is also the correct workflow for a compliance audit: prove that datasets matching your data classification policy are encrypted, with evidence.
+
+---
+
+### Teaching scenario
+
+Run Dataset Recon on prefixes PAYROLL, FINANCE, HR. Import the flagged results into the Encryption Audit Scanner. Run the audit. In a typical non-hardened z/OS lab environment, most or all results will show as CRITICAL or HIGH — sensitive names, no encryption. This demonstrates concretely that "we have RACF protecting access" and "the data is encrypted at rest" are two separate questions, and most shops only answer the first one.
+
+> **Note:** Running LISTCAT against datasets you do not own may be logged by RACF SMF records. Always operate under written authorization.
+
+---
+
+## Part 22 — DB2 Security Tools
+
+Wave 10 adds three DB2-focused tools to the Security panel under a dedicated **DB2 TOOLS** section. All three operate from a TSO READY prompt and require no SPUFI dataset configuration — they issue standard TSO and RACF commands through the live terminal session.
+
+### Architecture note
+
+The DB2 tools reuse the same `type` / `fillField` / `key` WebSocket message pipeline as the RACF probe and protocol fuzzer. On each screen update, `db2OnScreen()` is called alongside `probeOnScreen()` in the screen-dispatch path, so all three tools share the same wait-for-screen machinery without interfering with each other.
+
+---
+
+### Tool 1 — DB2 Subsystem Scanner
+
+**Location:** Security panel → DB2 TOOLS → SUBSYSTEM SCANNER
+
+**What it does:** Issues `DSN SYSTEM(xxx)` from TSO READY for each subsystem ID in the wordlist and classifies the response.
+
+| Result | Meaning |
+|---|---|
+| `ACCESSIBLE` | DSN> prompt returned — connection succeeded. DB2 version extracted from banner. |
+| `DENIED` | RACF blocked the connection (ICH408I or equivalent). |
+| `NOT_FOUND` | No active subsystem by that name (DSNL004I / DSN9021I). |
+| `ERROR` | Unexpected response — manual inspection required. |
+
+**Default wordlist:** `DB2`, `DB21`, `DB22`, `DB23`, `DBPD`, `DBQA`, `DBLP`, `DBPR`, `DBC1`, `DBC2`, `DBST`, `DBTS`, `DBP1`, `DBP2`, `DSN1`, `DSN2`. Click **Load defaults** to populate.
+
+**Version fingerprinting:** When a connection succeeds, the scanner reads the `DSNE003I` banner line and extracts the DB2 release string (e.g. `12.1.5`). This maps directly to IBM's published PTF history and known CVE exposure windows.
+
+**Exit behavior:** On ACCESSIBLE results, the scanner issues `END` and waits for TSO READY before continuing to the next subsystem — clean session state is maintained throughout the scan.
+
+**Practical use:**
+1. Navigate to TSO READY
+2. Unlock the Security panel and scroll to DB2 TOOLS
+3. Click **Load defaults**, optionally add site-specific IDs
+4. Set delay ≥ 1500 ms
+5. Click **▶ START** — results populate in real time
+6. Note ACCESSIBLE entries; use them as input to the Permission Probe
+
+> **Note:** The wordlist can include comments (`# lines starting with # are ignored`) and custom subsystem IDs up to 4 characters.
+
+---
+
+### Tool 2 — RACF-DB2 Authority Scan
+
+**Location:** Security panel → DB2 TOOLS → RACF-DB2 AUTHORITY SCAN
+
+**What it does:** Issues `SEARCH CLASS(xxx)` against four DB2 RACF resource classes and lists every protected profile name.
+
+| Class | Protects | Color |
+|---|---|---|
+| `DSNR` | Subsystem connections (BATCH, DB2CALL, DDF, SPACENAM) | Amber |
+| `MDSNPN` | Application plan names (EXECUTE privilege) | Blue |
+| `MDSNTB` | Table and view names | Purple |
+| `MDSNSP` | Stored procedures | Teal |
+
+**What an empty class means:** If `SEARCH CLASS(MDSNPN)` returns no profiles, plan-level access control is not in use — any authenticated DB2 user can EXECUTE any application plan. Similarly, an empty `MDSNTB` means table access relies solely on DB2 internal GRANT statements rather than RACF profiles.
+
+**Paging:** The tool handles `***MORE***` screens automatically, pressing ENTER to advance through multi-page SEARCH output until `READY` reappears.
+
+**Output parsing:** Lines that match RACF resource name patterns (no spaces, no system-message prefixes) are collected. Lines starting with `IKJ`, `ICH`, `IRR`, `READY`, or `***` are filtered as system output.
+
+**Practical use:**
+1. Navigate to TSO READY
+2. Click **▶ SCAN** — the tool scans all four classes in sequence
+3. An empty MDSNPN or MDSNTB result is itself a finding: those objects are unprotected at the RACF layer
+4. Cross-reference DSNR profiles with subsystem scanner results to confirm coverage
+
+---
+
+### Tool 3 — Connection Permission Probe
+
+**Location:** Security panel → DB2 TOOLS → CONNECTION PERMISSION PROBE
+
+**What it does:** For a specific DB2 subsystem, issues `RLIST DSNR subsys.TYPE ALL` for four connection types and parses the permit list — revealing exactly which user IDs and groups have access via each path, and flagging `PUBLIC` grants.
+
+**Connection types probed:**
+
+| Profile | Controls |
+|---|---|
+| `subsys.BATCH` | Batch jobs connecting to DB2 via JCL |
+| `subsys.DB2CALL` | TSO foreground and CICS application attach |
+| `subsys.DDF` | Distributed Data Facility — DRDA/JDBC from remote systems |
+| `subsys.SPACENAM` | Access to specific tablespaces (DB2 11+) |
+
+**PUBLIC access flag:** Permit entries for `PUBLIC` are displayed with a red background badge. A `PUBLIC READ` on `subsys.DB2CALL` means every authenticated TSO user can connect to DB2 without individual authorization — the most common DB2 RACF misconfiguration in production environments.
+
+**NOT DEFINED results:** If RACF has no profile for a connection type, it falls back to generic profiles or operates in WARNING mode (logs but does not enforce). This is displayed as `NOT DEFINED` in grey. Document it — intended or not, it represents a gap in the access control model.
+
+**Permit parsing:** Extracts lines matching `WORD (READ|UPDATE|ALTER|CONTROL|NONE) DIGITS` from the `RLIST` output — the standard RACF permit table format. Access level colors: green = READ, amber = UPDATE, red = ALTER/CONTROL.
+
+**Practical use:**
+1. Run the Subsystem Scanner first; note an ACCESSIBLE subsystem ID
+2. Enter that ID in the Subsystem field (e.g. `DB2`)
+3. Click **▶ PROBE** — four RLIST commands run in sequence
+4. Any PUBLIC badge is a report finding; any NOT DEFINED entry warrants documentation
+
+---
+
+### Combined CSV export
+
+All three tools write to a shared CSV via **↓ Export all DB2 results CSV** at the bottom of the DB2 TOOLS section. The CSV has five columns:
+
+| Column | Content |
+|---|---|
+| `tool` | `subsystem-scan`, `racf-auth-scan`, or `perm-probe` |
+| `key` | Subsystem ID, profile name, or DSNR resource |
+| `status` | Result classification |
+| `detail` | DB2 version, RACF class, or permit list (ID:ACCESS pairs) |
+| `timestamp` | ISO 8601 |
+
+---
+
+### Teaching scenarios (DB2 Tools)
+
+**Subsystem enumeration attack surface:** Run the scanner against the default wordlist. Most environments have 2–4 active subsystems. Show that `DB2CALL` and `BATCH` connection types have different RACF profiles, meaning an attacker who can reach TSO may have a different path to DB2 than a batch job.
+
+**RACF class activation gap:** Issue `SEARCH CLASS(MDSNPN)` manually in a TSO shell. If it returns `NO PROFILES FOUND`, explain that the class must also be active in the RACF class descriptor table (`SETROPTS CLASSACT(MDSNPN)`) — returning no profiles could mean the class is inactive, not just empty.
+
+**PUBLIC access demonstration:** If the Permission Probe finds `PUBLIC READ` on `subsys.DB2CALL`, show what that means: any TSO user — including a service account with minimal RACF authority — can attach a DB2 session. Combined with DB2 internal `PUBLIC` grants (common in development environments), this creates a path to read production data.
+
+> **Note:** All DB2 tools display `FOR AUTHORIZED USE ONLY` in the Security panel. Running DB2 enumeration or RACF probes against a system without written authorization is illegal under the Computer Fraud and Abuse Act and equivalent laws.
+
+---
+
+## Part 23 — TN3270E Negotiation Analyzer (Wave 14)
+
+The TN3270E Negotiation Analyzer reads live TLS socket state from the bridge server and surfaces cipher suite, certificate details, and TN3270E protocol negotiation flags for every active session.
+
+---
+
+### Location
+
+Security panel → TN3270E NEGOTIATION ANALYZER
+
+### How it works
+
+The bridge server's `/api/negotiate` endpoint iterates active sessions and calls `socket.getCipher()` and `socket.getPeerCertificate()` on the underlying Node.js TLS socket. These calls return the post-handshake TLS state without triggering any new network traffic. The client then flags weaknesses client-side.
+
+### Fields returned per session
+
+| Field | Source | Notes |
+|---|---|---|
+| TLS version | `socket.getProtocol()` | TLSv1.3, TLSv1.2, or PLAIN |
+| Cipher | `socket.getCipher().standardName` | IANA name (e.g. `TLS_AES_256_GCM_SHA384`) |
+| Cert CN | `cert.subject.CN` | Common name of the host certificate |
+| Cert issuer | `cert.issuer.CN` | CA that signed the certificate |
+| Cert expiry | `cert.valid_to` | Expiration date string |
+| Self-signed | subject.CN === issuer.CN | Flag — no trusted CA chain |
+| TN3270E | `session.tn3270eEnabled` | Whether TN3270E was negotiated |
+| Model | `session.model` | e.g. IBM-3278-2, IBM-3278-5 |
+| LU | `session.negotiatedLu` | LU name assigned during TN3270E |
+
+### Weakness flags
+
+| Finding | Risk | Condition |
+|---|---|---|
+| PLAIN session | CRITICAL | No TLS at all |
+| Weak cipher | HIGH | RC4, DES, 3DES, NULL, EXPORT, ANON, MD5 |
+| Self-signed cert | HIGH | subject CN == issuer CN |
+| Expired cert | CRITICAL | Valid-to date is past |
+| Near-expiry cert | HIGH | < 30 days remaining |
+| No peer cert | MEDIUM | Server didn't present a certificate |
+| TN3270E inactive | MEDIUM | Fell back to classic TN3270 |
+| Unknown cipher | MEDIUM | Not matched as weak or strong |
+
+### Teaching scenario
+
+**Plaintext detection:** Connect to a host without enabling TLS (TLS toggle off). Refresh the analyzer — the session shows PLAIN in red with a CRITICAL finding. Toggle TLS on, reconnect, refresh again to show TLSv1.3 with a strong cipher.
+
+**Cipher downgrade:** If the host supports TLSv1.2 with older cipher suites, connect and compare the negotiated cipher against TLSv1.3. Illustrate why TLS 1.0 and 1.1 are deprecated (RC4 exposure, BEAST/POODLE attacks).
+
+**Self-signed certs in lab:** Lab and mock environments often have self-signed certificates — the analyzer flags them HIGH. Explain that in production, self-signed certs should be replaced with CA-signed certificates so clients can validate host identity and prevent MITM attacks.
+
+---
+
+## Part 24 — SDSF Job Scanner (Wave 14)
+
+The SDSF Job Scanner parses the visible SDSF ST or DA panel to enumerate running jobs and started tasks (STCs). No SDSF line commands are issued — the tool reads the current terminal screen passively.
+
+---
+
+### Location
+
+Security panel → SDSF JOB & STC SCANNER → SDSF JOB PARSER
+
+### How to use
+
+1. Connect to TSO, log in, type `SDSF` at READY, press ENTER.
+2. At SDSF Primary Menu, type `ST` (Status) or `DA` (Display Active) and press ENTER.
+3. Scroll to SDSF JOB PARSER in the Security panel and click ↺ Refresh.
+4. The tool reads `state.liveScreen` — the current terminal screen — and parses visible job rows.
+
+### What it detects
+
+The parser looks for rows matching the SDSF job line format: `[NP] JOBNAME JOBID OWNER PRTY QUEUE [STATUS]`. It then classifies each job:
+
+| Risk | Condition | Security relevance |
+|---|---|---|
+| HIGH | System STC (STC* jobid) with system owner (SYS1, VTAM, RACF, TCPIP) | System task is visible from your privilege level — information disclosure |
+| MEDIUM | STC without system owner | Check whether a RACF STARTED profile constrains this STC |
+| INFO | STC not in ACTIVE queue | Idle — lower risk |
+| OK | User batch job | Normal |
+
+### Teaching scenario
+
+**Information disclosure:** Log in as a low-privilege TSO user. If SDSF shows RACF or VTAM in the job list, the user can see which security infrastructure is active — an attacker now knows RACF is the security product and can target RACF-specific privilege escalation paths.
+
+**SDSFPREF access gap:** In many shops, the SDSF resource class (`SDSFPREF`) is not configured — all authenticated users see all jobs. Compare what a restricted user sees vs a system programmer to identify the gap.
+
+---
+
+## Part 25 — STC Profile Scanner (Wave 14)
+
+The STC Profile Scanner issues `RLIST STARTED stcname.* ALL` at a TSO READY prompt for each started task in a wordlist. A missing RACF STARTED class profile means the STC runs under the default user — a common misconfiguration that creates unaudited privilege and RACF bypass paths.
+
+---
+
+### Location
+
+Security panel → SDSF JOB & STC SCANNER → STC PROFILE SCANNER
+
+### Prerequisites
+
+TSO READY prompt. The scan issues RLIST commands that appear in the TSO session and are visible in any SMF logging that captures TSO READY commands.
+
+### How STARTED class profiles work
+
+When a started task launches, JES2/JES3 looks up the STC name in the RACF STARTED class. The profile (e.g. `JES2.*`) maps the STC to a user ID and optionally sets PRIVILEGED or TRUSTED attributes. Without a profile, the STC is assigned to the installation default user (often IBMUSER or a highly privileged account), running without any RACF identity for that task.
+
+### Risk levels
+
+| Risk | Meaning |
+|---|---|
+| CRITICAL | Profile found with PRIVILEGED attribute — STC bypasses all RACF access checks |
+| HIGH | `ICH10006I` — no STARTED profile — STC runs as default user, no RACF accountability |
+| MEDIUM | Profile found but USER field could not be parsed |
+| OK | Profile found with named USER and GROUP |
+
+### Default STC wordlist
+
+`JES2`, `JES3`, `VTAM`, `RACF`, `SMF`, `TCPIP`, `FTPD`, `SYSLOG`, `CATALOG`, `DFHSM`, `DFRMM`, `PCAUTH`, `RASP`, `CONSOLE`, `OPER`, `MASTER`
+
+### Import from SDSF scan
+
+After running the SDSF Job Scanner, click "⇦ Import STCs from SDSF" to populate the wordlist with actual STC names visible in the current environment — more accurate than a static wordlist.
+
+### Teaching scenario
+
+**No profile = identity gap:** Run the scanner against an environment where JES2 has no STARTED profile. Show the HIGH finding. Explain that every SMF record produced by JES2 will show the default user ID — making forensic attribution during an incident impossible for anything JES2 touched.
+
+**PRIVILEGED attribute risk:** If a STARTED profile has `PRIVILEGED(YES)`, the STC bypasses all RACF checks. This is intentional for some system tasks (JES2 needs to access everything) but is frequently over-applied. A PRIVILEGED STC that an attacker can influence — through its JCL PROC, its load library, or a linked dataset — becomes a superuser escalation path.
+
+**Remediation:** For each HIGH finding, create a RACF STARTED profile: `RDEFINE STARTED stcname.* STDATA(USER(stcuser) GROUP(stcgrp))`. Then `SETROPTS RACLIST(STARTED) REFRESH` to activate. Create a dedicated low-privilege user ID for each STC rather than sharing one system account.
+
+> **Note:** All SDSF and RACF probe tools display `FOR AUTHORIZED USE ONLY` in the Security panel. Running these checks against a system without written authorization is illegal under the Computer Fraud and Abuse Act and equivalent laws.
+
+---
+
+## Part 25A — SDSF Job Output Harvester
+
+The SDSF Job Scanner (Part 24) only reads whatever job list is already on screen, list-level status, nothing more. This tool actively navigates into each job's real output the way an operator reviewing a failed run would: it types `S jobname` for every job on the current SDSF list, reads back the actual output screen, PF3s to the list, and repeats.
+
+### Location
+
+Security panel → SDSF JOB & STC SCANNER → SDSF JOB OUTPUT HARVESTER
+
+### Prerequisites
+
+Navigate to the SDSF ST or DA panel first (`ISPF` → option `M` → `ST`), with at least one job on the list. If nothing's queued yet, `SUBMIT` a JCL member or two from TSO READY before navigating to SDSF.
+
+### How it works
+
+For each job row the SDSF Job Scanner's own parser discovers, the Harvester issues `S jobname`, reads the resulting output screen, and checks it for two things:
+
+- **A non-zero condition code** — parsed from the real `ENDED -- MAXIMUM CONDITION CODE nnnn` line the mock's job-detail screen already shows.
+- **A sensitive-looking keyword** — `PASSWORD`, `CREDENTIAL`, `SECRET`, `PRIVATE KEY`, `PWD` — anywhere in the harvested output, the same keyword family the Dataset Recon Scanner already flags by.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| FLAGGED | non-zero condition code, or a sensitive keyword in the output |
+| OK | neither |
+
+### Teaching scenario
+
+`SUBMIT BADJOB` then `SUBMIT QTRRPT`, navigate to SDSF ST, and run the Harvester. `BADJOB` comes back FLAGGED (condition code 0012, a step genuinely failed), `QTRRPT` comes back OK (clean two-step run, condition code 0000). The lesson: the list-level status column only ever says `OUTPUT`, the job finished, nothing about whether it finished *cleanly*. The real content is one `S jobname` away, and in a shop with dozens of jobs a day, nobody is reading all of it by hand.
+
+---
+
+## Part 26 — LU Name Fixation (Wave 15)
+
+LU Name Fixation tests whether the mainframe honors the LU name a client requests during TN3270E DEVICE-TYPE negotiation. If fixation is accepted, the client controls its own terminal identity in RACF audit logs, SMF records, and VTAM accounting.
+
+---
+
+### Location
+
+Security panel → TN3270E NEGOTIATION ANALYZER → LU fixation row
+
+### How it works
+
+During TN3270E DEVICE-TYPE REQUEST, the client can include a `CONNECT lu-name` field asking for a specific LU. The host responds with DEVICE-TYPE IS — if the IS response includes `CONNECT lu-name` with the same name, fixation was accepted. If the IS response contains a different LU (pool assignment), fixation was rejected.
+
+WebTerm stores `session.luName` (what was requested at connect time) and `session.negotiatedLu` (what the host granted). The `/api/negotiate` route returns both and computes `luFixation`:
+
+| Value | Meaning |
+|---|---|
+| `ACCEPTED` | Host granted exactly the requested LU — client controls terminal identity |
+| `REJECTED` | Host assigned a different (pool) LU — normal, more secure |
+| `NOT_REQUESTED` | No LU was requested — test not applicable |
+| `NO_LU` | LU was requested but host did not include CONNECT in the IS response |
+
+### Risk: ACCEPTED
+
+A MEDIUM finding. Impact:
+- Audit records in SMF Type 30 (TSO) and VTAM accounting show the LU name — an attacker who controls their LU can make sessions appear to come from a different terminal pool
+- Some applications authorize by LU name (e.g., "only LUs in pool PRODLU may run sensitive transactions") — fixation may bypass this if the application does not also verify RACF identity
+- In shared LU pool environments, requesting a pool LU already in use may cause session conflicts or access to another user's application state
+
+### Testing
+
+Connect via the Connect modal with a specific LU in the LU Name field. Refresh the Negotiation Analyzer and read the LU fixation row. Test with: a name you know exists in the pool (`LU00001`), a name that does not exist (`NOTEXIST`), and a name belonging to a privileged terminal pool if known.
+
+### Teaching scenario
+
+In a lab environment with TN3270E, connect without a LU name (REJECTED baseline), then reconnect with a specific LU. Compare the SMF Type 30 records — if fixation was accepted, the LU in SMF changes. Demonstrate that forensic analysis of the session now shows the requested (potentially spoofed) LU rather than a pool-assigned one.
+
+---
+
+## Part 27 — TN3270E Handshake Trace (Wave 15)
+
+The TN3270E Handshake Trace captures and decodes every Telnet sub-option (IAC SB) exchange during TN3270E negotiation — DEVICE-TYPE and FUNCTIONS exchanges — showing the exact bytes and their decoded meaning.
+
+---
+
+### Location
+
+Security panel → TN3270E NEGOTIATION ANALYZER → TN3270E HANDSHAKE TRACE (bottom of session card)
+
+### How it works
+
+In `session.js`, every call to `_sendTn3270eDeviceType()` and every TN3270E sub-option received in `_handleSubneg()` pushes an entry to `session.tn3270eLog`:
+
+```javascript
+{ dir: 'sent' | 'recv', raw: '<hex bytes>', decoded: '<human description>', ts: <epoch ms> }
+```
+
+The `/api/negotiate` route includes this log. The client renders it in order with direction color coding: blue = client sent (→ C), green = server sent (← S).
+
+### Trace entry types
+
+| Entry | Direction | Meaning |
+|---|---|---|
+| `DEVICE-TYPE REQUEST device=IBM-3278-2 CONNECT LU=X` | → C | Client requests a terminal model and optional LU |
+| `DEVICE-TYPE IS device=IBM-3278-2 CONNECT LU=Y` | ← S | Server confirms terminal model and assigned LU |
+| `DEVICE-TYPE REJECT reason=DEVICE-IN-USE` | ← S | Server rejected the request |
+| `FUNCTIONS REQUEST [0x00 0x02]` | → C | Client requests TN3270E functions (bytes are function codes) |
+| `FUNCTIONS IS [0x00 0x02]` | ← S | Server confirms active functions |
+
+### TN3270E Function codes
+
+| Code | Function | Notes |
+|---|---|---|
+| `0x00` | BIND-IMAGE | Server sends VTAM BIND parameters (includes session key info) |
+| `0x02` | DATA-STREAM-CTL | Server controls SNA data stream framing |
+| `0x04` | RESPONSES | Server sends positive/negative acknowledgment of data records |
+| `0x08` | SCS-CTL-CODES | SCS control codes in the data stream |
+| `0x10` | UNBIND | Server can send UNBIND to terminate the session cleanly |
+
+### Teaching scenario
+
+**BIND-IMAGE inspection:** If the server includes BIND-IMAGE (`0x00`) in FUNCTIONS IS, point out that subsequent BIND records will carry session cryptographic parameters. In a passive tap scenario (pre-TLS), the BIND record would reveal the session key negotiation.
+
+**Functions the server adds:** If FUNCTIONS IS contains codes not in the client's FUNCTIONS REQUEST, the server unilaterally extended the session capabilities. This is protocol-conformant but worth noting — the client should be prepared for those data types in the stream.
+
+**No trace visible:** If the trace is empty, TN3270E was not negotiated — the session is using classic TN3270. The OIA APP field will not show a negotiated LU. This typically means `useTn3270e` was disabled at connect time or the host refused TN3270E.
+
+> **Note:** All Tier 5 tools are passive protocol inspectors. They observe the negotiation that already occurred — no additional data is sent to the host.
+
+---
+
+## Part 27A — VTAM-Operator Pool/Session Dashboard
+
+A VTAM session/LU pool has a fixed size. A shop that never watches how close to that ceiling it's running finds out the hard way, new connections start failing, usually at the worst possible time. This dashboard groups every active session by LPAR and surfaces the count continuously instead.
+
+### Location
+
+Security panel → VTAM-OPERATOR POOL/SESSION DASHBOARD (below the TN3270E Negotiation Analyzer, whose card styling this panel reuses directly)
+
+### How it works
+
+No new `/api/pool` route was needed, every field this needs was already exposed somewhere: `/api/sessions` for connection state and a `poolRejected` flag, `/api/negotiate` for the LU requested/granted split `routes/negotiate.js` already computes, `/api/profiles` to match a session's `host:port` back to its LPAR id and name (the same matching key the bridge itself uses server-side when a connection comes in — a session only ever carries host/port, not a profile id). The dashboard is a client-side join of those three, plus a fourth: `/api/pool-limits`, serving the operator-configured thresholds below.
+
+### Configuration: `pool-limits.json`
+
+Copy `pool-limits.json.example` to `pool-limits.json` (gitignored, like `lpars.txt`) and add an entry per LPAR id:
+
+```json
+{
+  "GIBSON": {
+    "maxSessions": 5,
+    "rejectPattern": "NO LU AVAILABLE|SESSION LIMIT REACHED"
+  }
+}
+```
+
+Both fields are optional. An LPAR with no entry still shows a live count, just with no threshold-based alert. This lives in its own file rather than as extra trailing columns on `lpars.txt` — that file is already a dense 10-column format, and a session-pool threshold isn't a property of the connection itself the way host/port/model are, it's a separate operational concern an operator sets independently.
+
+**Read fresh on every request**, not cached at startup, so editing the file while the bridge is running (to tune a threshold after a false WARN, say) takes effect on the next refresh or the next new connection, no restart needed.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | a session's first screen matched the LPAR's configured `rejectPattern` (regardless of count), or the live count has reached `maxSessions` |
+| WARN | live count is at or above 80% of `maxSessions` |
+| OK | neither — includes LPARs with no threshold configured at all, which only show a live count |
+
+### Reject-pattern detection
+
+`maxSessions` catches gradual exhaustion. Some shops instead reject a new connection outright when the pool is already full, showing something like "NO LU AVAILABLE" instead of a normal logon screen, wording isn't standardized across installations, so this only ever fires when an operator has actually configured a pattern for that LPAR. It's checked **once**, against the first screen only, right after connect (`handlers/ws.js`, a one-shot `session.once('screen', ...)` listener), the same regex-on-screen-text approach the RACF Probe already uses for lockout detection, just a single check instead of a sweep loop.
+
+### Teaching scenario
+
+Configure `maxSessions: 2` for a test LPAR and open three sessions against it, the card goes CRITICAL at the second connection (count has reached max) without needing a third. Configure a `rejectPattern` that matches real text on that host's actual first screen (even something as plain as part of its banner) and connect once, the card goes CRITICAL immediately, with that one session's row showing a `REJECT-PATTERN MATCH` flag, regardless of how far under the count threshold the pool actually is, confirming the two layers are independent, a count that looks fine doesn't mean a shop-specific rejection didn't just happen anyway.
+
+---
+
+## Part 28 — Field Length Disclosure
+
+A nondisplay field masks its *characters*, not its *length*. The MDT (Modified Data Tag) bit plus the field's buffer-address span are ordinary, unmasked datastream metadata — anything reading the wire can measure exactly how many characters were typed into a "hidden" field without ever seeing what they were. This is a structural side-channel in the 3270 datastream itself, not a timing attack, and it applies to any nondisplay field on any screen — password prompts, PIN entry, API keys typed into a masked field, anything.
+
+---
+
+### Location
+
+Security panel → FIELD ANALYSIS → Field Length Disclosure (below Color Reveal)
+
+### How it works
+
+Every field the bridge decodes carries `nondisplay`, `modified` (the MDT bit), and `content` (`tn3270/session.js`'s `_extractFields()`). The scanner (`fielddisclosure.js`) walks `screen.fields` for anything where `nondisplay && modified && content.trim().length > 0`, and logs the field's row/column and trimmed content length. "🔍 Scan Screen Now" does a single pass over the current screen; "👁 Watch" re-runs the scan on every incoming screen automatically, silently harvesting nondisplay-field lengths across an entire session with no active probing.
+
+### Why "non-display = safe" is the wrong assumption
+
+Knowing a password is exactly 8 characters (not "up to 8," not "8 or fewer" — exactly 8) collapses a brute-force or dictionary search space dramatically before a single logon attempt is made. Combined with a wordlist tool like the RACF Probe, length disclosure lets an attacker pre-filter candidates by length, cutting attempt counts (and lockout risk) substantially.
+
+### Testing / Teaching scenario
+
+Navigate to a TSO logon screen (or the bundled mock, which now correctly masks its PASSWORD field). Type a password of a known length into the field but do not submit — this is exactly the mid-entry state a shoulder-surfing tool, proxy, or malicious middleware would observe. Run the scanner and confirm the reported length matches. Then arm Watch and step through several screens in a session (logon, CICS signon, a change-password panel) to show the finding accumulates passively across an entire session, not just one screen.
+
+---
+
+## Part 29 — Cross-Session Buffer Bleed
+
+A real 3270 controller buffer is only guaranteed clear after an Erase/Write. If a Logical Unit (LU) is pooled and handed to a new logical session before the host application issues its own fresh Erase/Write, whatever the previous occupant left in the buffer — including unprotected or nondisplay fields with the MDT bit still set — can still be present for a brief window before the new session's screen paints over it.
+
+---
+
+### Location
+
+Security panel → SESSION HYGIENE → 🩸 Arm Buffer-Bleed Watch
+
+### How it works
+
+The client side (`bufferbleed.js`) arms on toggle, then watches the first screens delivered after every `status: connecting` event on the active session; any unprotected field with non-blank content and the MDT bit set on those early frames is flagged, since a genuinely fresh logon screen should not have anything typed into it yet.
+
+The bundled mock (`mock-lpar.js`) now models the underlying vulnerability class instead of just the client-side detector: it parses and echoes back the LU name requested via the TN3270E `CONNECT` sub-negotiation (previously ignored entirely), and on disconnect caches the last-typed userid/password keyed by that LU name. If a new connection requests the *same* LU within `BUFFER_BLEED_WINDOW_MS` (90s), the mock replays the cached field data as a non-erasing **Write** (not Erase/Write) before sending the real, freshly-erased logon screen — exactly modeling a pooled LU whose controller buffer wasn't cleared before reassignment.
+
+### Risk
+
+A MEDIUM–HIGH finding depending on environment. In real VTAM/LU-pool deployments, LUs are reused across logical sessions for efficiency. If the host or any gateway in the path ever sends data before a full Erase/Write on session start, a new user landing on a reused LU can briefly see (or a tool positioned to catch the first frame can capture) the prior user's field data — including a password that was typed but never submitted.
+
+### Testing
+
+Set an explicit LU Name in the Connect modal (e.g. `TESTLU01`), connect, type a userid/password without necessarily submitting, then disconnect. Reconnect with the exact same LU Name within 90 seconds with the watch armed. A hit in the results table means the first screen of the new session carried the prior session's data.
+
+### Teaching scenario
+
+Run the test twice: once reconnecting within the 90s window (expect a hit against the bundled mock), and once waiting past the window or using a different LU name (expect no hit — the fresh logon screen only). This demonstrates the difference between "the vulnerability exists in principle" and "the vulnerability is reproducible against this exact target," which is the more defensible claim to bring to a disclosure conversation.
+
+---
+
+## Part 30 — VM Minidisk Password Exposure
+
+z/VM's CP LOGON PASSWORD field is masked exactly like a TSO password field — but CP has no concept of "this command argument is a secret." A minidisk `LINK` password typed at the ordinary CP READ command line lands in a normal, display-intensity, unprotected field and renders in cleartext the instant it's typed, before ENTER is even pressed.
+
+---
+
+### Location
+
+Security panel → VM MINIDISK SECURITY → 🔎 Scan Current Screen
+
+### How it works
+
+`vmminidisk.js` scans the current screen's text for the CP `LINK owner fromVdev toVdev mode [password]` syntax and extracts the password argument. It then cross-checks the field the command was typed into against `screen.fields` to confirm its FA byte is *not* nondisplay — the receipt that this is a structural gap (CP has no masked-input primitive for command arguments) rather than user error or a one-off misconfiguration.
+
+The bundled mock (`mock-lpar/mock-zvm.js`, an existing local z/VM CP/CMS daemon) now handles `LINK` at the CP Ready prompt: it parses the command, returns a `DASD nnn LINKED R/O|R/W` confirmation, and logs the raw command line to an in-memory console log — modeling what a real operator console or SMF accounting record would retain in production.
+
+### Risk
+
+A HIGH finding where minidisk link passwords are still used for access control (common on older z/VM estates). Anything that observes the session — a traffic log, a screen recorder, a proxy, a shared or shoulder-surfed console, or simply this tool sitting where a defender should have been looking first — captures the password in plaintext. Unlike a LOGON password, there is no masking to bypass; it was never masked in the first place.
+
+### Testing / Teaching scenario
+
+Connect to a z/VM CP session (the bundled mock or type `ZVM` target) and log on. At the CP Ready prompt, type `LINK MAINT 191 191 MR mysecretpw` and pause before pressing Enter — point out that the full command, including the password, is already visible on screen. Run the scanner and show the FA cross-check: `NORMAL — unmasked` in orange, versus the `NONDISPLAY` you'd see (in green) for the LOGON PASSWORD field a screen earlier. This side-by-side is the clearest way to make the point that masking is per-field, not per-secret — CP protects the field it knows about and nothing else.
+
+---
+
+## Part 31 — Wire Inspector
+
+A 3270-aware packet inspector, in the same spirit as Wireshark but decoding the *protocol*, not just the bytes. Wireshark has no native TN3270 dissector — piped raw bytes only ever show Telnet/TCP framing. The Wire Inspector decodes every SF/SFE/SBA/AID order into plain language, color-codes by direction and security relevance, and can replay a captured outbound record back into its live session.
+
+---
+
+### Location
+
+Security panel → TRAFFIC → 🔌 Wire Inspector (opens as its own popup window, alongside Session Viewer and Proxy Viewer)
+
+### How it works
+
+Every byte that crosses the wire in either direction is already captured unconditionally by `features/pcap.js` — `Tn3270Session._onData`/`_send` emit a `'raw'` event before any telnet or 3270 parsing happens, which is what powers the existing PCAP export. The Wire Inspector adds a decoder on top of that same capture (`tn3270/wire-decode.js`) instead of a second capture path.
+
+The decoder is a stateless-replay pass, not a live session: it re-walks the raw bytes exactly like `Tn3270Session._processBuffer` does (telnet DO/WILL triplets, `IAC SB…IAC SE` sub-negotiations, `IAC EOR`-terminated 3270 data records), but instead of mutating a rendering buffer it reconstructs only what's needed to label records correctly — principally a map of buffer-address → field-attribute byte, updated as inbound `SF`/`SFE`/`MF` orders are seen, so an outbound field write can be checked against it and flagged when it targets a nondisplay field. Two non-trivial pieces are reused directly from `session.js` rather than reimplemented — the 12/14-bit buffer address decoder and the TN3270E sub-negotiation describer — everything else (order bytes, command bytes) is redeclared locally, matching the convention the mock daemons already use for staying self-contained.
+
+One asymmetry worth knowing if you're reading the decoder: outbound (client→host) records in this codebase never carry the TN3270E 5-byte header, even after negotiation — `Tn3270Session._sendDataRecord()` doesn't prepend one, and the mock hosts don't expect one on receipt either. Only inbound host→client writes get the header stripped. The decoder mirrors this — get it backwards and every outbound AID record decodes as garbage.
+
+The decoder also flags GDDM graphics traffic: outbound Write Structured Field payloads carrying an Object Control/Data/Picture structured field (SFID `0x0F11`/`0x0F0F`/`0x0F10`, per the IBM 3270 Data Stream Programmer's Reference ch.5) are labeled `GDDM/Object Data` with the object type (Graphics vs Image, from the OBJTYP byte). Inbound structured-field replies (AID `0x88`) are decoded too — a Query Reply for Graphic Color/Graphic Symbol Sets/Extended Drawing Routine is called out as "terminal declares GDDM/graphics capability".
+
+**GDDM graphics are now actually rendered, not just flagged.** `tn3270/gddm.js` decodes the GDF (Graphics Data Format) order stream carried inside a Graphics-type Object Data/Picture structured field, and the browser draws it as a `<canvas>` overlay on top of the character grid (`public/js/gddm.js`). Scope is deliberately a demo-scale subset — 5 order types: Comment (picture-boundary), Set Color, Line, Marker, Character String — enough to draw a real labeled chart. Arcs, fillets, images, symbol sets, color-mix modes, and clipping are **not** implemented; this is not a full GDDM client. See "GDDM demo" below to see it working end-to-end.
+
+### GDDM demo
+
+The mock z/OS host (`mock-lpar/mock-lpar.js`) has a `GDDM` TSO command (type it at the TSO READY prompt, or inside the ISPF command shell) that sends a hand-authored GDF bar chart — "Q4 Regional Sales", four colored bars (NORTH/SOUTH/EAST/WEST) with labels, an axis, and a trend-marker line — via a real Object Data structured field (`buildGddmObjectDataWsf()`). It's a two-part send, matching how real GDDM interactive apps behave: first a normal Erase/Write for the alphanumeric frame (title row + PF3 footer, rows 1-22 left blank so DOM text doesn't compete with the canvas), then the Object Data WSF right after. PF3 or ENTER returns to TSO READY. This is the same byte format (SFID `0x0F0F`, `GSCOL`/`GLINE`/`GMRK`/`GCHST` order codes) the Wire Inspector flags and the renderer draws — connecting mock, bridge, and browser through the identical real protocol path end to end.
+
+### Reading the panel
+
+- **Packet list** — one row per decoded record: time, session, direction arrow, byte count, protocol label, AID (if any), and a one-line summary. A red dot + red left border flags any record that reads or writes a nondisplay field.
+- **Filter bar** — `dir:out`, `aid:enter`, `order:sf`, `session:3`, `field:nondisplay`, plus free text, combinable. Narrower than Wireshark's display-filter grammar on purpose — the point is 3270-semantic queries Wireshark can't do at all.
+- **Order tree + hex pane** — click a row to decode it order-by-order on the left, with the raw hex/ASCII on the right. Hover an order to highlight exactly which bytes produced it.
+- **Follow Session** — filters the list to one session's back-and-forth.
+- **Replay Selected** — re-sends an outbound record's exact bytes into the session it came from, via `session.sendRawAid()`. Only available for outbound records (replaying "what the host said" doesn't mean anything). The popup reaches back into the main window via `window.opener` to use that session's already-open WebSocket — replay has to go out over the same connection the record belongs to, not a new one.
+
+### Testing / Teaching scenario
+
+Connect to any TN3270 host, open the Wire Inspector, and log on. Filter to `field:nondisplay` — the only rows left should be the logon screen's password field write and your own password field submission. Click the outbound AID record: the order tree shows the USERID field in cleartext and the PASSWORD field's bytes replaced with "N byte(s) — nondisplay field content, masked" — the same content-never-leaves-the-decoder guarantee the rest of the product already holds for logs. Then select an earlier command (e.g. a `LISTDS` or menu selection) and click Replay — watch the host process it again live, exactly as if you'd typed it, without touching the keyboard.
+
+### Build notes / known limitations
+
+The E2E test for this feature caught a real bug before it shipped: outbound records were getting the TN3270E header incorrectly stripped, corrupting AID decode (see the asymmetry noted above — outbound records never carry that header, so stripping one that isn't there eats real order bytes). Fixed pre-commit, not shipped broken. The same test run incidentally cross-validated the Cross-Session Buffer Bleed detector from earlier in this build — a reconnect during testing tripped it correctly.
+
+**Resolved — 132-column row/col math:** the decoder used to assume a fixed 24×80 screen for all row/col display math (`routes/wire.js` passed `{cols: 80, rows: 24}` straight through), so 132-column models (3278-5, common on z/VM/JES profiles) showed correct byte-level decode and nondisplay flagging but wrong row/col numbers in the order tree. Fixed without needing to plumb anything through `getCaptures()` — the negotiated device type is already present in the byte stream the decoder walks (TN3270E DEVICE-TYPE subneg, classic TTYPE subneg, and BIND-IMAGE all carry an `IBM-3278-5`-style string), so `wire-decode.js` now tracks it directly, reusing `session.js`'s `modelDimensions()` table. It also tracks the *active* geometry per record — not just the negotiated model — since a session can flip between the default 24×80 (Erase/Write) and the model's alternate size (Erase/Write Alternate) mid-stream, exactly as `Tn3270Session._setActiveGeometry` does live. Verified against the mock LPAR: connecting with model `3278-5` decodes at 132 cols matching the live session's own geometry, decoding the same raw SBA bytes at 80 cols (the old behavior) produces different, wrong row/col numbers, and the default 3278-2 path is unaffected.
+
+### Anomaly/Brute-Force Correlator
+
+Everything above decodes one record at a time — real, but blind to any pattern across several records. The correlator (`public/js/wire-correlate.js`) is a second, stateful pass over the same record list, run client-side every time the panel refreshes: it walks each session's records chronologically looking for repeated `AID=ENTER` records, redisplayed logon screens, and same-userid retries, matched against the real RACF message IDs the live per-screen anomaly pipeline (`features/anomaly.js`) already keys off of — `IKJ56425I` (bad password), `IKJ56421I`/`IKJ56422I` (lockout/revoked).
+
+**Why this needed new architecture, not an extension of the decoder:** `decodeCapture()` has no cross-record state, each record is labeled independently of every other. `wire.html` had no live-update loop either, it was a static fetch-once table before this — it does now poll every few seconds, which is what makes a correlator that re-runs on every refresh actually useful instead of a one-shot report.
+
+**How it works:** for each outbound `ENTER`, find the next inbound write in that session and extract its visible text (every `DATA` order's content, joined — not real row/col placement, just enough to pattern-match against). A bad-password message or a redisplayed logon screen extends a running streak for that session; anything else (a real menu, a `READY` prompt) ends it. Lockout is reported immediately regardless of streak length. A streak of 2 is `MEDIUM`; 3 or more is `HIGH` if every attempt named the same userid, `CRITICAL` if the userid changed each time — that shape looks like an enumeration sweep, not someone re-typing their own password.
+
+**Location:** findings appear as colored chips in a new bar above the packet list, only visible when there's something to show. Click a chip to jump straight to the decisive record and filter down to that session.
+
+**Build note:** the module lives under `public/js/` rather than alongside `wire-decode.js` under `tn3270/` — only `public/` is served statically, so a module meant to run in the browser has to live where the browser can actually fetch it. Wiring it in required switching `wire.html`'s script tag to `type="module"` for the import, which meant every inline `onclick=""` handler's target function needed an explicit `Object.assign(window, {...})` at the end (module scripts don't leak top-level declarations onto `window` the way a classic script does) — the same convention every other file under `public/js/` already uses.
+
+**Verified** against the live mock z/OS host through the real `Tn3270Session`, capturing raw wire bytes exactly the way `features/pcap.js` does and running them through the real `decodeCapture()` and `correlateAnomalies()`: three wrong passwords for the same userid produces the real lockout message and a `CRITICAL` finding; two wrong passwords for different userids followed by a real login produces a `MEDIUM` finding that correctly resolves once the login succeeds. The `HIGH` (same-userid streak ≥ 3, no lockout) and `CRITICAL`-via-sweep (different-userid streak ≥ 3, no lockout) branches aren't reachable against this particular mock, which always locks out at exactly 3 attempts, so those two were confirmed against hand-built records of the same shape `decodeCapture()` produces instead.
+
+---
+
+## Part 32 — z/TPF Security Console
+
+z/TPF (Transaction Processing Facility) is the operating system behind airline reservation systems and card-payment authorization networks, tuned for tens of thousands of transactions per second. Its operator interface is nothing like TSO or CP: a scrolling command console where every action is a `Z`-prefixed operator command, and authority is a numeric privilege level (OPER, SYSOP, SYSPROG) rather than a RACF-style profile database. The z/TPF Security Console is four read-only tools that enumerate the running system and map that privilege boundary from the operator console.
+
+All four live in the **z/TPF CONSOLE** section of the Security panel, implemented in `public/js/tpf-security.js`. The section stays hidden until a z/TPF console is detected on screen, then appears on its own. Everything the tools send is a standard `ZSHOW` / `ZTEST` query; nothing changes system state. The one restricted command any tool issues, `ZSTOP,RPRT`, is z/TPF's own report-only mode and takes no action by design.
+
+---
+
+### How the z/TPF tools drive the terminal
+
+- **Auto-detection.** Every screen is matched against `z/TPF`, a `ZTPFnnn` message ID, or the literal `ENTER TPF COMMAND` prompt. First match reveals the section and sets `state.tpfDetected`. Navigating on to a TSO, ISPF, z/VM, or CICS screen hides it again and clears any results.
+- **Commands go in one at a time.** Each tool pushes its commands onto an async queue. The runner fills the console's single unprotected input field, presses Enter, and waits for the next screen event before sending the next command, so multi-command scans (the Privilege Scanner, the Entry Point Prober) stay in step with the host.
+- **Output is screen-scraped from the scroll log.** z/TPF replies are lines of `ZTPFnnnI` / `W` / `E` text in the console output area. Each tool parses the fixed-column tables in that text; there are no field attributes to read.
+- **Privilege level is inferred, then confirmed.** A plain `AUTHORIZATION FAILURE` reply tells the tools you are below SYSOP; one that names `SYSPROG AUTHORITY` places you at SYSOP. The Privilege Scanner then confirms the level directly by probing.
+
+**Prerequisite for all four:** connect to a z/TPF target (the bundled mock, `mock-lpar/mock-tpf.js` on port 3274, or a session profile with host type `TPF`), sign on at the operator logon screen, and stop at the `ENTER TPF COMMAND` console. The mock ships three logons, one per privilege level: `TPFOP01/TPF1` (OPER), `SYSOP01/SYS1` (SYSOP), `ADMIN01/ADMIN` (SYSPROG).
+
+The section header also carries a **`?`** button that launches an eight-step in-app tour of these tools (`public/js/tpf-tour.js`), separate from the main walkthrough list.
+
+---
+
+### ECB Enumerator
+
+Runs `ZSHOW E` and parses the ECB directory: every Entry Control Block (the z/TPF equivalent of a loaded program or transaction handler), its type, run status, and lifetime transaction count.
+
+**Location:** Security panel → z/TPF CONSOLE → ECB ENUMERATOR
+
+**How it works:** sends `ZSHOW E`, reads the lines between the `ZTPF200I` header and the `ZTPF202I` end marker, and splits each row into name, type (`APPL` or `SYSTEM`), status (`ACTIVE` / `IDLE` / `STOPPED`), entry count and transaction total. A trailing `[PRIV]` marker flags an ECB that handles privileged data. The parsed list is cached in `state.tpfEcbList` so the Entry Point Prober can reuse it.
+
+**What it flags:** privileged rows are highlighted and the footer counts privileged and active ECBs. Against the mock, five of the fifteen entry points are privileged `SYSTEM` handlers: `AUTH` (authentication), `CCARD` (card processing), `LOGR` (system logger), `PAYM` (payments) and `SECU` (security). Those five are where a misconfigured entry point exposes an authentication or cardholder-data path, not just a fares lookup.
+
+---
+
+### Privilege Boundary Scanner
+
+Maps the OPER → SYSOP → SYSPROG boundary by actually attempting one representative command at each level and recording whether it was accepted or refused.
+
+**Location:** Security panel → z/TPF CONSOLE → PRIVILEGE SCANNER
+
+**How it works:** sends three commands in sequence and classifies each response.
+
+| Command | Authority it needs | Read as "allowed" when |
+|---|---|---|
+| `ZSHOW S` (system status) | OPER | reply contains `ZTPF100I` |
+| `ZSTOP,RPRT` (report stoppable entry points) | SYSOP | reply is **not** `AUTHORIZATION FAILURE` |
+| `ZEND CHECK` (preview a system quiesce) | SYSPROG | reply is **not** `AUTHORIZATION FAILURE` |
+
+The highest command that succeeded sets the level: `ZEND` → SYSPROG, else `ZSTOP` → SYSOP, else `ZSHOW S` → OPER. The result updates the privilege badge in the section header.
+
+**Risk levels:**
+
+| Level | Reading |
+|---|---|
+| OPER | Read-only console access. Can enumerate ECBs and pools, cannot change system state. Low risk. |
+| SYSOP | Can stop entry points and load program modules. A compromised SYSOP session can disrupt transaction processing. Medium risk. |
+| SYSPROG | Full system control. `ZEND QUIESCE` from here halts all transaction processing. Critical. |
+
+**Teaching scenario:** sign on three times, once per credential, and run the scanner each time. As `TPFOP01` the two restricted commands come back `ZTPF900E AUTHORIZATION FAILURE ... THIS ATTEMPT HAS BEEN LOGGED` and the badge reads OPER. As `SYSOP01`, `ZSTOP,RPRT` now reports how many active entry points would be stopped and the badge moves to SYSOP. As `ADMIN01` all three succeed and the badge goes to SYSPROG. The point for students: on z/TPF there is no per-object authority list to scrape, the privilege *is* the command set, so you map it by trying commands and reading the refusals, and every refusal is an audit record.
+
+---
+
+### Entry Point Prober
+
+Runs `ZTEST ENTRY,<name>` against each ECB to check that it responds and to see whether it self-reports as handling privileged data.
+
+**Location:** Security panel → z/TPF CONSOLE → ENTRY POINT PROBER
+
+**How it works:** the target list is `state.tpfEcbList` from the ECB Enumerator if you have run it, otherwise a built-in list of ten common entry-point names. For each, it sends `ZTEST ENTRY,<name>`, treats a `ZTPF71x` reply as "responded", pulls the `RESPONDED IN Nms` timing and the `STATUS :` value, and flags the entry when the reply says `HANDLES PRIVILEGED DATA`. The footer totals how many responded and how many are privileged.
+
+**Teaching scenario:** run the ECB Enumerator first so the prober works the real directory rather than its fallback list. Every `ACTIVE` entry point answers in a few milliseconds; the `IDLE` ones (`SCHD`, `UPGD` on the mock) still respond but report zero transactions. The five privileged handlers come back tagged `PRIV`. Probing `PAYM` also surfaces a rising queue depth and an `AWAITING CONFIRMATION FEED` note, part of the cross-platform incident storyline seeded across all four mock hosts; it is a queue backlog, not an entry-point fault, and the normal `STATUS` and `RESPONDED` lines above it are what make that distinction the lesson.
+
+---
+
+### Pool Monitor
+
+Runs `ZSHOW P` and reads memory-pool utilization, flagging any pool at or above 90 percent.
+
+**Location:** Security panel → z/TPF CONSOLE → POOL MONITOR
+
+**How it works:** sends `ZSHOW P`, matches each pool row (`ECBPOOL`, `FPOOL`, `GPOOL`, `IPOOL`, `TPOOL`, `XPOOL`) for size, used and percent, and marks any pool at 90 percent or higher as a warning. The footer states whether any pool is over the line.
+
+**Why it belongs in a security panel:** pool exhaustion is a denial-of-service surface. A z/TPF system already running its ECB or frame pools near capacity can be tipped into transaction rejection by a modest traffic burst, no exploit required. Against the mock, `IPOOL` (95%) and `XPOOL` (97%) both trip the warning while `GPOOL` (62%) and `TPOOL` (70%) are shown but clear. The teaching point is that "the system is healthy" from `ZSHOW S` and "two pools are one bad afternoon from rejecting transactions" are both true at the same time.
+
+---
+
+## Part 33 — IBM i (AS/400) Security Tools
+
+The tools in Parts 1–32 target z/OS, z/VM and z/TPF over TN3270. Part 33 covers the first tools that target **IBM i (AS/400) over TN5250**. They audit the three foundations of IBM i security — system values, user profiles with their special authorities, and object *PUBLIC authority — against the seeded weak posture in the mock IBM i host (`mock-lpar/mock-as400.js`).
+
+All three live in the **IBM i SECURITY (AS/400)** section of the Security panel and share one implementation: `public/js/as400sec.js` (a push-driven screen state machine) plus `public/js/as400sec-parse.js` (pure, browser-free parsing and risk classification). They are read-only — every finding comes from a `WRK*`/`DSP*` display command; nothing is changed on the host.
+
+---
+
+### How the IBM i tools drive the terminal
+
+IBM i tools differ from the z/OS tools in a few protocol-level ways worth understanding before reading the individual tools:
+
+- **Screen text comes from `msg.rows`** (an array of cell rows), not a scrolling line log — each tool renders the emitted screen to text and parses fixed columns.
+- **Commands are issued from a menu command line.** The tool fills the first unprotected input field (the "Selection or command" line on any menu) with a CL command and presses Enter. The bridge sends the field content back to the host via `session.getModifiedFields()`.
+- **Detail (`DSP*`) screens have no command line.** On an IBM i display panel, Enter/F3/F12 all navigate *back*. So a tool that needs per-item detail (the user-profile enumerator) collects the item list first, returns to the menu with F3, and issues each `DSP*` from there — it never chains one detail screen into the next.
+- **`session.fillField` echoes a screen.** To avoid acting on its own typed-command echo, the state machine only ever reacts to the specific screen it is `expecting` next.
+
+**Prerequisite for all three:** connect to a TN5250 target, sign on, and stop at any menu showing a "Selection or command" line.
+
+---
+
+## Part 33A — System Value Security Analyzer
+
+Reads the security-relevant system values with `WRKSYSVAL` and rates each against a recommended value. Everything is on the single Work-with-System-Values list screen, so no drill-down is needed.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → SYSTEM VALUE SECURITY ANALYZER
+
+### How it works
+
+The tool types `WRKSYSVAL` on the menu command line and presses Enter. It parses the list screen (system-value name at columns 6–18, current value from column 20) and classifies each value with a rule table in `as400sec-parse.js` (`evaluateSysval`). It then F3s back to the menu. The list is 33 values long and pages (14 a screen), so the tool presses Roll Up while the panel says `More...` and de-dupes by name. Multi-value settings (`QAUDCTL`, `QAUDLVL`) are read from the whole value cell, not just the first token.
+
+### Risk levels
+
+| Rating | System values |
+|---|---|
+| HIGH | `QSECURITY` < 40, `QMAXSIGN`(*NOMAX), `QLMTSECOFR`(0), `QALWOBJRST`(*ALL), `QCRTAUT`(*CHANGE/*ALL), `QAUDCTL`(*NONE), `QAUDLVL`(*NONE) |
+| MEDIUM | weak `QPWD*` rules (`QPWDEXPITV`, `QPWDMINLEN`, `QPWDRQDDIF`, `QPWDLVL`, `QPWDLMTREP`(0)), `QINACTITV`(*NONE), `QINACTMSGQ`(a message queue, not *ENDJOB/*DSCJOB), `QLMTDEVSSN`(0), `QMAXSGNACN`(1), `QRETSVRSEC`(1), `QAUDCTL` set but missing `*AUDLVL` or `*OBJAUD`, `QAUDLVL` missing recommended levels, `QAUDENDACN`(*NOTIFY), `QALWUSRDMN`(*ALL), `QUSEADPAUT`(*NONE, anyone can create adopting programs), `QRMTSIGN`(*VERIFY/*SAMEPRF), `QRMTSRVATR`(1), `QSHRMEMCTL`(0) |
+| LOW | `QPWDVLDPGM`(*NONE), check exit point `QIBM_QSY_VLD_PASSWRD` too |
+| INFO | review items with no single weak value: `QPWDLMTCHR`, `QAUDLVL2`, `QCRTOBJAUD`, `QFRCCVNRST`, `QSCANFS`, `QSCANFSCTL`, and `QAUDFRCLVL` when not `*SYS` |
+| OK | hardened settings such as `QDSPSGNINF`(1), `QAUDFRCLVL`(*SYS), `QRMTSRVATR`(0), `QSHRMEMCTL`(1) |
+
+The 18 values from `QPWDLMTREP` down were added 2026-10-14 from a review of IBM i audit practice, not tested on a live IBM i, so confirm each value on the prompt for your release before putting a finding in front of an auditor.
+
+The DETAIL column carries the recommended value (e.g. "Use QSECURITY 40 or 50", "Enable security auditing").
+
+### Teaching scenario
+
+Run the analyzer against the mock and note that `QSECURITY 30` is HIGH — level 30 enforces password and resource security but not object-ownership integrity. Contrast the several MEDIUM `QPWD*` findings: individually minor, together they describe a system where a 1-character password that never expires and can be reused immediately is permitted. `QAUDCTL(*NONE)` (HIGH) is the one to lead with in a report — with auditing off, none of the other weaknesses leave a forensic trail.
+
+---
+
+## Part 33B — User Profile & Special-Authority Enumerator
+
+Enumerates user profiles with `WRKUSRPRF`, then reads each one with `DSPUSRPRF` to surface privileged accounts, default passwords, and weak limit-capability settings.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → USER PROFILE & SPECIAL-AUTHORITY ENUMERATOR
+
+### How it works
+
+This is the one IBM i tool that needs per-item detail: the list truncates long special-authority lists and does not show the default-password warning. So it runs in two phases — `WRKUSRPRF` to collect the profile names, then, from the menu command line, a `DSPUSRPRF USRPRF(name)` for each profile. From each detail screen it reads `Status`, `Limit capabilities`, the stacked special-authority list, and the "password matches profile name (default)" warning, classifies the profile (`evaluateProfile`), and Enter-returns to the menu for the next one.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | `*ALLOBJ` or `*SECADM` (superuser), or a default password (password = profile name) |
+| HIGH | high-risk authority (`*SERVICE`, `*SPLCTL`), or `LMTCPB(*NO)` on a privileged profile |
+| OK | no special authority of concern |
+
+A privileged profile that is currently `*DISABLED` is still reported (with a "(currently *DISABLED)" note) — dormant, but a latent escalation path if re-enabled.
+
+### Teaching scenario
+
+Run the enumerator against the mock. `QSECOFR` is CRITICAL on three counts at once — all eight special authorities, a default password, and `LMTCPB(*NO)`. The instructive one is `APPADMIN`: an ordinary-looking "application service account" that quietly holds `*ALLOBJ`. Service and batch accounts accumulating `*ALLOBJ` "to make things work" is one of the most common real-world IBM i findings. Then look at `QSRV` — privileged *and* carrying a default password, but `*DISABLED`; explain why a disabled-but-privileged profile still belongs in the report.
+
+### The enumeration path that needs no command line
+
+The tool types `WRKUSRPRF` on a command line. A properly locked-down IBM i user does not have one — `LMTCPB(*YES)`, an initial program, a menu they cannot leave. That user can still list every profile on the system: **Display Job → option 13 (Display library list) → `5` on `QSYS` → the `*USRPRF` objects.** On real hardware the entry is the System Request key then option 3; on the mock it is the `DSPJOB` command or *User tasks → 6*. The Display Library panel pages through every profile as a green `*USRPRF` row, and `5` on one opens the same `DSPUSRPRF` detail. The walkthrough **`as400-dspjob-enumeration`** drives it step by step. The countermeasures are indirect — keep restricted users at `LMTCPB(*YES)` with an inescapable menu, set `QSYS` / the `*USRPRF` objects to `*PUBLIC *EXCLUDE` where the applications allow, and audit for the pattern (a restricted user opening `DSPJOB` then Display Library on `QSYS`).
+
+---
+
+## Part 33C — Object / *PUBLIC Authority Scanner
+
+Enumerates objects with `WRKOBJ`, then reads each one's full authority with `DSPOBJAUT` to flag over-permissive `*PUBLIC` authority **and** risky private grants, raising severity for sensitive objects.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → OBJECT / *PUBLIC AUTHORITY SCANNER
+
+### How it works
+
+The tool types `WRKOBJ` to collect the object list (Object/Library), then — like the user-profile enumerator — returns to the menu and issues a `DSPOBJAUT OBJ(lib/name)` for each object. From each detail screen it reads the `*PUBLIC authority` and the **private authority list** (the individual user grants), and classifies the object with `evaluateObjectDetail`. `*PUBLIC` is the floor of access for any user without a specific grant; the private list then shows exactly *who* has been granted more.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | `*PUBLIC *ALL` — any user can read, change, **and** delete/manage the object |
+| HIGH | `*PUBLIC *CHANGE` — any user can read and modify the data |
+| MEDIUM | a sensitive object that is otherwise OK/LOW but has a risky **private** grant (a non-`*PUBLIC` user with `*ALL`/`*CHANGE`) |
+| LOW | `*PUBLIC *USE` — any user can read/execute |
+| OK | `*PUBLIC *EXCLUDE` — no default access, no risky private grants |
+
+Severity is amplified (finding note "sensitive object") when the object name or library matches a sensitive pattern (`PAYROLL`, `EMPMAST`, `CONFIG`, `USRPRF`). The finding also lists risky private grants, e.g. `private: JSMITH=*CHANGE`.
+
+### Teaching scenario
+
+Run the scanner against the mock. `PAYROLL/EMPMAST` at `*PUBLIC *ALL` is the headline CRITICAL — any authenticated user can read or delete the payroll master file — and the drill-down additionally surfaces `private: APPADMIN=*ALL, JSMITH=*CHANGE`, naming exactly who else has standing access. The instructive contrast is `APPLIB/CONFIG`: its `*PUBLIC *USE` looks benign (LOW) from the list alone, but the `DSPOBJAUT` drill-down finds a private `GRPACCT=*CHANGE` grant on a sensitive object and escalates it to MEDIUM — a finding the single-screen `*PUBLIC` view would have missed entirely. This is the whole point of the drill-down: `*PUBLIC` is only half the picture.
+
+---
+
+## Part 34 — IBM i (AS/400) Security Tools, Wave 2
+
+Part 33 covered the IBM i core trio (system values, user profiles, object authority). Wave 2 adds four tools that target the extended surfaces of the mock IBM i host: network attributes, job descriptions, authorization lists, and active jobs. They live in the same **IBM i SECURITY (AS/400)** panel section and share the `as400sec.js` state machine — three are single-screen, one (authorization lists) drills like the object scanner. Same prerequisite as Part 33: connect over TN5250, sign on, and stop at a menu with a "Selection or command" line.
+
+---
+
+## Part 34A — Network Attributes Analyzer
+
+Reads the network attributes with `DSPNETA` (one display screen) and flags inbound-request settings that enable remote execution.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → NETWORK ATTRIBUTES ANALYZER
+
+### Risk levels
+
+| Rating | Attribute |
+|---|---|
+| HIGH | `JOBACN(*FILE)` — auto-runs inbound job streams (remote command execution); `DDMACC(*ALL)` — any remote system can issue DDM/DRDA (remote SQL/commands) |
+| MEDIUM | `PCSACC(*REGFAC)` — broad Client Access host-server functions; `ALWANYNET(*ANYNET)` — APPC-over-TCP tunnelling |
+| OK/INFO | `SYSNAME`, `LCLLOCNAME`, `ALRSTS` and other non-exposing attributes |
+
+### Teaching scenario
+
+`JOBACN(*FILE)` is the headline: an attacker who can place a job stream in an inbound queue (via DDM, FTP, or a network server) gets it **run automatically** — remote code execution without a shell. Pair it with `DDMACC(*ALL)` and the point lands: the box accepts remote DDM/DRDA from anyone *and* auto-runs what arrives. Recommend `JOBACN(*REJECT)` / `*SEARCH` and a DDM exit program.
+
+---
+
+## Part 34B — Job Description Privesc Scanner
+
+Uses `WRKUSRPRF`-style single-screen parsing of `WRKJOBD` to find the classic IBM i privilege-escalation path: a job description that names a fixed `USER()` and is usable by `*PUBLIC`.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → JOB DESCRIPTION PRIVESC SCANNER
+
+### How it works
+
+`WRKJOBD` lists each JOBD with its `User` and `*PUBLIC` authority — enough to classify without a drill-down. A JOBD with `USER(*RQD)` runs under the submitter's own profile (safe). A JOBD that names a real profile **and** is usable by `*PUBLIC` means any user can `SBMJOB JOB(x) JOBD(that)` and have the job run under the named profile's authority.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | usable-by-`*PUBLIC` JOBD naming the security officer (`QSECOFR`) |
+| HIGH | usable-by-`*PUBLIC` JOBD naming any other real profile (e.g. an `*ALLOBJ` service account) |
+| OK | `USER(*RQD)`, or `*PUBLIC *EXCLUDE` even if a user is named |
+
+### Teaching scenario
+
+`APPJOBD` names `USER(QSECOFR)` at `*PUBLIC *USE` → CRITICAL: any user runs code as the security officer. `WEBJOBD` names `APPADMIN` (an `*ALLOBJ` account) at `*PUBLIC *CHANGE` → HIGH. Contrast `OPSJOBD` (names `QSYSOPR` but `*PUBLIC *EXCLUDE`) → OK: the named user is harmless if `*PUBLIC` can't use the JOBD. This is a favourite real-world finding because JOBDs are widely readable and rarely reviewed.
+
+---
+
+## Part 34C — Authorization List Scanner
+
+Enumerates authorization lists with `WRKAUTL`, then drills each with `DSPAUTL` (like the object scanner) to flag over-permissive `*PUBLIC` authority and show the objects it cascades to.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → AUTHORIZATION LIST SCANNER
+
+### How it works
+
+An authorization list is a named grouping of object authorities; every object attached to it inherits its `*PUBLIC` setting. So a single over-permissive authlist quietly widens access to many objects at once. `WRKAUTL` gives the names; `DSPAUTL AUTL(x)` gives the `*PUBLIC authority` and the secured-object list.
+
+### Risk levels
+
+| Rating | `*PUBLIC` authority |
+|---|---|
+| CRITICAL | `*ALL` |
+| HIGH | `*CHANGE` |
+| LOW | `*USE` |
+| OK | `*EXCLUDE` |
+
+For a flagged list the finding names the secured objects it exposes.
+
+### Teaching scenario
+
+`PAYAUTL` at `*PUBLIC *CHANGE` is HIGH, and the drill-down shows it secures `PAYROLL/EMPMAST` and `QSYS/PAYROLL` — so the single authlist misconfiguration exposes the whole payroll estate at once. Contrast `SECAUTL` at `*PUBLIC *EXCLUDE` (OK). The lesson: audit authorization lists *before* individual objects — one authlist can be the root cause of many object-level findings.
+
+---
+
+## Part 34D — Active Job Scanner
+
+Uses `WRKACTJOB` to flag jobs running under a privileged profile and network host servers. It cross-references the User Profile Enumerator's results, so running that tool first sharpens this one.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → ACTIVE JOB SCANNER
+
+### How it works
+
+`WRKACTJOB` lists active jobs with their user, subsystem, and function. The scanner flags a job when its user is privileged — either a built-in set (`QSECOFR`, `QSECADM`, `QSRV`) **or** any profile the User Profile Enumerator rated CRITICAL/HIGH earlier in the session (so an `*ALLOBJ` service account discovered there is recognised here). It also flags well-known network host-server jobs (`QZDASOINIT`, `QRWTSRVR`, …) as a remote attack surface.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| HIGH | job runs under a privileged profile |
+| MEDIUM | network host server (remote attack surface) |
+| OK | ordinary interactive/batch job |
+
+### Teaching scenario
+
+Run the User Profile Enumerator first (it rates `APPADMIN` CRITICAL for `*ALLOBJ`), then the Active Job Scanner: `NIGHTLYRUN` under `APPADMIN` is flagged HIGH *because* of that cross-reference — demonstrating how chaining tools builds a picture no single tool sees. `MAINTJOB` under `QSECOFR` is HIGH from the built-in set, and `QZDASOINIT` (the DB host server under `QUSER`) is MEDIUM — a reminder that the ODBC/JDBC host server is a network-reachable entry point worth hardening.
+
+---
+
+## Part 35 — IBM i (AS/400) Shipped Profile Audit
+
+Parts 33–34 audit system values, user profiles, objects, and the extended
+surfaces. Part 35 adds an eighth IBM i tool with one narrow job: check the
+**IBM-supplied (`Q*`) user profiles** against a single hardening rule.
+
+IBM ships dozens of `Q*` profiles — `QSECOFR`, `QSYSOPR`, `QPGMR`, `QUSER`,
+`QSYS`, `QSRV`, `QTMHHTTP`, and more. System daemons and base services run
+under them, so they **cannot be deleted**. The control is to make them
+**non-interactive**: `STATUS(*DISABLED)` or `PASSWORD(*NONE)`. Background
+subsystem jobs still run under a `*NONE` profile; only interactive sign-on
+(5250, FTP, SSH) is blocked. The one profile that legitimately keeps a
+password is the designated break-glass administrative account.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → SHIPPED PROFILE AUDIT
+
+### How it works
+
+Same two-phase drill as the User Profile Enumerator (Part 33B): `WRKUSRPRF`
+to collect the profile list, then a `DSPUSRPRF USRPRF(name)` per profile from
+the menu command line. The mock now models the full IBM-supplied `Q*` set
+(~50 profiles), so `WRKUSRPRF` spans several pages — the tool rolls through
+all of them (Roll Up while the panel still reads `More...`, stopping at
+`Bottom`) before it starts drilling. It keeps only the names beginning with `Q` and,
+from each detail screen, reads `Status`, the **`No password (*NONE)`** line,
+the **`Date password last changed`** line, the special-authority list, and the
+default-password warning. `evaluateShippedProfile` (in `as400sec-parse.js`)
+classifies each one.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | password equals the profile name (a default password) — on any shipped profile, including a disabled one |
+| HIGH | a **privileged** (`*ALLOBJ`/`*SECADM`/`*SERVICE`/`*SPLCTL`) `Q*` profile still `STATUS(*ENABLED)` with a password |
+| MEDIUM | a non-privileged `Q*` profile still `STATUS(*ENABLED)` with a password |
+| LOW | `QSECOFR` enabled with a non-default password but no recorded change date |
+| OK | non-interactive already — `PASSWORD(*NONE)` and/or `STATUS(*DISABLED)`; or `QSECOFR` enabled with a dated non-default password |
+
+`QSECOFR` is judged as the break-glass account: a non-default password there is
+*expected*, only a default password (CRITICAL) or a missing change date (LOW)
+is flagged, and a disabled `QSECOFR` is flagged MEDIUM as a recovery-path
+concern.
+
+### What the mock seeds
+
+`USRPRFS` in `mock-lpar/mock-as400.js` seeds the full IBM-supplied `Q*` set.
+A hand-picked few are an **unhardened factory box**; the rest ship the way a
+real modern IBM i does — `PASSWORD(*NONE)`, already compliant:
+
+| Profile | Seeded state | Audit result |
+|---|---|---|
+| `QSECOFR` | `*ENABLED`, password = `QSECOFR` | CRITICAL (default password) |
+| `QSRV` | `*DISABLED`, password = `QSRV` | CRITICAL (default password, even disabled) |
+| `QSRVBAS` | `*ENABLED`, password = `QSRVBAS`, holds `*ALLOBJ *SAVSYS *JOBCTL` | CRITICAL (default password on a privileged profile) |
+| `QPGMR` | `*ENABLED`, has `*SPLCTL` | HIGH |
+| `QSYSOPR`, `QUSER`, `QTMHHTTP` | `*ENABLED`, password set | MEDIUM |
+| `QSYS` | `*DISABLED` + `PASSWORD(*NONE)` | OK — the target state, despite holding every special authority |
+| `QLPAUTO`, `QLPINSTALL` | `*ENABLED`, `PASSWORD(*NONE)`, hold `*ALLOBJ *SECADM` | OK — powerful, but non-interactive |
+| ~40 more (`QDOC`, `QTFTP`, `QSNADS`, `QDIRSRV`, `QBRMS`, `QTCP`, `QMSF`, `QNOTES`, …) | `*ENABLED`, `PASSWORD(*NONE)` | OK — the long compliant tail, which is what the findings must join |
+| `QYSPJ` | `*ENABLED`, password = `QYSPJ`, `*ALLOBJ *SECADM`, "System operator" description | CRITICAL — **not an IBM-supplied profile**; a `Q`-named blend-in backdoor |
+
+The audit checks the profile name against a list of the ~50 IBM-supplied
+`Q*` profiles. Anything else beginning with `Q` — `QYSPJ` here — is an
+*irregular profile*: don't harden it, investigate it (`DSPOBJD OBJ(QYSPJ)
+*USRPRF` and the audit journal show who created it and when), then
+`DLTUSRPRF` once confirmed rogue. This is the check that catches an
+attacker who already had `*SECADM` and left themselves a way back in.
+
+Special-authority values were cross-checked against the IBM i Security
+Reference (SC41-5302) "IBM-supplied user profiles" table.
+
+### Teaching scenario
+
+Run the audit against the mock. The spread is deliberate: four CRITICAL
+(`QSECOFR`, `QSRV`, `QSRVBAS` default passwords, plus `QYSPJ` the irregular
+profile), one HIGH, three MEDIUM, and a long tail of OK rows. That tail is the point — most
+of a real system's `Q*` profiles already ship `PASSWORD(*NONE)`, so the audit
+is really a hunt for the handful that don't (and for any irregular, non-IBM
+`Q`-named profile someone slipped in). The instructive pair is `QSYS` versus
+the findings — `QSYS` holds all eight special authorities and is still **OK**,
+because it is disabled *and* has no password. That is exactly the state the
+findings need to reach. `QSRVBAS` is the newest lesson: it is enabled, holds
+`*ALLOBJ`, and still carries its shipped default password — a straight
+CRITICAL. `QSRV` is the other: it is already `*DISABLED`,
+which feels safe, but its password still equals its name, so a `DST`/`SST`
+recovery or a re-enable would hand an attacker `*ALLOBJ *SERVICE` — a default
+password is CRITICAL regardless of status.
+
+Then remediate one live: type
+
+```
+CHGUSRPRF USRPRF(QUSER) PASSWORD(*NONE) STATUS(*DISABLED)
+```
+
+on the command line and re-run the audit — `QUSER` moves to **OK**. The mock
+models `CHGUSRPRF` for `PASSWORD(*NONE)` and `STATUS` only, and the change
+persists for the life of the mock process (restart to reset).
+
+### Two cross-checks the tool does not cover
+
+- **Service Tools user IDs.** Type `STRSST` — the mock renders the "Work with
+  service tools user IDs" list (SST option 8). `QSECOFR`, `22222222`, and
+  `QSRV` all still hold their **shipped default password**. On a real system,
+  change them via `STRSST` → 8 → 2, or from `DST` at the console if SST itself
+  is disabled.
+- **`QAUTOVRT`.** Run the System Value Security Analyzer (Part 33A). `QAUTOVRT`
+  is `*NOMAX` on the mock, which lets the system auto-create unlimited virtual
+  (Telnet / pass-through) device descriptions — an endless supply of sign-on
+  target devices. Set it to `0`, or a small controlled limit.
+- **`ANZDFTPWD`.** Type `ANZDFTPWD ACTION(*NONE)` for IBM's own default-password
+  report (mock: lists `QSECOFR` and `QSRV`, takes no action).
+
+### Remediation on a real system
+
+The mock is for practising the read; the fix on a real IBM i is a `CHGUSRPRF`
+per shipped profile plus an automated audit you can schedule. Point the audit
+at `QSYS2.USER_INFO`:
+
+```sql
+--  Shipped (Q*) profile posture — findings only.
+--  ACS "Run SQL Scripts", STRSQL, or RUNSQLSTM. Caller needs *ALLOBJ + *SECADM
+--  for USER_DEFAULT_PASSWORD to be populated (it is NULL on 7.5 SF99950 L5+,
+--  where ANZDFTPWD is the supported default-password check instead).
+SELECT AUTHORIZATION_NAME AS PROFILE, STATUS,
+       NO_PASSWORD_INDICATOR  AS PWD_IS_NONE,   -- 'NO' = still has a password
+       USER_DEFAULT_PASSWORD  AS DFT_PWD,       -- 'YES' = password equals name
+       PASSWORD_CHANGE_DATE, SPECIAL_AUTHORITIES
+  FROM QSYS2.USER_INFO
+  WHERE (AUTHORIZATION_NAME LIKE 'Q%' AND NO_PASSWORD_INDICATOR = 'NO'
+         AND STATUS = '*ENABLED' AND AUTHORIZATION_NAME <> 'QSECOFR')
+     OR USER_DEFAULT_PASSWORD = 'YES'
+  ORDER BY AUTHORIZATION_NAME;
+```
+
+Wrap it in a scheduled CL program (`RUNSQLSTM` the query into an outfile,
+`CPYF ... TOFILE(*PRINT)`, then `ANZDFTPWD ACTION(*NONE)`), and
+`ADDJOBSCDE` it weekly. **Expected secure state:** the findings query returns
+only your break-glass account (or nothing); every other `Q*` profile is
+`STATUS(*DISABLED)` or `PASSWORD(*NONE)`; `ANZDFTPWD` reports zero profiles.
+
+---
+
+## Part 36 — z/TPF Security Console, Wave 2
+
+Part 32 covered the original four z/TPF tools (ECB Enumerator, Privilege
+Scanner, Entry Point Prober, Pool Monitor). Wave 2 adds three more to the same
+**z/TPF CONSOLE** section, built on the same screen-scraped `tpf-security.js`
+implementation. The mock (`mock-lpar/mock-tpf.js`) grew a matching command
+surface: `ZSHOW` gained the diagnostic word-form subcommands `UTIL` / `LOCK` /
+`PROG` / `MQP` / `ALLOC`, `ZTEST` gained a full interactive debugger past its
+old `ENTRY` form, and four hardening commands were added — `ZINET DISPLAY`,
+`ZCRAS DISPLAY`, `ZAUTH DISPLAY`, and `ZFILE cat`.
+
+Same prerequisite as Part 32: connect to a z/TPF target (the bundled mock on
+port 3274, or a session profile with host type `TPF`), sign on, and stop at the
+`ENTER TPF COMMAND` console.
+
+---
+
+### System Diagnostics
+
+Runs `ZSHOW UTIL`, `ZSHOW LOCK`, `ZSHOW MQP`, and `ZSHOW ALLOC` in one sweep
+and flags the resource anomalies a containment review cares about.
+
+**Location:** Security panel → z/TPF CONSOLE → SYSTEM DIAGNOSTICS
+
+**How it works:** issues the four diagnostic `ZSHOW` subcommands back to back
+and parses each reply. It flags a lock held over 1,000 ms or with five or more
+waiters, the `DEFERRED` scheduler list above 1,000 entries, and any fixed-file
+record type at or above 90 percent of its prime allocation. CPU is left
+unflagged unless an I-stream is genuinely hot (≥ 85 percent) or the CPU-loop
+detector reports anything other than `NONE`.
+
+**Teaching scenario:** on the mock all three non-CPU checks fire — `PAYM` holds
+`ACCT#00920C14` for 4,210 ms with seven waiters, the deferred list sits at
+1,842, and `#ACCREC` is at 91 percent. The result text says plainly that these
+are one incident (the seeded `CYC-0826` storyline), not three unrelated faults:
+the `PAYM` lock is why the deferred list is backing up, and the backlog is why
+`#ACCREC` is filling. The lesson is reading them together instead of chasing
+each in isolation.
+
+---
+
+### Entry Point Debugger
+
+Drives the console debugger — `ZTEST START` then `DISPLAY`, `BP`, `STEP`, `GO`,
+`STOR`, `STOP` — against a privileged ECB.
+
+**Location:** Security panel → z/TPF CONSOLE → ENTRY POINT DEBUGGER
+
+**How it works:** targets the first privileged ECB from the Enumerator's cached
+list, or `PAYM` as a fallback. It runs a full debug session: `ZTEST START,<ecb>`
+attaches and loads the entry point, `ZTEST DISPLAY` dumps the PSW and all 16
+general registers, `ZTEST BP` sets a breakpoint a few instructions in, `ZTEST
+STEP` single-steps once, `ZTEST GO` runs to the breakpoint, `ZTEST STOR` dumps
+entry-point storage, and `ZTEST STOP` closes the session. Register and storage
+values are seeded deterministically from the program name and address, so a
+given walkthrough always sees the same numbers.
+
+**Why it belongs in a security panel:** `ZTEST ENTRY` (the Entry Point Prober in
+Part 32) is a health check. Everything past `ENTRY` is a live debugger —
+registers, breakpoints, single-step, storage read — and on the mock it carries
+no privilege gate, so an `OPER` session that can reach the console can attach it
+to a privileged payment handler. The finding to record in a review: treat
+operator-console access as equivalent to code-execution access on anything
+`ZTEST` can name. Against `PAYM`, `DISPLAY` also surfaces the `CYC-0826` marker
+in the save-area chain.
+
+---
+
+### Hardening Audit
+
+Sweeps the four surfaces a z/TPF training lab is usually left exposed on:
+internet daemons, CRAS console routing, the command authorization matrix, and
+the POSIX account files. Runs `ZINET DISPLAY`, `ZCRAS DISPLAY`, `ZAUTH DISPLAY`,
+`ZFILE cat /etc/passwd`, and `ZFILE cat /etc/shadow`, then collapses everything
+into one findings table sorted by severity.
+
+**Location:** Security panel → z/TPF CONSOLE → HARDENING AUDIT
+
+**How it works and what it flags:**
+
+| Area | Command | Finding |
+|---|---|---|
+| ZINET | `ZINET DISPLAY` | a daemon with `AUTH ANONYMOUS` (CRITICAL) or `AUTH NONE` (HIGH); password auth with `TLS NO` (MEDIUM) |
+| ZCRAS | `ZCRAS DISPLAY` | an alternate CRAS bound to a TCP/IP line (network-reachable operator console); a terminal pool routing restricted commands for a non-admin class |
+| ZAUTH | `ZAUTH DISPLAY` | `ZFILE` / `ZDCP` / `ZLOGP` / `ZSTOP` / `ZEND` authorized for a terminal class other than `ADMIN` (or read-only `AGENT`) |
+| POSIX | `ZFILE cat /etc/passwd` + `/etc/shadow` | a demo account (`tpfuser`, `guest`, `test`) with a login shell; an `/etc/shadow` entry with a weak `$1$` MD5 hash or no password field at all |
+
+**Teaching scenario:** the mock returns eleven findings — two CRITICAL
+(anonymous FTP, and `test` with an empty shadow field), eight HIGH, one MEDIUM.
+The clean contrast is the system accounts `tpf` / `daemon` / `sshd`:
+`/sbin/nologin` shells and `!` / `*` in shadow, which is the state the demo
+accounts should be in. None of it is a live incident — it is what a lab looks
+like when the teardown step was skipped. On a real z/TPF system the fixes are
+in the ZINET configuration, the CRAS line assignments, the `UUSR` user-exit
+authorization table, and `/etc/passwd` / `/etc/shadow` maintenance.
+
+### Beyond the console: the ssh daemon
+
+The Hardening Audit reads the ZINET server table from the operator console, but
+the sshd on a z/TPF box (IBM's ported OpenSSH, run from ZINET) is worth checking
+directly from the network. There is no OpenSSH "anonymous" switch — `anon=Y` is
+a ZINET **FTP/TFTP** server-table setting only. What you are actually testing
+for is a server that grants a session with **no credential**, which comes from
+`PermitEmptyPasswords yes` plus a null-password account, an
+`AuthenticationMethods none` in a `Match` block, or a `none`-auth-accepting
+ported sshd.
+
+Quick check, offering no auth method and a harmless command so a success is
+unambiguous:
+
+```bash
+ssh -o BatchMode=yes -o PubkeyAuthentication=no -o PasswordAuthentication=no \
+    -o NumberOfPasswordPrompts=0 -p <PORT> anonymous@<TPF_HOST> true
+```
+
+`Permission denied (publickey,password)` is the secure result. A banner plus
+`true` returning, or an SFTP subsystem that opens, is the finding.
+
+Scripted sweep (`AutoAddPolicy` disables host-key verification — fine for an
+audit run, do not copy it into anything that matters):
+
+```python
+import sys, paramiko
+
+def check_ssh_nocred(host, port=22, timeout=10):
+    c = paramiko.SSHClient()
+    c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        c.connect(host, port=port, username="anonymous", password="",
+                  look_for_keys=False, allow_agent=False, timeout=timeout)
+        try:
+            c.open_sftp()
+            print(f"[!] FINDING {host}:{port}: session AND sftp with no credential")
+        except Exception:
+            print(f"[!] FINDING {host}:{port}: shell session with no credential")
+        c.close()
+        return True
+    except paramiko.AuthenticationException:
+        print(f"[+] SECURE {host}:{port}: credentials required")
+        return False
+    except paramiko.SSHException as e:
+        print(f"[?] INCONCLUSIVE {host}:{port}: handshake failure ({e})")
+        return None
+    except Exception as e:
+        print(f"[-] ERROR {host}:{port}: {e}")
+        return None
+
+if __name__ == "__main__":
+    h = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
+    p = int(sys.argv[2]) if len(sys.argv) > 2 else 22
+    check_ssh_nocred(h, p)
+```
+
+`c.connect(..., password="")` probes both `none` auth and empty-password auth in
+one attempt. A kex/cipher mismatch or a mid-handshake drop is **inconclusive**,
+not a pass — it is not evidence the server is locked down. This check can't run
+against the mock fleet, there is no sshd there; use a real target or a throwaway
+local `sshd`. A panel version is backlog item 24.
+
+---
+
+## Part 37 — IBM i (AS/400) Exit Point / IFS / NetServer Audit
+
+Parts 33–34 cover the core trio and the extended surfaces (network attributes, job descriptions, authorization lists, active jobs). Part 37 adds three tools aimed at the surfaces a shop locking down DB2 libraries tight often leaves unmonitored by comparison: registration-facility exit points, the IFS, and NetServer (SMB). All three live in the same **IBM i SECURITY (AS/400)** panel section and are single-screen reads — no drill-down. Same prerequisite as Part 33: connect over TN5250, sign on, and stop at a menu with a "Selection or command" line.
+
+---
+
+## Part 37A — Exit Point & Service Registration Audit
+
+Reads the registration-facility exit points with `WRKREGINF` (one screen) and flags any exit point with no program registered.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → EXIT POINT &amp; SERVICE REGISTRATION AUDIT
+
+### How it works
+
+An exit point is a named hook IBM i calls out to before servicing certain requests (FTP, remote SQL, remote command, NetServer file access, …). With no program registered at that hook, nothing validates the request at all — this is the usual explanation when a restricted shell (`LMTCPB(*YES)`) turns out not to matter: the user never goes through a 5250 command line, they go through FTP or Client Access instead, channels an unregistered exit point leaves completely open.
+
+### Risk levels
+
+| Rating | Exit point |
+|---|---|
+| CRITICAL | `QIBM_QTMF_SERVER_REQ` (FTP server request validation), `QIBM_QPWFS_FILE_SERV` (NetServer file-serving validation), `QIBM_QCA_RTV_COMMAND` (remote command call) — each bypasses `LMTCPB(*YES)` entirely over its own channel when unregistered |
+| CRITICAL (added) | `QIBM_QZRC_RMT` (remote command and program call server). A review of IBM i audit practice names this as the real remote-command exit point, so confirm on `WRKREGINF` whether your release also uses `QIBM_QCA_RTV_COMMAND` |
+| HIGH | `QIBM_QZDA_INIT` (remote SQL/ODBC server init), `QIBM_QZDA_NDB1` (native database requests), `QIBM_QTMF_SVR_LOGON` (FTP logon) unregistered |
+| MEDIUM | `QIBM_QZDA_SQL1` (ad hoc remote SQL), `QIBM_QZDA_ROI1` (retrieve object information), `QIBM_QZSO_SIGNON` (signon server), `QIBM_QTG_DEVINIT` (Telnet device init), `QIBM_QZHQ_DATA_QUEUE` (data queue server) unregistered |
+| LOW | `QIBM_QTMF_CLIENT_REQ` (outbound FTP client requests) unregistered, lower exposure than server-side. `QIBM_QSY_VLD_PASSWRD` (password validation), pair with `QPWDVLDPGM` |
+| OK | any exit point showing a real registered program name |
+
+### Teaching scenario
+
+On the mock, `QIBM_QTMF_SERVER_REQ` shows `*NONE` → CRITICAL: any FTP client can `GET`/`PUT`/`RCMD` against this box regardless of what the user's 5250 session is restricted to. Contrast `QIBM_QZDA_SQL1` (`SQLEXITPGM`) and `QIBM_QZSO_SIGNON` (`SIGNONEXIT`), which show a real exit program registered → OK. The CRITICAL/HIGH/MEDIUM ratings are a judgment call, not IBM's. The lesson for an engagement: always check `WRKREGINF` before trusting that `LMTCPB(*YES)` actually restricts a user — it only restricts the 5250 command line, not every other way onto the box.
+
+---
+
+## Part 37B — NetServer / SMB Configuration Audit
+
+Reads the NetServer (SMB) configuration in one screen and flags a set guest profile and unenforced SMB signing. (A genuine IBM i has no single green-screen command for this — iSeries Navigator or the `QZLSCFG` API own it there — so the mock models it as a flat report screen the same shape as `DSPNETA`, under an invented `DSPNETSVR` command, to teach the same finding without requiring a GUI.)
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → NETSERVER / SMB CONFIGURATION AUDIT
+
+### Risk levels
+
+| Rating | Attribute |
+|---|---|
+| HIGH | `GUESTUSRPRF` names a real profile — unauthenticated SMB clients get mapped to it |
+| MEDIUM | `SIGNEDSMB(*NO)` — SMB requests aren't signed, so they can be tampered with or replayed in transit |
+| OK | `GUESTUSRPRF` blank/`*NONE`, `SIGNEDSMB(*YES)`, and other non-exposing attributes |
+
+### Teaching scenario
+
+The mock ships `GUESTUSRPRF(QNETSVRGST)` and `SIGNEDSMB(*NO)` — both findings at once, a realistic default-install posture. The guest profile means anyone who can reach the share at all gets in without a credential; unsigned SMB means even a legitimate session's traffic can be tampered with on the wire. Recommend `GUESTUSRPRF(*NONE)` unless anonymous share access is actually a requirement, and `SIGNEDSMB(*YES)`.
+
+---
+
+## Part 37C — IFS Permission Sweep
+
+Uses `WRKLNK` to list IFS object links and flags `*PUBLIC` authority the same way the Object Scanner flags library objects — except the IFS is usually the blind spot, not the audited surface.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → IFS PERMISSION SWEEP
+
+### How it works
+
+Shops that lock DB2 libraries down meticulously often treat the IFS (`/`, `/QOpenSys`, `/home`, a PASE web root) like an unmonitored NFS share. `WRKLNK` gives the object link, type, owner, and `*PUBLIC` authority in one list — no drill-down needed, the list already carries everything the classifier needs.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | world-writable (`*PUBLIC` includes `W`) **and** the path looks sensitive (a `.conf`/`.env` file, something under `.ssh/`) |
+| HIGH | world-writable anywhere, **or** world-readable on a path that looks like credentials/key material (`id_rsa`, `.pem`, `passwd`) |
+| OK | everything else |
+
+### Teaching scenario
+
+`/www/myapp/config/db.conf` at `*PUBLIC *RW` is CRITICAL — world-writable *and* almost certainly holds a database credential. `/home/webadmin/.ssh/id_rsa` at `*PUBLIC *R` is HIGH even though it's only readable, not writable — a world-readable private key is still a complete compromise of whatever it authenticates to. `/home/webadmin/deploy.sh` at `*PUBLIC *RWX` is HIGH on write alone, regardless of content. Contrast `/QSYS.LIB` at `*PUBLIC *RX`, the ordinary baseline → OK. The lesson: the IFS needs the same `*PUBLIC`-authority discipline as DB2 libraries, and in practice it rarely gets it.
+
+---
+
+## Part 38 — IBM i (AS/400) Adopted-Authority Scanner / Menu Bypass Probe
+
+Part 37 covered the auxiliary surfaces (exit points, NetServer, the IFS). Part 38 adds two tools aimed at a different failure mode: not a misconfigured surface, but a restriction that looks solid on paper and isn't in practice. Same panel section, same prerequisite as Part 33.
+
+---
+
+## Part 38A — Adopted-Authority Runtime Scanner
+
+Reads the current job's call stack with `WRKJOB OPTION(*PGMSTK)`, then `DSPPGM` on every level that adopts, to find out whose authority it's actually running under.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → ADOPTED-AUTHORITY RUNTIME SCANNER
+
+### How it works
+
+A program compiled `USRPRF(*OWNER)` with `USEADPAUT(*YES)` runs under its *owner's* authority at that stack level, not the authority of whoever's actually signed on. The call stack only shows *whether* a level adopts (the `Adopt` column); it doesn't say whose authority that is, that takes a `DSPPGM` on the program itself. This is distinct from the existing User Profile & Special-Authority Enumerator, which checks special authorities on profiles sitting at rest, not adopted authority of programs actually running right now.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | an adopting stack level owned by `QSECOFR` |
+| HIGH | an adopting stack level owned by any other profile (still needs that profile's own special authorities cross-referenced, but adoption alone is already a real exposure) |
+| OK | a stack level that doesn't adopt at all |
+
+### Teaching scenario
+
+On the mock, the current job's stack is `QCMD` → `APPMENU` → `PAYUPD`, three ordinary-looking levels. Only `PAYUPD` adopts, and `DSPPGM APPLIB/PAYUPD` shows `Owner . . . : QSECOFR` and `Use adopted authority . . . : *YES` → CRITICAL. The lesson: an "ordinary" payroll update program sitting three levels deep in a normal interactive job can be running with the security officer's full authority the whole time, and nothing about the call stack screen itself says so until you check the one program that adopts.
+
+---
+
+## Part 38B — Menu/Command-Line Bypass Probe
+
+Drives a fixed set of stock "Work with X" utilities and actually executes a command from each one's own command line, to find out where `LMTCPB(*YES)` stops reaching.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → MENU/COMMAND-LINE BYPASS PROBE
+
+### How it works
+
+`LMTCPB(*YES)` is supposed to deny command entry. In practice it only gates the sign-on session's own command line. A custom menu system that routes a restricted user into a stock IBM utility screen often leaves *that* screen's own command line live, since `LMTCPB` is never re-checked there, it was only ever checked once, at sign-on. The probe visits `WRKSPLF`, `WRKOUTQ`, `WRKJOBD`, `WRKUSRJOB`, and `WRKACTJOB` in turn and tries to run a real command from each one's command line, then contrasts the result against `DSPJOB`'s options screen, which only has a numeric selection field and never interprets what's typed into it as a command at all.
+
+This is distinct from the existing Exit Point audit (Part 37A): exit points are *registration-facility* hooks for things like FTP and remote SQL, this probe is about the 5250 command line itself showing up somewhere it isn't supposed to.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | the test command actually ran from that screen's command line and landed on its own output |
+| OK | the command was rejected, or the screen never interpreted it as a command at all |
+
+### Teaching scenario
+
+Every "Work with X" list screen the probe visits comes back CRITICAL, each one's command line genuinely executes `WRKACTJOB` (or, when the candidate itself *is* `WRKACTJOB`, `WRKOUTQ` instead) and lands on its real output. `DSPJOB`'s options screen comes back OK on the same test, its selection field only ever matches a two-digit option number or shows "not modelled," it never falls through to running arbitrary text as a command. The lesson for an engagement: never assume `LMTCPB(*YES)` on a profile means that profile can't run commands anywhere, it only means the *sign-on* command line is gone. Every custom menu option the user can reach needs the same check repeated.
+
+---
+
+## Part 39 — VTAM Applid Enumerator
+
+Issues `D NET,ID=applid` for a wordlist of VTAM application IDs, discovering what regions and consoles exist on the network without ever leaving TSO.
+
+### Location
+
+Security panel → RECON TOOLS → VTAM APPLID ENUMERATOR (below Encryption Audit Scanner)
+
+### How it works
+
+A real terminal switches to another VTAM application with `LOGON APPLID(x)`, but that command actually transfers the session there, so sweeping a wordlist of guesses that way would mean a fresh connection after every single attempt, the original item on the backlog that made this tool "needs a new-connection-per-probe approach." `D NET,ID=applid` sidesteps that entirely: it's a genuine VTAM operator/console display command, surfaced here straight from TSO READY (the same pragmatic shortcut this mock already takes with `ALLOCATE`/`ADDAPF`/`ALTUSER`, rather than modeling the full SDSF command-entry chain those normally go through). It answers whether a resource exists and its current state without the session ever leaving TSO.
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| FOUND_ACTIVE | the APPLID exists and is active right now |
+| FOUND_INACTIVE | the APPLID exists but isn't currently active — still discloses the naming convention is real |
+| NOT_FOUND | no VTAM resource matches — discloses nothing |
+
+### Teaching scenario
+
+On the mock, `TSO` comes back FOUND_ACTIVE, `CICSTEST` comes back FOUND_INACTIVE (sitting right next to `CICSPROD`, which is active), and anything not on the list comes back NOT_FOUND. The lesson: shops name VTAM resources predictably, a production region's name is usually enough to guess its test counterpart, and `D NET,ID=` confirms a guess without ever risking a `LOGON APPLID` that actually transfers the session somewhere you didn't mean to go.
+
+---
+
+## Part 40 — IBM i (AS/400) PTF/CVE Currency Checker
+
+Parts 33–38 all read a configuration or authority setting and compare it against a known-good value baked into the tool itself. Part 40 is different: it asks the partition what *it* knows about its own patch currency, rather than the tool carrying any opinion about specific CVEs.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → PTF/CVE CURRENCY CHECKER
+
+### How it works
+
+IBM i ships two built-in SQL services for exactly this question, both queryable from Interactive SQL (`STRSQL`) like any other table:
+
+- `SYSTOOLS.CVE_INFO()` — known CVEs affecting the release, whether a PTF is available, and whether it's installed.
+- `SYSTOOLS.GROUP_PTF_CURRENCY_LOCAL()` — each PTF group's installed level versus the level IBM currently recommends, and how long it's been since the partition last checked.
+
+The tool opens `STRSQL`, runs `SELECT * FROM SYSTOOLS.CVE_INFO()`, reads the result grid, runs `SELECT * FROM SYSTOOLS.GROUP_PTF_CURRENCY_LOCAL()`, reads that too, then exits back to the menu. Both queries are the same thing an analyst would type by hand on real hardware — nothing here is 3270/5250-specific trickery, it's exactly how you'd check this yourself.
+
+**The deliberate design choice:** the classifier (`as400sec-parse.js`'s `evaluateCveRow`/`evaluatePtfGroupRow`) does not contain a list of CVE IDs anywhere. It reads whatever rows come back, by column name, and scores them against NVD's published CVSS severity bands — a fixed, public scoring convention, not CVE-specific data. A tool that shipped its own hardcoded CVE list would need updating every time a new one dropped, and would be wrong the moment it went stale. This one can't go stale, because it never carries an opinion about any specific CVE — it only relays what the partition's own SQL services say *right now*.
+
+### Risk levels
+
+**CVE rows** — scored by CVSS severity band, but only when no PTF is applied:
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | no PTF applied, CVSS ≥ 9.0 |
+| HIGH | no PTF applied, CVSS 7.0–8.9 |
+| MEDIUM | no PTF applied, CVSS 4.0–6.9 |
+| LOW | no PTF applied, CVSS < 4.0 |
+| OK | a PTF is already applied, regardless of CVSS score |
+
+**PTF group rows** — scored by how far behind the installed level is, and how long it's been since the partition checked:
+
+| Rating | Condition |
+|---|---|
+| HIGH | installed level is 5+ levels behind available, or the group hasn't been checked in 60+ days |
+| MEDIUM | installed level is 1–4 levels behind, checked recently |
+| OK | installed level matches available |
+
+### Teaching scenario
+
+On the mock, `CVE-MOCK-0001` (CVSS 9.8, no PTF applied) and `CVE-MOCK-0002` (CVSS 8.8, no PTF applied) both come back as unpatched findings — CRITICAL and HIGH respectively — while `CVE-MOCK-0003` and `CVE-MOCK-0004` show a PTF already installed and land at OK despite their own CVSS scores being just as high. That contrast is the point: patch status, not raw severity, is what actually matters once a fix exists. On the PTF side, the Security Group (`SF99115`) is 5 levels behind and hasn't been checked in 90 days — HIGH on both counts — while the TCP/IP Group (`SF99666`) is fully current. The lesson for an engagement: don't ask "is this system vulnerable to CVE-X" from memory or a cheat sheet, ask the partition directly, every time, because the answer changes out from under you the moment IBM ships a new PTF and it doesn't update a tool's hardcoded list on its own.
+
+### A caveat worth stating plainly
+
+The mock's column names for `GROUP_PTF_CURRENCY_LOCAL()` (`LVL_INST`, `LVL_AVAIL`, `STALE_DAYS`) are short aliases, not the real service's actual column names (`PTF_GROUP_LEVEL_INSTALLED`, `PTF_GROUP_LEVEL_AVAILABLE`, `DAYS_SINCE_CHECK`) — those collide once truncated to the mock's fixed-width result screen, the same way an analyst would alias them in a real query to fit an 80-column display. Before running this tool's logic against a real partition, confirm the actual column names either service returns with a `DESCRIBE` or against IBM's current SQL services reference — this mock's names are a reasonable stand-in, not a confirmed match to IBM's documentation.
+
+---
+
+## Part 41 — IBM i (AS/400) Default Credential Audit
+
+Every other IBM i tool in this document runs after sign-on, from a menu's command line. This one is the exception: it runs at the Sign On screen itself, before anything is signed on, because that's the only point in the flow where a default-credential sweep makes sense.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → DEFAULT CREDENTIAL AUDIT (the first block in the section, since it is the one tool that has to run before sign-on)
+
+### Why this exists alongside RACF PROBE
+
+RACF PROBE ([Part 12](#) and the `racf-probe` walkthrough) already auto-detects an IBM i Sign On screen and can sweep a wordlist against it — it has done that since early on, as one of five subsystems it covers (TSO, z/VM, CICS, z/TPF, IBM i). What it didn't have was a way to take an engagement's actual pre-audit intel — userids gathered on a kickoff call, pulled from a directory export, carried over from a prior report — and turn that into a safe, prioritized attempt plan. Hand-formatting `USER,PASS` lines works for a handful of pairs; it doesn't scale, and it gives no guidance on how many guesses are safe to throw at a given profile before risking a lockout.
+
+The Default Credential Audit panel is built on the same sweep engine RACF PROBE uses (`probe.js`), so a fix or improvement to one benefits both, but it owns its own planning logic end to end:
+
+- `public/js/as400-defaults.js` — `STANDARD_DEFAULTS` (26 IBM-supplied profiles with their documented role and IBM's recommended hardening action, plus 8 common non-Q weak pairs), `parseIntel()` (reads an operator's pre-audit list), and `buildPlan()` (merges intel + the standard list + a userid=password pass, dedupes, caps per profile, and round-robins the result).
+- `public/js/probe.js` — `startAs400CredAudit()` drives the plan through the same sweep loop RACF PROBE uses, and `credAuditFindings()` classifies the results.
+
+### How it works
+
+1. Type or paste pre-audit intel into the box, one entry per line: `USERID:PASSWORD`, `USERID,PASSWORD`, or a bare `USERID` (tried as userid=password automatically). "Load file" reads a local file you pick, browser-side, nothing is uploaded anywhere. "Load from host" reads the same `default-accounts.txt` on the bridge host that RACF PROBE's "Load list" button reads.
+2. Leave "Standard list" and "Try userid=password" checked to add the built-in IBM-supplied defaults and extend userid=password coverage to every userid seen, not just the ones in the standard list.
+3. Set "Max attempts / profile" — default 2, one under the stock `QMAXSIGN` of 3. The planner tries the best-informed guess for each profile first (an explicit intel pair beats userid=userid, which beats a standard-list guess) and trims the rest once a profile hits the cap, so a long intel list can't accidentally disable an account.
+4. The status line previews the plan live as you type: how many attempts across how many profiles, anything trimmed by the cap, anything skipped because it wasn't a syntactically valid IBM i userid (up to 10 characters, `A-Z 0-9 # $ @ _`, can't start with a digit).
+5. Click ▶ START. Attempts round-robin across profiles — one profile's attempts never land back to back — and each one classifies the same way RACF PROBE's IBM i profile does: **SUCCESS** (the credential works), **EXISTS** (the profile is real but this password wasn't — IBM i's Sign On screen is a user-enumeration oracle: `CPF1107`/`CPF1118`/`CPF1392`/`CPF1394` all confirm a real profile independently of whether the password worked), **FAILURE** (`CPF1120`, no such profile), or **LOCKOUT** (the audit itself tripped `QMAXSIGN` — it stops immediately). "Keep going after a match" signs a SUCCESS off (`SIGNOFF`) and continues instead of stopping there, same as RACF PROBE's enumerate-all mode.
+
+### Why several "defaults" aren't crackable passwords at all
+
+A number of the 26 IBM-supplied entries — `QSRVDIR`, `QDBSHR`, `QDFTOWN`, `QDIRSRV`, `QLPINSTALL`, `QMSF`, `QNETSPLF`, `QNTP`, `QTCP`, `QTMHHTTP`, `QTMHHTP1`, `QTMSNMP`, `QTMHOVR`, `QCLUSTER`, `QSNADS`, `QAUTOMON`, `QBRMS` — ship `PASSWORD(*NONE)` by IBM's own design. Trying `userid=userid` against one of these isn't really a password guess, it's the CPF-code enumeration oracle, the same mechanism `EXISTS` always relies on. The result is still useful: it confirms the profile is real on the target.
+
+But if one of those *does* accept its own name as a password, that's not a routine "default credential found" — it's a configuration someone actively changed away from IBM's shipped state, which is itself worth flagging on its own. `credAuditFindings()` checks each hit against `describeStandard()`'s role/action metadata and calls this case out by name: "This profile should ship `PASSWORD(*NONE)` — someone set one matching the profile name."
+
+### Risk levels
+
+| Rating | Condition |
+|---|---|
+| CRITICAL | a valid credential was found |
+| HIGH | the audit itself disabled a profile (`QMAXSIGN` reached) |
+| INFO | enumeration only — the profile is confirmed real, no valid password found |
+
+### Teaching scenario
+
+On the mock, running with just the standard list and defaults checked confirms `QSECOFR/QSECOFR` and `QYSPJ/QYSPJ` (the planted blend-in backdoor from the Shipped Profile Audit scenario) as SUCCESS, while the rest of the IBM-supplied `Q*` set comes back EXISTS — real profiles, no working password, confirmed purely through the CPF-code oracle without ever getting in. Add a pre-audit intel line like `QPGMR:Summer24` and the planner tries that pair first for `QPGMR`, ahead of the standard list's own `QPGMR:QPGMR` guess, which only gets tried if the cap allows a second attempt.
+
+### Export
+
+Click ↓ Export CSV or ↓ JSON directly below this tool's results for a standalone export (`ibmi-default-creds-<timestamp>.csv`/`.json`), or use the combined ↓ Export IBM i Audit CSV further down the panel to bundle these findings with every other IBM i tool's output from the same session, under `default-credential-audit`.
+
+---
+
+## Part 42 — IBM i (AS/400) Listening Services Inventory
+
+The question every other IBM i tool in this document skips: what is this box listening on, and is it the clear text version? Exit points, NetServer and the admin GUI each look at one channel. This tool reads the whole list of listeners from `QSYS2.NETSTAT_INFO` through STRSQL and rates each service against its encrypted counterpart.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → LISTENING SERVICES INVENTORY
+
+### How it works
+
+The tool opens Interactive SQL and runs one narrow query per service group, eleven in all, for example `SELECT LOCAL_ADDRESS, LOCAL_PORT, TCP_STATE FROM QSYS2.NETSTAT_INFO WHERE LOCAL_PORT IN (23, 992)`. One query per group, not one big one, because each result is a handful of rows that fit a single screen with no paging, an empty result is hard evidence the port is not listening, and a long unfiltered result on a busy box would need fragile Roll Up scraping. A statement longer than one input line wraps onto a continuation line, the way a real STRSQL statement area does. The groups are Telnet (23, 992), FTP (21, 990), clear host servers (8470 to 8476), TLS host servers (9470 to 9476), DDM and DRDA (446, 448), TFTP, REXEC and LPD (69, 512, 515), SNMP (161, 162), NFS (111, 2049), NetServer (137, 138, 139, 445), web and Navigator (80, 443, 2001, 2010), and SSH (22). The port table lives in `as400sec-parse.js` (`SERVICE_GROUPS`).
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| HIGH | clear text Telnet (23), REXEC (512), TFTP (69), the clear Navigator admin port (2001), the clear file and remote command host servers (8473, 8475) |
+| MEDIUM | FTP, the other clear host servers, DDM on 446, LPD, SNMP, NFS, NetServer, plain HTTP |
+| LOW | the service is bound to loopback only (not reachable from the network), or a minor NetBIOS or trap listener |
+| INFO | a TLS port that is not listening. Fine only if its clear text twin is off too. Also "not seen" when the result was truncated at the screen |
+| OK | a clear text service that is not listening (that is the pass), or a TLS listener present |
+
+A clear text service with no listener on its TLS partner gets a line added: there is no encrypted way in. A session in `ESTABLISHED` state is not a listener and is never counted. A port is rated by its widest listener: one loopback listener and one wildcard listener rate as exposed.
+
+### Teaching scenario
+
+On the mock, Telnet 23 is up with no listener on 992, FTP is up, the host servers are on their clear ports (including file and remote command) with only two TLS ones, TFTP and SNMP answer over UDP, and LPD is bound to `127.0.0.1` for contrast. Two `ESTABLISHED` sessions on 23 sit in the same table to show why only `LISTEN` counts. The lesson: an inventory is only worth anything if "not listening" is evidence rather than an absence of rows, which is why each group is its own query.
+
+### Where the mock stops
+
+The ratings are a judgment call from review, not IBM's, and the SQL was not run on a live IBM i. Confirm that your release's `NETSTAT_INFO` has these column names, and whether it lists UDP rows at all. A UDP port that shows as off carries a note to confirm with `WRKTCPSVR`. The mock's STRSQL is a simplified screen (one predicate, no AND or OR), so a real STRSQL layout may need the result-grid reader adjusted. `NETSTAT_INFO` cannot show whether FTP or a host server actually enforces TLS, only that the clear port is open, so the findings say so and point at the exit points.
+
+---
+
+## Part 43 — IBM i (AS/400) Default Password Report (ANZDFTPWD)
+
+The supported way to find default passwords on an IBM i: the system checks its own password hashes against the profile names. Nothing is guessed at a sign-on screen, so no profile can lock out and nothing shows up as an attack in the audit journal.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → DEFAULT PASSWORD REPORT
+
+### Which tool for which engagement
+
+| | Default Password Report (this part) | Default Credential Audit ([Part 41](#)) |
+|---|---|---|
+| Method | `ANZDFTPWD ACTION(*NONE)`, the system checks its own hashes | tries known pairs at the Sign On screen |
+| Runs | after sign-on, with `*ALLOBJ` and `*SECADM` | before sign-on, no access needed |
+| Fits | a client-assisted audit, the client knows | a pentest whose ROE names credential enumeration as its own activity |
+| Risk | none, report only | can trip `QMAXSIGN` and disable profiles |
+
+Run the report when you have the access and the client's blessing. Keep the Default Credential Audit for the engagement where you start with nothing.
+
+### How it works
+
+The tool issues `ANZDFTPWD ACTION(*NONE)` and reads the report. It never runs `ACTION(*DISABLE)`, `*PWDEXP` or `*BOTH`, those change profiles. The mock refuses any action other than `*NONE` and says why. A real `ANZDFTPWD` writes a spooled report (read it with `WRKSPLF`), the mock shows the same data as a screen, so a real run needs the spooled file. Command parameters were not tested on a live IBM i, confirm them with F4.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| CRITICAL | a default password on a profile holding `*ALLOBJ` or `*SECADM` |
+| HIGH | a default password on any other profile |
+| OK | none found |
+
+A disabled profile still counts: anyone who can enable it gets in with a password everyone can guess.
+
+### Teaching scenario
+
+On the mock, four profiles have a default password (`QSECOFR`, `QSRV`, `QSRVBAS` and the planted `QYSPJ`), all privileged, so all CRITICAL. Run `CHGUSRPRF USRPRF(name) PASSWORD(*NONE)` on each, re-run, and the report comes back clean.
+
+---
+
+## Part 44 — IBM i (AS/400) Group Profile Review
+
+A profile-by-profile review sees each user's primary group, one field on the profile. It cannot see supplemental groups, and a user can belong to up to fifteen more. So a person can look clean while belonging to a group that holds `*ALLOBJ`. This review reads both.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → GROUP PROFILE REVIEW
+
+### How it works
+
+Four reads through STRSQL, then one comparison:
+
+| Read | Statement | Gives |
+|---|---|---|
+| supplemental | `SELECT GROUP_PROFILE_NAME, USER_PROFILE_NAME FROM QSYS2.GROUP_PROFILE_ENTRIES` | the only place supplemental membership lives |
+| primary | `SELECT AUTHORIZATION_NAME, GROUP_PROFILE_NAME FROM QSYS2.USER_INFO WHERE GROUP_PROFILE_NAME IS NOT NULL` | each user's primary group |
+| `*ALLOBJ` | `SELECT AUTHORIZATION_NAME, STATUS FROM QSYS2.USER_INFO WHERE SPECIAL_AUTHORITIES LIKE '%ALLOBJ%'` | who holds it |
+| `*SECADM` | same, for `%SECADM%` | who holds it |
+
+Every result is read across all its pages (the reader Rolls Up while the grid says `More...`), so nothing is capped at one screen. A group is privileged if it holds `*ALLOBJ` or `*SECADM`. The groups come from the two membership reads, so a group with no members never appears and stale empty groups are not found.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| CRITICAL | a group profile holding both `*ALLOBJ` and `*SECADM` |
+| HIGH | a group profile holding `*ALLOBJ` or `*SECADM`, with its primary and supplemental members named |
+| HIGH | a user who reaches a privileged group **only** through a supplemental group. The row says which, and which primary group they appear to have instead |
+| INFO | a read failed or was cut short. The review never reports a clean OK on partial data |
+| OK | no group profile holds `*ALLOBJ` or `*SECADM`, and every read completed |
+
+Whether a member actually picks up a group's special authority depends on your release, so the findings say to confirm before calling it inherited privilege.
+
+### Teaching scenario
+
+On the mock, `GRPADMIN` holds `*ALLOBJ` and has a password, with `KLEE` as a primary member. `JSMITH`'s primary group is `GRPACCT`, which is harmless, and a profile review stops there. The supplemental read shows `JSMITH` is also in `GRPADMIN`. Two HIGH findings, and the second is the one a primary-group review misses.
+
+### Where the mock stops
+
+Column names and view names were not run on a live IBM i, confirm them. `STRSQL` is a separately licensed feature on a real system, and reading `QSYS2.USER_INFO` needs authority. Real `STRSQL` result paging may differ from the mock's, which uses the same More/Bottom marker as the other lists. A column header wider than 15 characters is handled by reading column positions from the header line, not a fixed width.
+
+---
+
+## Part 45 — IBM i (AS/400) QSECOFR-Owned Objects
+
+Application objects belong to a dedicated application owner profile, not to the security officer. The owner of an object has full authority over it whatever the authority list says, so objects owned by `QSECOFR` tie the security officer to the application, and a program owned by `QSECOFR` that adopts its owner's authority runs as `QSECOFR`.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → QSECOFR-OWNED OBJECTS
+
+### How it works
+
+One STRSQL read, wrapped across the three input lines the mock gives a statement:
+
+`SELECT SYSTEM_OBJECT_SCHEMA, SYSTEM_OBJECT_NAME, OBJECT_TYPE FROM QSYS2.OBJECT_OWNERSHIP WHERE AUTHORIZATION_NAME = 'QSECOFR' AND SYSTEM_OBJECT_SCHEMA NOT LIKE 'Q%'`
+
+IBM's own libraries are expected to be `QSECOFR`'s, so the read leaves out libraries named `Q*`. The result is read across every page and grouped by library. The CL way to the same list is `DSPUSRPRF USRPRF(QSECOFR) TYPE(*OBJOWN) OUTPUT(*OUTFILE)`.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| HIGH | the library holds `QSECOFR`-owned code (`*PGM`, `*SRVPGM`, `*CMD`, `*MODULE`). If any adopts its owner's authority it runs as `QSECOFR`, so run the Adopted-Authority scan on that library |
+| MEDIUM | data and other objects only, which cannot be handed to the application team without a change of owner |
+| INFO | the read was cut short, so libraries may be missing. Never reported as a clean OK |
+| OK | `QSECOFR` owns nothing outside `Q*` libraries |
+
+The fix is `CHGOBJOWN OBJ(lib/name) OBJTYPE(*type) NEWOWN(owner)` to a dedicated owner profile. Test first: a program that adopts its owner changes behavior when the owner changes.
+
+### Teaching scenario
+
+On the mock, `QSECOFR` owns IBM's own objects in `QSYS`, `QGPL` and `QUSRSYS`, which the read excludes. It also owns three programs and a menu in `APPLIB` (including `PAYUPD`, the one the Adopted-Authority scan flags), three utility programs in `TOOLLIB`, and plain data files in `HRLIB` and `PAYROLL`. `APPLIB` and `TOOLLIB` are HIGH, `HRLIB` and `PAYROLL` MEDIUM. `APPADMIN` and a dedicated `APPOWNER` own other objects in the same libraries and are correctly not listed.
+
+### Where the mock stops
+
+"Application library" means "not named `Q*`", a heuristic. A `Q`-named library that is really yours is missed, and an IBM library that does not start with `Q` (`#LIBRARY` and so on) is flagged. The view name, whether it takes a user, and its column names were not run on a live IBM i, confirm them. The tool checks `QSECOFR` only, other profiles that hold `*ALLOBJ` can own application objects too.
+
+---
+
+## Part 46 — IBM i (AS/400) Library CRTAUT Review
+
+`QCRTAUT` is the system value for the authority `*PUBLIC` gets on a newly created object. It is only the fallback. Every library carries its own `CRTAUT`, and that wins unless it says `*SYSVAL`. So a system-value review that finds `QCRTAUT` at `*USE` can sit on top of a library whose `CRTAUT` is `*ALL`, and a weak `QCRTAUT` can be fine for a library that sets its own.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → LIBRARY CRTAUT REVIEW
+
+### How it works
+
+A drill, the same shape as the user profile scanner. It lists libraries with `WRKLIB`, reads the `QCRTAUT` system value first (`DSPSYSVAL SYSVAL(QCRTAUT)`), then issues `DSPLIBD LIB(name)` for each application library, meaning every library not named `Q*`, plus `QGPL` because that is where users' own objects land. It reads the "Create authority" line and judges it against the system value it read first.
+
+### Risk levels
+
+The rating is for the authority new objects actually get, after the library's own setting is applied.
+
+| Rating | Meaning |
+|---|---|
+| CRITICAL | new objects are created `*PUBLIC *ALL` |
+| HIGH | new objects are created `*PUBLIC *CHANGE`, including a library that says `*SYSVAL` while `QCRTAUT` is `*CHANGE` |
+| OK | `*USE` or `*EXCLUDE`, whether set on the library or inherited. A library that sets its own and overrides a weaker `QCRTAUT` says so |
+| INFO | the library hands new objects to an authorization list (the list decides, use the Authorization List scan), or something could not be read. Never a pass |
+
+A library that sets a weaker `CRTAUT` than `QCRTAUT` is called out as overriding a stricter system value. The fix is `CHGLIB LIB(name) CRTAUT(*EXCLUDE)` (or `*USE`). `CRTAUT` only decides what **new** objects get, it never changes objects already in the library, so a fixed library still needs the Object Authority scan.
+
+### Teaching scenario
+
+On the mock, `QCRTAUT` is `*CHANGE`. `PAYROLL` and `QGPL` say `*SYSVAL`, so both inherit it and are HIGH: the lesson is that fixing the system value would fix them, and leaving it means every new payroll object is public-writable. `MYLIB` sets `*ALL`, CRITICAL, and overrides a stricter system value. `APPLIB` (`*USE`) and `HRLIB` (`*EXCLUDE`) set their own and override the weak system value, which is the right layer, OK. `TOOLLIB` uses authorization list `SECAUTL`, INFO.
+
+### Where the mock stops
+
+The "Create authority" label on `DSPLIBD` and the `CRTAUT` values were not run on a live IBM i, confirm them. "Application library" means not named `Q*`, so a `Q`-named library that is really yours is missed. A real system has far more libraries than this list, and the generic list reader pages through `WRKLIB` with Roll Up.
+
+---
+
+## Part 47 — IBM i (AS/400) Static Adopted-Authority Scan
+
+The Adopted-Authority Runtime Scanner ([Part 38A](#)) walks the live call stack, so it only finds a program that happens to be running when it looks. A program that adopts its owner's authority is a risk whether or not anyone is running it. This scan reads whole libraries.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → STATIC ADOPTED-AUTHORITY SCAN, with a box for the libraries to read.
+
+### How it works
+
+The exposure is `USRPRF(*OWNER)` on a program owned by a powerful profile. (`USEADPAUT` is a different attribute, it controls whether a program inherits adopted authority from its callers, not what it adopts itself.) The scan makes these STRSQL reads, each across all its pages:
+
+| Read | Gives |
+|---|---|
+| `QSYS2.PROGRAM_INFO WHERE USER_PROFILE = '*OWNER'` per library | every adopting program and its owner |
+| `QSYS2.OBJECT_PRIVILEGES WHERE USER_NAME = '*PUBLIC' AND OBJECT_TYPE = '*PGM'` per library | what `*PUBLIC` may do to each program |
+| `QSYS2.USER_INFO WHERE SPECIAL_AUTHORITIES LIKE '%ALLOBJ%'` (and `%SECADM%`) | who is powerful |
+
+Name up to eight libraries in the box, comma separated. Blank reads every library not named `Q*`, which can run for a long time on a large production system because `PROGRAM_INFO` is large, so name the libraries there. Anything that is not a library name is refused before a query runs.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| CRITICAL | the owner holds `*ALLOBJ` or `*SECADM` and `*PUBLIC` holds `*CHANGE` or `*ALL`, more than adoption needs |
+| HIGH | a powerful owner and `*PUBLIC` may run it, so any user is on a path to that authority. Also a powerful owner whose `*PUBLIC` authority could not be read |
+| MEDIUM | a powerful owner but `*PUBLIC` is `*EXCLUDE`, confirm who is authorized. Or a bounded owner with `*PUBLIC` above `*USE` |
+| LOW | an owner that is not powerful, still needs a documented reason |
+| INFO | a read failed or was cut short, so findings may be underrated. Never a clean OK on partial data |
+
+Programs that do not adopt are not listed.
+
+### Teaching scenario
+
+On the mock, `LEAVCALC` (owned by `QSECOFR`, `*PUBLIC *CHANGE`) and `UTILITY` (`QSECOFR`, `*PUBLIC *ALL`) are CRITICAL. `PAYUPD`, the one the runtime scanner caught on the call stack, and `SYNCUSR` (owned by `APPADMIN`) are HIGH. `PAYCALC` and `SAVALL` are MEDIUM, `*PUBLIC` excluded. `ORDENTRY`, owned by a dedicated `APPOWNER`, is LOW. `PAYRPT`, `CLEANUP` and `ORDRPT` do not adopt and are not listed, and `QSYS` is IBM's own. Run the Group Profile Review and QSECOFR-Owned Objects scans first and the same people and libraries show up from three angles.
+
+### Where the mock stops
+
+View and column names were not run on a live IBM i, confirm them. "Powerful" means holds `*ALLOBJ` or `*SECADM`. A program with a different adopted authority (`*SERVICE`, `*JOBCTL`, `*SPLCTL`) is rated by its owner like any other. The scan says nothing about what a program does, only that it adopts and who can run it, so each HIGH needs a human to read the program.
+
+---
+
+## Part 48 — IBM i (AS/400) Output Queue and Spool Audit
+
+Payroll registers, statements and job logs end up as spooled files, and the output queue they sit in decides who can read them. The data was locked down in the database and then printed into a queue anyone can open.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → OUTPUT QUEUE AND SPOOL AUDIT, with a box for the libraries that hold output queues.
+
+### How it works
+
+STRSQL reads, every one filtered by library (an unfiltered authority query on a real system will crawl), each across all its pages. Per library: queue settings (`QSYS2.OUTPUT_QUEUE_INFO`: `DSPDTA`, then `AUTCHK` and `OPRCTL`) and `*PUBLIC`'s authority on each queue (`OBJECT_PRIVILEGES`). Once: remote queues, `QPJOBLOG` and `QPRINT`, the `*SPLCTL` and `*JOBCTL` holders, and `QAUDLVL` for `*SPLFDTA` and `*PRTDTA`. Name up to eight libraries, or leave the box blank for every library not named `Q*`. Names are validated before any statement is built. Aliases keep the wide column names inside the 76 column grid, and the two audit-level checks ask the system for a match (`CURRENT_CHARACTER_VALUE LIKE '%SPLFDTA%'`) instead of reading a long value that would be cut off.
+
+### What decides who can read a queue
+
+| Setting | Why it matters |
+|---|---|
+| `DSPDTA` | whether any user with read authority to the queue can display any file in it, or only the file's owner |
+| `OPRCTL` | whether anyone holding `*JOBCTL` can read every file in the queue |
+| `AUTCHK` | whether ownership or data authority controls the files. The recommended setting for a sensitive queue is `*DTAAUT`, confirm what the choice means on your release |
+| `*PUBLIC` | `*EXCLUDE` on a sensitive queue, and nothing above `*USE` anywhere |
+
+The recommended setup for a sensitive queue is `DSPDTA(*OWNER)`, `AUTCHK(*DTAAUT)`, `OPRCTL(*NO)`, `*PUBLIC *EXCLUDE`, reached through an authorization list.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| CRITICAL | `DSPDTA` lets any reader display any file and `*PUBLIC` can read the queue: everyone reads everything spooled there |
+| HIGH | `DSPDTA` open without `*PUBLIC`, or `*PUBLIC` holds `*CHANGE` or `*ALL` on a queue, or `QPJOBLOG` is writable (job logs carry data values and user names), or `QPRINT` above `*USE` |
+| MEDIUM | `OPRCTL(*YES)`, a remote queue (spool leaves the system, approve the destination), a `*SPLCTL` holder who is not IBM-supplied, `*JOBCTL` holders with operator-controlled queues, or `QAUDLVL` without `*SPLFDTA` or `*PRTDTA` (so SF and PO audit entries are never written) |
+| LOW | `*PUBLIC *USE` on a queue, `AUTCHK(*OWNER)`, or an IBM-supplied `*SPLCTL` holder |
+| INFO | a read failed or was cut short. Never a clean OK on partial data |
+| OK | set up the recommended way |
+
+Which queues are sensitive is the client's decision, so the tool rates each queue's settings on their own and the signed list of sensitive queues decides how much each row matters. LPD on port 515 bypasses all of this, see the Listening Services Inventory.
+
+### Teaching scenario
+
+On the mock, `PAYROLL/PAYRPTQ` lets any reader display any file, is operator controlled, and `*PUBLIC` holds `*CHANGE`: CRITICAL. `QUSRSYS/QPJOBLOG` is writable by `*PUBLIC`: HIGH. `APPLIB/APPOUTQ` is operator controlled and `APPLIB/REMPRT` sends spool to another system: MEDIUM. `HRLIB/HRRPTQ` is set up the right way: OK. `QAUDLVL` carries neither `*SPLFDTA` nor `*PRTDTA`, so spool activity is not audited at all, and `KLEE` holds `*SPLCTL`.
+
+### Where the mock stops
+
+Value formats (`YES` or `NO`, `*OWNER` or `*DTAAUT`) and every column name were not run on a live IBM i, confirm them. Anything with a `DSPDTA` or `OPRCTL` value the tool does not recognize is shown as `?`, not guessed.
+
+---
+
+## Part 49 — IBM i (AS/400) Audit Journal Review
+
+The audit journal is where "who did that, and when" gets answered, but only if auditing was on and set to record it. Every other control in this document is a setting. This one reads the evidence of what actually happened, and checks first that there is any evidence to read.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → AUDIT JOURNAL REVIEW, with a box for how many days back (1 to 365, blank is 30).
+
+### How it works
+
+Six small config reads, then one journal read per group of entry types, all through STRSQL and each across all its pages (up to 600 rows a group). The config reads ask the system for a match instead of reading a long value that would be cut off: is `*AUDLVL` and `*OBJAUD` in `QAUDCTL`, and does `QAUDLVL` carry `*SAVRST`, `*CREATE`, `*SPLFDTA` and `*PRTDTA`. The journal reads use `QSYS2.DISPLAY_JOURNAL` on `QSYS/QAUDJRN` with `JOURNAL_ENTRY_TYPES` and `STARTING_TIMESTAMP`, following IBM's published examples.
+
+| Group | Entry types | Needs |
+|---|---|---|
+| Restores | `OR` object, `RA` authority, `RO` owner, `RP` adopting program | `*SAVRST` |
+| Creates | `CO` | `*CREATE` |
+| Changes | `ZC` | object auditing: `*OBJAUD` in `QAUDCTL`, plus an audit value on the object or library |
+| Spool | `SF` | `*SPLFDTA` |
+| Print | `PO` | `*PRTDTA` |
+
+Entries are grouped by user: one row per group and user, with the count, the entry types, the newest timestamp and the first few objects.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| HIGH | `QAUDCTL` has no `*AUDLVL`, auditing is off and the journal stops growing. The row gives the newest entry read, ask who switched it off. A restore of an adopting program (`RP`) |
+| CRITICAL | a restore of an adopting program done as `QSECOFR` |
+| MEDIUM | restores in general (each should match a change ticket, and `QALWOBJRST` should be `*NONE` outside restore windows), or a group with no entries because its audit level is not set |
+| LOW | creates and changes |
+| INFO | spool and print counts, a group with no entries while auditing is off or unconfirmed, and anything not read or cut short |
+| OK | no entries in the window and the level is set |
+
+Work done as `QSECOFR` rates one step higher: the security officer is not a day-to-day administrator. A group with no entries is only good news when its level is set. Otherwise zero proves nothing, and the row says so. When a level is off now, entries are marked as from before it was switched off.
+
+### Teaching scenario
+
+On the mock, auditing was on and was switched off about nine days ago (`QAUDCTL` is `*NONE`), so the journal holds entries up to then and nothing after. The review rates that HIGH and names the newest entry. Inside the window it finds `QSECOFR` restoring `TOOLLIB/UTILITY` (an adopting program, `RP`), `APPADMIN` restoring the payroll programs, `QSECOFR` creating objects in `APPLIB`, and eleven program changes by `APPADMIN` that take two pages to read. Spool and print show no entries and MEDIUM, because `*SPLFDTA` and `*PRTDTA` were never set. Shorten the window to 10 days and the older entries drop out.
+
+### Where the mock stops
+
+`DISPLAY_JOURNAL`'s parameters and its columns (`ENTRY_TIMESTAMP`, `JOURNAL_ENTRY_TYPE`, `JOB_USER`, `OBJECT`) follow IBM's published examples, and were not run on a live IBM i here, confirm them. Reading the journal needs `*USE` authority to it. A journal that was cleared, detached or never audited looks the same as a quiet one, so check the receiver chain and when `QAUDCTL` last changed. Per-type functions such as `SYSTOOLS.AUDIT_JOURNAL_xx` exist for some entry types and were not used. Exit program integrity and authority are their own review, [Part 50](#).
+
+---
+
+## Part 50 — IBM i (AS/400) Exit Program Integrity and Authority
+
+The Exit Point audit ([Part 37A](#)) asks whether a program is registered. This asks whether it can be trusted. A registered exit program runs on every request through its exit point (FTP logon, remote SQL, sign-on, password change), so one that anyone can replace is a backdoor on every channel it guards, and it runs for everyone.
+
+### Location
+
+Security panel → IBM i SECURITY (AS/400) → EXIT PROGRAM INTEGRITY AND AUTHORITY
+
+### How it works
+
+Six STRSQL reads, each across all its pages:
+
+| Read | Gives |
+|---|---|
+| `QSYS2.EXIT_PROGRAM_INFO` where the library is not `Q*` | the registered programs and their exit points. IBM's own are IBM's |
+| `OBJECT_PRIVILEGES`, `*PUBLIC`, `*PGM`, not `Q*` libraries | what `*PUBLIC` may do to each program |
+| `OBJECT_PRIVILEGES`, `*PUBLIC`, `*LIB` | what `*PUBLIC` may do to each library |
+| `QSYS2.PROGRAM_INFO` for the libraries just found | the owner. This statement is built from the first read, skipped if it found nothing, capped at eight libraries |
+| the `QAUDCTL` check | whether auditing is on, so an empty journal is read correctly |
+| `QSYS2.DISPLAY_JOURNAL` for `CO,ZC,OR,RP`, 90 days | whether the program was created, changed or restored |
+
+A program registered on several exit points is one row, listing all of them.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| CRITICAL | `*PUBLIC` holds `*ALL` on the program (anyone can delete or replace it), or the program is open to `*PUBLIC` change and so is its library |
+| HIGH | `*PUBLIC` holds `*CHANGE` on the program, or `*PUBLIC` can add objects to the library that holds it |
+| MEDIUM | the journal shows the program created, changed or restored in the window. Match each entry to a change ticket |
+| LOW | `*PUBLIC` is excluded from the program (check the exit really runs for everyone it should), or the authority is fine but there are no journal entries because auditing is off, so integrity is not confirmed |
+| INFO | something could not be read. The summary row is always INFO, never OK next to findings |
+| OK | `*PUBLIC` no more than `*USE` on the program, the library locked down, and no journal entries with auditing on |
+
+Ownership alone does not make an exit program safe, authority on the program and library does, so the owner is shown but not rated.
+
+### What it does not do
+
+`CHKOBJITG` verifies exit programs, but it needs a scope you choose on the box, and its syntax should be prompted with F4, not guessed, so the tool does not run it. Run it by hand. The audit journal is evidence of a change, not proof of integrity, and it only counts if auditing was on. Exit programs in `QGPL` or `QUSRSYS` are not read. Whether a program does the right thing is a code review, not a scan.
+
+### Teaching scenario
+
+On the mock, `EXITLIB/SQLEXITPGM` (the remote SQL exit) is CRITICAL: `*PUBLIC` holds `*CHANGE` on it and on `EXITLIB`, and `OPSADMIN` changed it twice shortly before auditing went off. `EXITLIB/SIGNONEXIT` is HIGH because the library is writable, with a restore by the same account. `AUDLIB/SQLAUDIT`, in a library locked down, is LOW rather than OK: the authority is right, but auditing is off, so nobody can show it has not been touched. IBM's `QSYS` exit program is not read.
+
+### Where the mock stops
+
+`EXIT_PROGRAM_INFO` columns, the `*LIB` rows of `OBJECT_PRIVILEGES` and the `DISPLAY_JOURNAL` parameters were not run on a live IBM i, confirm them.
+
+---
+
+## Part 51 — IBM i (AS/400) FTP Service Audit
+
+FTP is the old front door, and on IBM i it is a wide one. A signed-on FTP session can browse the IFS and the libraries, and without an exit program on the FTP server exit points it can do far more. The Exit Point audit ([Part 37A](#)) asks whether a program is registered. The Listening Services Inventory ([Part 42](#)) asks whether the port is open. This asks what the server itself says and allows to someone who walks up to it.
+
+### Location
+
+Security panel → IBM i FTP SERVICE AUDIT. It is a network check against a host you name (default ports 21 and 990), not tied to an open terminal session, like the HTTP Admin GUI Audit and the SSH Access Audit. Behind the RoE Scope Guard ([scope-guard.md](scope-guard.md)).
+
+### How it works
+
+| Step | What is sent | What it tells you |
+|---|---|---|
+| Banner | connect on 21 and 990 | the `220-QTCP at <host>.` greeting names the system and says it is IBM i |
+| Pre-login `FEAT`, `SYST` | two commands, no sign-on | a `SYST` that answers before login hands out the OS and release |
+| Clear text check | `USER` only, never `PASS` | a `331` means the server asked for a password with no TLS in place. Unconfirmed: it may still refuse at `PASS` |
+| TLS | `AUTH TLS`, then a handshake; and a handshake on 990 | which protocol version, and whether the certificate is expired, self-signed or too small |
+| Anonymous | `anonymous` and `ftp`, once each | whether anyone can sign on with no profile |
+| Default profiles (opt-in) | the well-known defaults, a couple of tries each | whether a shipped profile still has its default password |
+| One profile you supply (optional) | `SYST`, `HELP`, `NAMEFMT 1`, `CWD`, `PASV`, `LIST` | OS release, whether `RCMD` is advertised, and how much of the IFS and the libraries that profile can see |
+
+Everything after the checks above goes over TLS when the server offers it.
+
+### Safety, and what it never does
+
+- The only verbs the code can send are `USER PASS SYST FEAT HELP AUTH PBSZ PROT PWD CWD NAMEFMT TYPE PASV LIST NLST STAT QUIT NOOP`. Anything else throws before it reaches the wire, so `STOR`, `DELE`, `MKD`, `RMD`, `RNFR` and `RCMD` cannot be sent. `RCMD` is only noticed in the `HELP` text, never run. A test asserts it.
+- The profile and password are sent once and kept nowhere, not in the page, the exports or a finding. If the only way in is clear text, the password is **not sent** unless you tick the clear text box.
+- Trying default profiles is the one intrusive part. It is off by default, and the RoE must name the activity `ftp-login-probe`. It makes at most 2 tries per profile (the server clamps it at 5 and at 60 tries in all), one second apart, on a new connection each, and stops on the first success. **Every failed FTP sign-on counts toward `QMAXSIGN`** (3 by default), and a profile that reaches it is disabled, so the cap is there to keep an audit from locking out a real person.
+- The address in a `PASV` reply is ignored. Only the host you named is ever contacted.
+- Banners and replies are cleaned of control characters and capped before they are shown.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| CRITICAL | anonymous sign-on works, or a default profile signed on |
+| FINDING | clear text sign-on accepted, no TLS at all, `SYST` or the banner leaking the release before login, TLS 1.0 or 1.1, an expired or too-small certificate, `RCMD` advertised, a profile that can browse the IFS and libraries |
+| INFO | everything that is a fact rather than a problem, and anything that could not be read. A short or failed read is INFO, never a pass |
+
+The verdict is FINDING if any row is FINDING or CRITICAL, INCONCLUSIVE if nothing answered, and SECURE only when nothing was found.
+
+### Teaching scenario
+
+On the mock (FTP on 2121 instead of 21, because a container user cannot bind below 1024, and 2990 instead of 990 when `MOCK_AS400_FTP_IMPLICIT=1`), the default shop is loose: clear text is accepted, explicit TLS is offered but not required, anonymous is refused, and `JSMITH` can list six entries in the IFS root and eight libraries. With the default-profile box ticked, `QSECOFR` and `QSRVBAS` sign on. `MOCK_AS400_FTP_REQUIRE_TLS=1` makes the clear text check come back refused, and `MOCK_AS400_FTP_ANON=1` makes anonymous CRITICAL.
+
+### Where the mock stops
+
+The real server's replies were modelled from IBM's documentation and not run on a live IBM i. Confirm on real hardware: the exact `220` banner, whether `SYST` is refused before login, what `USER` answers for an unknown profile, the `SYST` reply text after login (`OS/400 is the remote operating system. The TCP/IP version is "V7R4M0".` is the expected form), whether `HELP` lists `RCMD`, and how `NAMEFMT 1` lists `/QSYS.LIB`. Whether an FTP exit program is registered is the Exit Point audit's question, this tool only shows what an ordinary profile can reach without one.
+
+## Part 52: IBM i (AS/400) Host Server Recon
+
+Before anyone signs on to an IBM i, two listeners already answer questions for anyone on the network. The server mapper on 449 tells a client where each host server lives. The sign-on server on 8476 (plain) and 9476 (TLS) answers the exchange-attributes step every IBM i client does before it asks for a password. Neither needs a profile. Between them they give the ports of every host server, the OS release, the password level (`QPWDLVL`) and the job that answered. This is the outside view that pairs with the Listening Services Inventory, which asks the same question from inside with `NETSTAT_INFO`.
+
+### Location
+
+Security panel → IBM i HOST SERVER RECON. It is a network check against a host you name, not tied to an open terminal session, like the FTP Service Audit and the HTTP Admin GUI Audit. Behind the RoE Scope Guard: the host has to be in scope. No activity needs naming in `scope.json`, because no credential is ever sent.
+
+### How it works
+
+| Step | What is sent | What it tells you |
+|---|---|---|
+| Server mapper, 14 lookups | the service name in ASCII (`as-central`, `as-central-s`, and so on), one connection per name | the port of each host server, plain and TLS |
+| Sign-on server, plain | one exchange-attributes request: a header and three client fields, no user and no password | OS release, password level, the answering job |
+| Sign-on server, TLS | the same request over TLS | the same facts, plus the TLS version and certificate state |
+| Sign-on screen (optional, tick the box) | a 5250 telnet session on the plain and TLS telnet ports (23 and 992 by default, two boxes let you change them, the mock listens on 3272), negotiation only, then hang up | the system name, subsystem and the device the server assigned, and whether the sign-on is served in clear text |
+
+It never connects to any host server except the sign-on server. The optional sign-on screen read also talks to telnet (23 and 992), and it is off unless you tick the box: it opens a real 5250 session, so the server allocates a virtual device (`QPADEVxxxx`) for a moment and frees it when the probe hangs up. No `DEVNAME` is asked for and no `USER` is sent, so nothing is created and nothing is typed. A test captures every byte the client sends and asserts none of `USER`, `DEVNAME`, `IBMRSEED`, `IBMSUBSPW` or `PASS` is among them. The remote command server (`as-rmtcmd`) and the rest are only named, with the port the mapper gave. The sign-on server's seed in the reply is read and dropped.
+
+The same checks run from the command line as the `mainframe-nse` scripts `ibmi-svrmap-info`, `ibmi-signon-info` and `tn5250-info`, with a fourth script, `ibmi-hostservers`, for plain versus TLS port states from a normal nmap scan. The byte layouts, and which of them have been seen on a live system, are in that project's `ibmi/docs/WIRE-NOTES.md`.
+
+### Safety, and what it never does
+
+- No profile, no password, no sign-on. The request carries a header and three client fields, and a test asserts exactly that.
+- Only the mapper and the sign-on server are ever contacted. A test puts a decoy listener where the remote command server would be and proves it receives nothing.
+- The mapper is asked only the fourteen known service names.
+- Certificates are looked at, never trusted: validation is off so whatever is presented can be judged.
+
+### Risk levels
+
+| Rating | Meaning |
+|---|---|
+| FINDING | a host server offered in plain text with no TLS twin, the sign-on server answering in clear text, the sign-on screen served over plain telnet, the OS release revealed before any sign-on, `QPWDLVL` below 2, the remote command server registered (reachability is not tested), TLS 1.0 or 1.1, an expired or too-small RSA certificate |
+| INFO | everything that is a fact rather than a problem: the mapper answering, ports off their defaults, a self-signed certificate, `QPWDLVL` 2 or higher, and any listener that gave no usable answer |
+
+The verdict is FINDING if any row is FINDING or CRITICAL, INCONCLUSIVE if nothing answered, and SECURE only when nothing was found. A silent mapper is INCONCLUSIVE, never a pass.
+
+### Teaching scenario
+
+Start the mock IBM i with `node mock-lpar/mock-as400.js`, which now serves the mapper on `4449` (449 is privileged), the sign-on server on its real `8476`, and the 5250 sign-on on `3272`. Enter `127.0.0.1` and mapper port `4449`, tick the sign-on screen box and put `3272` in the first port box, and run it. The mock is a loose shop: TLS twins only for the database and sign-on servers (the two TLS ports its `NETSTAT_INFO` lists, so the outside view and the inside view agree), the OS release in the clear (`V7R4M0`), and password level 0, the same value `WRKSYSVAL` shows for `QPWDLVL`. Set `MOCK_AS400_PWDLVL=2` before starting it and run again to see the password level stop being a finding. `node mock-lpar/mock-as400-hostsvr.js` starts just the two host servers if you do not need the rest.
+
+### Where the mock stops
+
+The mock agrees with bytes captured from a live IBM i 7.5: the mapper reply (`2B` plus a 4 byte port) and the sign-on reply (`F003`, return code, and code points `1101`, `1102`, `1103`, `1119`, `111F`). The sign-on screen read was checked by replaying a record captured from the same live host through this tool's own 5250 parser. It is still one release, and one site's customized sign-on screen (it renames the stock labels, which the parser allows for). Other releases may send other code points, and password levels above 3 print as a bare number until their meaning is checked. The remote command server being registered says it exists, not that it is reachable: check that from the network.
+
+---
+
+## Appendix — Structured JSON findings export
+
+Every security tool's "Export CSV" button now has a "JSON" button right next to it. The CSV export was always meant for opening in a spreadsheet; the JSON export is for feeding a finding straight into a report or another tool without re-parsing a CSV. Same data, different shape, nothing about the CSV export changed.
+
+The file looks like this:
+
+```json
+{
+  "schema": "webterm-3270-findings-v1",
+  "tool": "as400-audit",
+  "generated": "2026-10-03T02:15:00.000Z",
+  "count": 3,
+  "findings": [
+    { "tool": "exit-point-audit", "item": "QIBM_QTMF_SERVER_REQ", "value": "*NONE", "risk": "CRITICAL", "detail": "Register an FTP exit program...", "timestamp": "2026-10-03T02:14:58.000Z" },
+    { "tool": "netserver-audit", "item": "GUESTUSRPRF", "value": "QNETSVRGST", "risk": "HIGH", "detail": "Guest profile is set...", "timestamp": "2026-10-03T02:14:59.000Z" }
+  ]
+}
+```
+
+The top-level `tool` field names the scanner that produced the file (matches the CSV filename's prefix — `as400-audit`, `racf-probe`, `ibmi-default-creds`, `recon`, `syscheck`, `cics-txn-scanner`, `db2-scan`, `fuzz`, `negotiation-analyzer`, `sdsf-job-scanner`, `stc-profile-scanner`, `buffer-bleed`, `field-length-disclosure`, `vm-minidisk-exposure`, `in-transit-encryption-monitor`). Each entry under `findings` carries whatever columns that tool's CSV export already has — the column names become the JSON keys, so the shape differs slightly tool to tool (an `as400-audit` entry has `risk`/`detail`, a `negotiation-analyzer` entry has `cipher`/`certExpiry`, and so on), but every tool's export always carries a `timestamp`.
+
+This is built on `exportFindingsJson()` in `public/js/utils.js` — a single shared function every tool's export button calls, reusing the exact same row-building logic the CSV export already had (refactored into a small `_buildXRows()` per module so CSV and JSON can't drift from each other).
+
+---
+
+## Appendix — The .rec.json format
+
+The recording file is plain JSON and human-readable:
+
+```json
+{
+  "version": 1,
+  "host": "mock-zos",
+  "port": 3270,
+  "lu": "MOCKLU01",
+  "recorded": "2026-06-12T19:40:00.000Z",
+  "events": [
+    { "t": 0,    "dir": "host→client", "type": "screen", "data": { ... } },
+    { "t": 1240, "dir": "client→host", "type": "key",    "data": { "aid": "ENTER" } },
+    { "t": 1383, "dir": "host→client", "type": "screen", "data": { ... } }
+  ]
+}
+```
+
+`t` is milliseconds from the start of the recording. `screen` events contain the full 3270 screen buffer including any anomalies detected for that frame. `key` and `type` events show exactly what the user sent to the host.

@@ -1,0 +1,23 @@
+{
+  "name": "webterm-3270-mcp",
+  "version": "1.0.0",
+  "description": "MCP server that drives the WebTerm/3270 bridge for AI coding assistants",
+  "type": "module",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "bin": {
+    "webterm-3270-mcp": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ws": "^8.18.0",
+    "zod": "^4.6.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

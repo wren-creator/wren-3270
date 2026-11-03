@@ -1,0 +1,1216 @@
+/**
+ * mock-lpar/mock-zvm.js
+ * WebTerm/3270 — Mock z/VM CP/CMS Daemon
+ *
+ * Simulates a z/VM system over real TN3270(E) protocol.
+ * Screen flow:
+ *
+ *   CP Logon screen
+ *       │  ENTER — password checked against ZVM_DIRECTORY (blank password
+ *       │          still walks in; unknown userid → HCPLGA054E; wrong
+ *       │          password → HCPLGA050E)
+ *       ▼
+ *   z/VM CP Ready prompt
+ *       │  "ipl cms"   or "cms"  → CMS Ready
+ *       │  "cp q <x>"             → CP Query response
+ *       │  "disc"                 → Disconnect (simulated)
+ *       │  "logoff" / "#cp logoff" → back to the CP logon screen (TCP stays up)
+ *       ▼
+ *   CMS Ready prompt
+ *       │  "filelist"             → FILELIST screen
+ *       │  "rdrlist"              → RDRLIST screen
+ *       │  "xedit <fn>"          → XEDIT screen
+ *       │  "cms"   (already CMS) → CMS Ready (no-op)
+ *       │  "cp"                   → back to CP Ready
+ *       │  "#cp logoff"           → Disconnect
+ */
+
+'use strict';
+
+const net = require('net');
+const { runRexx } = require('./rexx/interpreter');
+const { buildExecs } = require('./rexx/execs');
+const zl = require('./zvm-linux');
+
+const PORT    = parseInt(process.env.MOCK_ZVM_PORT || '3271', 10);
+const LOG     = (process.env.LOG_LEVEL || 'info') === 'debug';
+const LU_NAME = process.env.MOCK_ZVM_LU    || 'ZVMLU01';
+const SYSNAME = process.env.MOCK_ZVM_SYSID || 'ZVMPROD';
+const VMID    = process.env.MOCK_ZVM_VMID  || 'ZVMSYS1';   // z/VM system name shown on banner
+
+// Mock CP directory — userid: password (case-insensitive, CP folds both to
+// uppercase). Rules, mirroring how a real un-ESM'd z/VM behaves:
+//   • unknown userid            → HCPLGA054E ... not in CP directory
+//   • known userid, wrong pass  → HCPLGA050E LOGON unsuccessful--incorrect password
+//   • known userid, BLANK pass  → logs on anyway. This is the deliberate
+//     carve-out that keeps every CMS walkthrough and the "type any userid"
+//     demo path working; the RACF PROBE always sends a password, so it still
+//     gets a real accept/reject split.
+// Base CP has no failed-attempt lockout (that needs an external security
+// manager), so the probe's LOCKOUT case never fires here — same as a real
+// system without RACF for z/VM.
+const ZVM_DIRECTORY = {
+  OPERATOR: 'OPERATOR',   // default system operator — weak on purpose
+  MAINT:    'MAINT',      // IBM maintenance id, historically shipped weak
+  MAINT730: 'MAINT730',   // version-stamped maintenance id
+  ZVMOP:    'ZVMOP99',    // real password — probe sees a valid id, wrong pw
+  TCPIP:    'TCPIP42',
+  TCPMAINT: 'NETWRK88',
+  PMAINT:   'PRIVM123',
+  AUTOLOG1: 'ALOG1XY',
+  DEMO:     'DEMO',       // walkthrough id; blank password also walks in
+  // Linux guests (zvm-linux.js): console logon lands at a Linux login prompt
+  LNXGST01: zl.LINUX_GUESTS.LNXGST01.pass,
+  LNXGST02: zl.LINUX_GUESTS.LNXGST02.pass,
+};
+
+// CMS "EXEC" content — single source of truth shared between the XEDIT
+// display (screenXedit, below) and actually running one (case 'cms': dispatch).
+const CMS_EXECS = buildExecs(SYSNAME);
+
+// Mainframe 403 (400 series) privilege-escalation vector: minimal CP
+// privilege-class modeling, genuinely new, no earlier book touches this.
+// OPERATOR carries real z/VM's conventional class B (resource control);
+// everyone else, including every other seeded directory entry above, is
+// class G (general user). QUERY PRIVCLASS (simulateCPQuery below) lets a
+// user check their own class; FORCE (case 'cp' dispatch below) is the
+// first command this mock actually gates on it.
+const PRIV_CLASS = { OPERATOR: 'B' };
+function classOf(u) {
+  const k = (u || '').toUpperCase();
+  return PRIV_CLASS[k] || (zl.isLinuxGuest(k) ? zl.LINUX_GUESTS[k].classes : 'G');
+}
+
+// Users FORCE has logged off — module-level/shared, same convention as
+// z/OS's REVOKED_USERS. Q NAMES (simulateCPQuery below) reflects this.
+const FORCED_USERS = new Set();
+
+// Roster QUERY NAMES reports, exactly the four names and times the
+// original static string always showed (TCPIP's CYC-0826 note is Book
+// 205's capstone finding, unchanged). Now a real array so FORCE has
+// something live to act on.
+const LOGGED_ON_USERS = [
+  { id: 'ZVMOP',    time: '00:42:10', note: '-' },
+  { id: 'MAINT',    time: '02:15:03', note: '-' },
+  { id: 'TCPIP',    time: '04:52:47', note: 'CYC-0826' },
+  { id: 'OPERATOR', time: '01:03:22', note: '-' },
+];
+
+// The actual privileged action, shared by two callers: the direct FORCE
+// command (case 'cp' dispatch, gated on classOf(userid) below) and the
+// OPUTIL exec (case 'cms' dispatch), which calls this unconditionally —
+// the trusted-helper-script bypass this book's vector actually is. Real
+// FORCE targets a userid already logged on; this mock only tracks the
+// two names Q NAMES already lists (see LOGGED_ON_USERS below).
+function forceUser(target) {
+  const t = (target || '').toUpperCase();
+  if (!t) return `HCPFOR002E Missing operand for FORCE\nReady(00002); T=0.01/0.01`;
+  if (!LOGGED_ON_USERS.some(u => u.id === t)) return `HCPFOR003E ${t} is not logged on\nReady(00003); T=0.01/0.01`;
+  FORCED_USERS.add(t);
+  return `HCPFOR001I User ${t} has been forced off\nReady; T=0.01/0.01`;
+}
+
+// XAUTOLOG directory statement is confirmed real (unlike the pasted notes'
+// QUERY ALL); who it authorizes is NOT confirmed against IBM's own manual,
+// so this is a stand-in, not a captured message. Model: a directory XAUTOLOG
+// statement names callers allowed to autolog a target, independent of CP
+// privilege class — the training finding is a Linux guest that was handed
+// an XAUTOLOG grant to an administrative service machine. OPERATOR is the
+// seeded case: LNXGST02 may autolog it, LNXGST01 may not.
+//
+// Authorization is checked before the already-logged-on check, matching
+// real CP (a denied caller gets denied even if the target happens to be
+// up already) — this also means probing against an already-running target
+// shows the real authorization verdict with no state change.
+const XAUTOLOG_AUTH = { OPERATOR: ['LNXGST02'] };
+
+function xautologUser(caller, target) {
+  const t = (target || '').toUpperCase();
+  if (!t) return `HCPXAU002E Missing operand for XAUTOLOG\nReady(00002); T=0.01/0.01`;
+  if (!ZVM_DIRECTORY[t]) return `HCPXAU054E ${t} not in CP directory\nReady(00054); T=0.01/0.01`;
+  const allowed = (XAUTOLOG_AUTH[t] || []).includes((caller || '').toUpperCase());
+  if (!allowed) return `HCPXAU040E Not authorized to XAUTOLOG ${t}\nReady(00040); T=0.01/0.01`;
+  const up = LOGGED_ON_USERS.some(u => u.id === t) && !FORCED_USERS.has(t);
+  if (up) return `HCPXAU003I User ${t} already logged on\nReady; T=0.01/0.01`;
+  FORCED_USERS.delete(t);
+  if (!LOGGED_ON_USERS.some(u => u.id === t)) LOGGED_ON_USERS.push({ id: t, time: '00:00:00', note: 'XAUTOLOG' });
+  return `HCPXAU001I User ${t} has been started\nReady; T=0.01/0.01`;
+}
+
+// ── Telnet / TN3270(E) constants ─────────────────────────────────
+const IAC  = 0xFF, DONT = 0xFE, DO   = 0xFD;
+const WONT = 0xFC, WILL = 0xFB, SB   = 0xFA, SE = 0xF0;
+const EOR  = 0xEF;
+const NOP  = 0xF1;
+
+const OPT_BINARY  = 0x00;
+const OPT_EOR     = 0x19;
+const OPT_TTYPE   = 0x18;
+const OPT_TN3270E = 0x28;
+
+const TN3E_DEVICE_TYPE = 0x02;
+const TN3E_FUNCTIONS   = 0x03;
+const TN3E_IS          = 0x04;
+const TN3E_REQUEST     = 0x07;
+const TN3E_SEND        = 0x08;
+
+// ── 3270 datastream constants ─────────────────────────────────────
+const CMD_ERASE_WRITE     = 0xF5;
+const CMD_ERASE_WRITE_ALT = 0x7E;
+const CMD_WRITE           = 0xF1;
+const ORDER_SF  = 0x1D;
+const ORDER_SBA = 0x11;
+const ORDER_IC  = 0x13;   // Insert Cursor
+
+const FA_PROTECTED       = 0x60;
+const FA_PROTECTED_HIGH  = 0xE0;
+const FA_PROTECTED_NUM   = 0x62;
+const FA_UNPROTECTED     = 0x40;
+const FA_UNPROTECTED_NUM = 0x50;
+const FA_DIM             = 0x68;   // protected + non-display intensity
+const FA_UNPROTECTED_NONDISPLAY = 0x4C;   // unprotected + nondisplay intensity — passwords
+
+const AID_ENTER = 0x7D;
+const AID_CLEAR = 0x6D;
+const AID_PF3   = 0xF3;
+const AID_PF7   = 0xF7;
+const AID_PF8   = 0xF8;
+const AID_PF12  = 0xFB; // note: PF12 = 0xFB in 3270 encoding  (PF1=0xF1 … PF12=0xFB, 0x6B … )
+// z/VM commonly uses PF3 to clear, PF12 to retrieve, Enter to submit
+
+// ── EBCDIC ↔ ASCII (CP037) ────────────────────────────────────────
+const EBCDIC_TO_ASCII = Buffer.from([
+  0x00,0x01,0x02,0x03,0x9C,0x09,0x86,0x7F,0x97,0x8D,0x8E,0x0B,0x0C,0x0D,0x0E,0x0F,
+  0x10,0x11,0x12,0x13,0x9D,0x0A,0x08,0x87,0x18,0x19,0x92,0x8F,0x1C,0x1D,0x1E,0x1F,
+  0x80,0x81,0x82,0x83,0x84,0x85,0x17,0x1B,0x88,0x89,0x8A,0x8B,0x8C,0x05,0x06,0x07,
+  0x90,0x91,0x16,0x93,0x94,0x95,0x96,0x04,0x98,0x99,0x9A,0x9B,0x14,0x15,0x9E,0x1A,
+  0x20,0xA0,0xE2,0xE4,0xE0,0xE1,0xE3,0xE5,0xE7,0xF1,0xA2,0x2E,0x3C,0x28,0x2B,0x7C,
+  0x26,0xE9,0xEA,0xEB,0xE8,0xED,0xEE,0xEF,0xEC,0xDF,0x21,0x24,0x2A,0x29,0x3B,0x5E,
+  0x2D,0x2F,0xC2,0xC4,0xC0,0xC1,0xC3,0xC5,0xC7,0xD1,0xA6,0x2C,0x25,0x5F,0x3E,0x3F,
+  0xF8,0xC9,0xCA,0xCB,0xC8,0xCD,0xCE,0xCF,0xCC,0x60,0x3A,0x23,0x40,0x27,0x3D,0x22,
+  0xD8,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0xAB,0xBB,0xF0,0xFD,0xFE,0xB1,
+  0xB0,0x6A,0x6B,0x6C,0x6D,0x6E,0x6F,0x70,0x71,0x72,0xAA,0xBA,0xE6,0xB8,0xC6,0xA4,
+  0xB5,0x7E,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0xA1,0xBF,0xD0,0x5B,0xDE,0xAE,
+  0xAC,0xA3,0xA5,0xB7,0xA9,0xA7,0xB6,0xBC,0xBD,0xBE,0xDD,0xA8,0xAF,0x5D,0xB4,0xD7,
+  0x7B,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48,0x49,0xAD,0xF4,0xF6,0xF2,0xF3,0xF5,
+  0x7D,0x4A,0x4B,0x4C,0x4D,0x4E,0x4F,0x50,0x51,0x52,0xB9,0xFB,0xFC,0xF9,0xFA,0xFF,
+  0x5C,0xF7,0x53,0x54,0x55,0x56,0x57,0x58,0x59,0x5A,0xB2,0xD4,0xD6,0xD2,0xD3,0xD5,
+  0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0xB3,0xDB,0xDC,0xD9,0xDA,0x9F,
+]);
+
+const ASCII_TO_EBCDIC = Buffer.alloc(256, 0x3F);
+for (let eb = 0; eb < 256; eb++) {
+  const asc = EBCDIC_TO_ASCII[eb];
+  if (ASCII_TO_EBCDIC[asc] === 0x3F) ASCII_TO_EBCDIC[asc] = eb;
+}
+
+function toEbcdic(str) {
+  const buf = Buffer.alloc(str.length);
+  for (let i = 0; i < str.length; i++) buf[i] = ASCII_TO_EBCDIC[str.charCodeAt(i)] ?? 0x3F;
+  return buf;
+}
+
+// Screen dims by negotiated device type — mirrors tn3270/session.js's MODEL_DIMS
+const MODEL_DIMS = {
+  '3278-2':   { rows: 24, cols: 80  },
+  '3278-3':   { rows: 32, cols: 80  },
+  '3278-4':   { rows: 43, cols: 80  },
+  '3278-5':   { rows: 27, cols: 132 },
+  '3178':     { rows: 24, cols: 80  },
+  '3279-2':   { rows: 24, cols: 80  },
+  '3279-2-E': { rows: 24, cols: 80  },
+  '3279-3':   { rows: 32, cols: 80  },
+  '3279-3-E': { rows: 32, cols: 80  },
+  '3279-4':   { rows: 43, cols: 132 },
+  '3279-4-E': { rows: 43, cols: 132 },
+  '3279-5':   { rows: 27, cols: 132 },
+  '3279-5-E': { rows: 27, cols: 132 },
+};
+
+// Set from the connection's negotiated device type just before each screen is
+// built — buildScreen/sba run synchronously off that, so this is safe despite
+// being module-level shared state.
+let mockCols = 80;
+
+function encodeAddr(addr) {
+  const hi = (addr >> 6) & 0x3F;
+  const lo =  addr       & 0x3F;
+  const encode6 = n => n < 0x3F ? 0x40 + n : 0xC0 + (n - 0x3F);
+  return [encode6(hi), encode6(lo)];
+}
+
+function sba(row, col) {
+  return [ORDER_SBA, ...encodeAddr(row * mockCols + col)];
+}
+
+function buildScreen(eraseFirst, fields) {
+  // Per the 3270 datastream spec, plain Erase Write selects the DEFAULT
+  // 24×80 screen; only Erase Write Alternate activates the model's wider
+  // geometry. So when addressing a non-80-col screen we must send EWA,
+  // or a conforming client (x3270, our bridge) will decode at stride 80.
+  const eraseCmd = mockCols !== 80 ? CMD_ERASE_WRITE_ALT : CMD_ERASE_WRITE;
+  const parts = [eraseFirst ? eraseCmd : CMD_WRITE, 0xC3];
+  // Screens below commonly declare a field's attribute and its label text as
+  // two separate entries at the SAME row/col (attribute occupies that cell;
+  // the label is meant to start right after it). Track the most recent FA
+  // placement so a text-only entry reusing those exact coordinates skips its
+  // own SBA and lands on the content cell the FA's implicit advance already
+  // points at, instead of re-targeting the FA byte's own cell and stepping
+  // on it — which used to just silently eat the label's first character, but
+  // now (session.js clearing stale .fa on overwrite, see #19) blows away the
+  // field boundary itself.
+  let lastFaPos = null;
+  for (const f of fields) {
+    const attachedToFa = f.fa === undefined && lastFaPos && f.row === lastFaPos.row && f.col === lastFaPos.col;
+    if (!attachedToFa) parts.push(...sba(f.row, f.col));
+    if (f.fa !== undefined) {
+      parts.push(ORDER_SF, f.fa);
+      lastFaPos = { row: f.row, col: f.col };
+    } else if (!attachedToFa) {
+      lastFaPos = null;
+    }
+    if (f.ic)   parts.push(ORDER_IC);
+    if (f.text) for (const b of toEbcdic(f.text)) parts.push(b);
+  }
+  return Buffer.from(parts);
+}
+
+function wrapEOR(data) {
+  const escaped = [];
+  for (const b of data) {
+    escaped.push(b);
+    if (b === IAC) escaped.push(IAC);   // IAC escaping
+  }
+  escaped.push(IAC, EOR);
+  return Buffer.from(escaped);
+}
+
+// ── Screen builders ───────────────────────────────────────────────
+
+function screenLogon(lastMsg = '') {
+  const now      = new Date();
+  const timeStr  = now.toLocaleTimeString('en-US', { hour12: false });
+  const dateStr  = now.toLocaleDateString('en-GB');
+
+  const fields = [
+    // Banner line
+    { row:0,  col:0,  fa: FA_PROTECTED_HIGH },
+    { row:0,  col:1,  text: `z/VM  Version 7 Release 3.0,  Service Level  ${VMID}` },
+    { row:1,  col:1,  fa: FA_PROTECTED },
+    { row:1,  col:1,  text: `${SYSNAME} AT ${VMID}` },
+    { row:2,  col:1,  text: `${dateStr}  ${timeStr}` },
+    { row:3,  col:1,  text: 'IBM Confidential OCO Source Materials' },
+    { row:4,  col:1,  text: '(c) Copyright IBM Corp. 1981, 2023' },
+    { row:5,  col:1,  text: 'Licensed Material - Program Property of IBM' },
+
+    // Logon box
+    { row:7,  col:0,  fa: FA_PROTECTED_HIGH },
+    { row:7,  col:1,  text: 'LOGON' },
+    { row:9,  col:1,  fa: FA_PROTECTED },
+    { row:9,  col:1,  text: 'USERID  ==>' },
+    { row:9,  col:13, fa: FA_UNPROTECTED },
+    { row:9,  col:14, ic: true },
+    { row:9,  col:14, text: '        ' },
+    { row:10, col:1,  fa: FA_PROTECTED },
+    { row:10, col:1,  text: 'PASSWORD==>' },
+    { row:10, col:13, fa: FA_UNPROTECTED_NONDISPLAY },
+    { row:10, col:14, text: '        ' },
+
+    { row:12, col:1,  fa: FA_PROTECTED },
+    { row:12, col:1,  text: 'Command ==>' },
+    { row:12, col:13, fa: FA_UNPROTECTED },
+    { row:12, col:14, text: '        ' },
+
+    { row:14, col:1,  fa: FA_PROTECTED },
+    { row:14, col:1,  text: 'Enter LOGON to connect to z/VM.' },
+    { row:15, col:1,  text: 'Enter DIAL  to connect to a virtual machine.' },
+
+    // OIA-style bottom bar
+    { row:23, col:0,  fa: FA_PROTECTED_HIGH },
+    { row:23, col:0,  text: `RUNNING   ${SYSNAME}` },
+    { row:23, col:30, fa: FA_PROTECTED },
+    { row:23, col:30, text: 'PF3=Quit' },
+  ];
+
+  // CP rejection message (HCPLGA054E / HCPLGA050E) from the last logon try.
+  if (lastMsg) fields.push(
+    { row:18, col:0, fa: FA_PROTECTED_HIGH },
+    { row:18, col:1, text: String(lastMsg).slice(0, 78) },
+  );
+
+  return buildScreen(true, fields);
+}
+
+// A real z/VM 3270 session is one scrolling console: output from the top,
+// the input line directly under the last line of output (no prompt label,
+// no header, no separators), and a status area in the bottom right corner
+// (RUNNING / MORE... / HOLDING / CP READ / VM READ plus the system name).
+function consoleScreen(outputLines, status = 'RUNNING') {
+  const lines = outputLines.slice(-22);
+  const fields = [];
+  lines.forEach((line, i) => {
+    fields.push({ row: i, col: 0, fa: FA_PROTECTED });
+    fields.push({ row: i, col: 0, text: line.slice(0, 78) });
+  });
+  // Unprotected input field starts on the row after the output and runs down
+  // to the status area; the cursor sits in its first cell.
+  fields.push(
+    { row: lines.length, col: 0, fa: FA_UNPROTECTED },
+    { row: lines.length, col: 0, ic: true },
+  );
+  const statusText = `${status}   ${SYSNAME}`;
+  fields.push(
+    { row: 23, col: 79 - statusText.length, fa: FA_PROTECTED_HIGH },
+    { row: 23, col: 79 - statusText.length, text: statusText },
+  );
+  return buildScreen(true, fields);
+}
+
+function screenCPReady(userid, lastMsg = '', linux = false) {
+  const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false });
+
+  // Scrollback with some simulated CP output
+  // A Linux guest's 3270 console shows the guest's own output, not the CP
+  // banner. lastMsg carries it (zvm-linux.js linuxConsoleBanner).
+  const outputLines = linux
+    ? [...zl.linuxConsoleBanner(userid).split('\n'), ...lastMsg.split('\n')].filter((l, i) => l !== '' || i > 0)
+    : [
+      `LOGON AT ${timeStr} ${new Date().toLocaleDateString('en-US')}`,
+      `z/VM Version 7 Release 3.0`,
+      `Your IPL directory entry will be used to IPL your machine.`,
+      `Ready; T=0.01/0.01 ${timeStr}`,
+      lastMsg,
+    ].filter(Boolean);
+
+  return consoleScreen(outputLines);
+}
+
+function screenCMSReady(userid, lastMsg = '') {
+  const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false });
+
+  // lastMsg can now be a multi-line REXX transcript -- split on \n into
+  // one row each (same pattern screenCPQuery already uses for its own
+  // multi-line QUERY responses), rather than baking embedded newline
+  // bytes into a single field. consoleScreen() caps the row count so a
+  // longer exec's output can't run into the status area.
+  // The IPL handler hands over its own complete banner (IPL CMS, any PROFILE
+  // EXEC output, "z/VM CMS is loaded.", Ready), so use it as-is instead of
+  // stacking the default banner above it, which printed IPL CMS twice.
+  const outputLines = (lastMsg.startsWith('IPL CMS\n')
+    ? lastMsg.split('\n')
+    : [
+        `IPL CMS`,
+        `z/VM CMS Level ${SYSNAME}`,
+        `Ready; T=0.01/0.01 ${timeStr}`,
+        ...(lastMsg ? lastMsg.split('\n') : []),
+      ]).filter(Boolean);
+
+  return consoleScreen(outputLines);
+}
+
+// FILELIST, RDRLIST and XEDIT all run inside XEDIT, so they share its status
+// area in the bottom right corner instead of RUNNING / the system name.
+function xeditStatusFields() {
+  const text = 'X E D I T   1 File';
+  return [
+    { row:23, col:79 - text.length, fa: FA_PROTECTED_HIGH },
+    { row:23, col:79 - text.length, text },
+  ];
+}
+
+// Bare ====> command line with the cursor in it, no label in front.
+function xeditCommandLine(row) {
+  return [
+    { row, col:0, fa: FA_PROTECTED },
+    { row, col:0, text: '====>' },
+    { row, col:6, fa: FA_UNPROTECTED },
+    { row, col:6, ic: true },
+  ];
+}
+
+function screenFilelist(userid) {
+  return buildScreen(true, [
+    { row:0,  col:0,  fa: FA_PROTECTED_HIGH },
+    { row:0,  col:1,  text: `${userid.padEnd(8)} FILELIST  A0  V 169  Trunc=169 Size=8  Line=1 Col=1 Alt=0` },
+    { row:1,  col:0,  fa: FA_PROTECTED },
+    { row:1,  col:1,  text: 'Cmd   Filename  Filetype  Fm  Format  Lrecl  Records  Blocks  Date      Time' },
+
+    // Sample files
+    { row:2,  col:0,  fa: FA_PROTECTED },
+    { row:2,  col:1,  text: '      PROFILE   EXEC      A1  V        80       42       1  2024-01-15 09:12:44' },
+    { row:3,  col:1,  text: '      DEMO      REXX      A1  V        80      123       2  2024-03-10 14:22:01' },
+    { row:4,  col:1,  text: '      MYJOB     JCL       A1  V        80       18       1  2024-04-01 11:05:33' },
+    { row:5,  col:1,  text: '      NOTES     MEMO      A1  V        80       55       1  2024-04-20 08:44:17' },
+    { row:6,  col:1,  text: '      CMSLIB    MACLIB    A1  F       400      200      50  2023-12-01 00:00:00' },
+    { row:7,  col:1,  text: '      USER      DIRECT    A2  V        80       10       1  2024-02-14 16:30:00' },
+    { row:8,  col:1,  text: '      BACKUP    EXEC      A1  V        80       30       1  2024-03-28 10:10:10' },
+    { row:9,  col:1,  text: '      AUTOEXEC  EXEC      A1  V        80       15       1  2024-01-01 00:00:00' },
+
+    { row:20, col:0,  fa: FA_PROTECTED },
+    { row:20, col:0,  text: '1= Help  2= Refresh  3= Quit  4= Sort(type)  5= Sort(date)  6= Sort(size)' },
+    { row:21, col:0,  text: '7= Backward  8= Forward  12= Cursor' },
+    ...xeditCommandLine(22),
+    ...xeditStatusFields(),
+  ]);
+}
+
+function screenRdrlist(userid) {
+  return buildScreen(true, [
+    { row:0,  col:0,  fa: FA_PROTECTED_HIGH },
+    { row:0,  col:1,  text: `${userid.padEnd(8)} RDRLIST   A0  V 108  Trunc=108 Size=3  Line=1 Col=1 Alt=0` },
+    { row:1,  col:0,  fa: FA_PROTECTED },
+    { row:1,  col:1,  text: 'Cmd   Filename  Filetype  Fm  Origid   Date      Time     Recs  Class Pri Hold' },
+
+    { row:2,  col:0,  fa: FA_PROTECTED },
+    { row:2,  col:1,  text: `      MYJOB     JOB       RDR  ${userid.padEnd(8)} 04/27/24 09:14:02  250  A    1` },
+    { row:3,  col:1,  text: `      REPORT    DATA      RDR  SYSTEM   04/26/24 22:00:11  512  A    2` },
+    { row:4,  col:1,  text: `      SYSLOG    OUTPUT    RDR  SYSTEM   04/26/24 23:59:59 1024  A    5` },
+
+    { row:20, col:0,  fa: FA_PROTECTED },
+    { row:20, col:0,  text: '1= Help  2= Refresh  3= Quit  4= View  5= Print  6= Receive  9= Purge' },
+    { row:21, col:0,  text: '7= Backward  8= Forward  12= Cursor' },
+    ...xeditCommandLine(22),
+    ...xeditStatusFields(),
+  ]);
+}
+
+function screenXedit(userid, filename = 'DEMO REXX A', lines = []) {
+  // Mainframe 404 (400 series): renders whatever is actually in the
+  // caller's xeditBuffer now, not a fresh re-read of CMS_EXECS every
+  // time -- that's what makes an in-progress, unsaved edit visible on
+  // screen before PF3 writes it back.
+  const bodyLines = lines.length
+    ? lines.map((line, i) => `${String(i + 1).padStart(5, '0')} ${line}`)
+    : [
+        '00001 * * * Empty file -- INPUT <text> at the command line to add a line * * *',
+      ];
+
+  // Real XEDIT shows the full file id, filemode with its number: DEMO REXX A1.
+  const fileId = filename.replace(/\s+([A-Za-z])\s*$/, (m, fm) => ` ${fm}1`);
+
+  const fields = [
+    { row:0,  col:0,  fa: FA_PROTECTED_HIGH },
+    { row:0,  col:1,  text: `${fileId}  F 80  Trunc=80 Size=${lines.length}  Line=1 Col=1 Alt=0` },
+    ...xeditCommandLine(1),
+
+    // The ruler is off by default in real XEDIT, so content starts right away.
+    { row:2,  col:0,  fa: FA_PROTECTED },
+    { row:2,  col:1,  text: '00000 * * * Top of File * * *' },
+  ];
+
+  bodyLines.forEach((line, i) => fields.push({ row: 3 + i, col: 1, text: line.slice(0, 78) }));
+  fields.push({ row: 3 + bodyLines.length, col: 1, text: '00000 * * * End of File * * *' });
+
+  fields.push(
+    { row:21, col:0,  fa: FA_PROTECTED },
+    { row:21, col:0,  text: '1= Help  2= Add  3= Quit  4= Tab  5= Clocate  6= ?  7= Bkwd  8= Fwd  9= =' },
+    { row:22, col:0,  text: '10= Rgtleft  11= Spltjoin  12= Cursor' },
+    ...xeditStatusFields(),
+  );
+
+  return buildScreen(true, fields);
+}
+
+function screenCPQuery(userid, queryResult = '') {
+  // Output fills the console and CP holds it with MORE... until Enter.
+  return consoleScreen(queryResult.split('\n'), 'MORE...');
+}
+
+// ── Console log ────────────────────────────────────────────────────
+// Models what a real operator console / SMF accounting record retains.
+// CP has no way to know a command argument is a secret — it just reads
+// tokens off the command line — so anything typed at the CP READ prompt,
+// including a minidisk LINK password, lands here in cleartext. The field
+// it was typed into (see consoleScreen's input line) is an ordinary
+// FA_UNPROTECTED field, not FA_UNPROTECTED_NONDISPLAY like the LOGON
+// PASSWORD field above — CP has no masked-input primitive for command
+// arguments, only for its own dedicated password prompt.
+const _cpConsoleLog = []; // { ts, userid, raw }
+
+function simulateLink(userid, cmd) {
+  const m = cmd.match(/^LINK\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(\S+))?/i);
+  if (!m) return null;
+  const [, owner, fromVdev, toVdev, mode] = m;
+  // Mainframe 201 (200 series) Differential-Diagnosis vignette: vdev 193
+  // is always already linked, on purpose, regardless of what password is
+  // supplied — the point is that ANY password produces this same message,
+  // not a password-specific rejection, so a student who assumes "wrong
+  // password" (the natural Book 4 callback) is chasing the wrong lead.
+  // The real cause is discoverable via Q DASD, see simulateCPQuery below.
+  if (toVdev === '193') {
+    return `HCPLNM097E DEVICE 193 ALREADY LINKED\nReady(00097); T=0.01/0.01`;
+  }
+  // Mainframe 204 (200 series) Differential-Diagnosis vignette: vdev 294
+  // is a genuinely different failure shape from 193's "someone else already
+  // has it" story — this rejection has nothing to do with PRODUSR's disk at
+  // all, it's that the REQUESTER already has something of their own defined
+  // at local address 294. Q DASD (below) shows PRODUSR's 294 sitting fine,
+  // unlinked, ruling out the Book 201-style red herring; QUERY VIRTUAL
+  // (also below) is where the real cause actually shows up.
+  if (toVdev === '294') {
+    return `HCPLNM090E DEVICE 294 ALREADY DEFINED\nReady(00090); T=0.01/0.01`;
+  }
+  const ro = /^R(D|R)?$/i.test(mode) || /^RO$/i.test(mode) || /^R$/i.test(mode);
+  return `DASD ${toVdev.toUpperCase()} LINKED R/${ro ? 'O' : 'W'}; R/${ro ? 'O' : 'W'} BY ${owner.toUpperCase()}\nReady; T=0.01/0.01`;
+}
+
+// ── CP QUERY simulator ────────────────────────────────────────────
+function simulateCPQuery(cmd, userid = 'DEMO') {
+  const upper = cmd.toUpperCase();
+  if (upper.includes('TIME')) {
+    const t = new Date();
+    return `TIME IS ${t.toLocaleTimeString('en-US', { hour12: false })}  DATE IS ${t.toLocaleDateString('en-US')}\nCPU TIME = 00:00:00.12  CONNECT TIME = 00:05:37`;
+  }
+  if (upper.includes('PRIVCLASS')) {
+    // Mainframe 403 (400 series): QUERY PRIVCLASS reports the caller's own
+    // class only, real z/VM behavior — you can't query someone else's
+    // without class B or higher yourself, which this mock doesn't need to
+    // model since the escalation vector is FORCE, not this query.
+    return `PRIVILEGE CLASSES FOR ${userid.toUpperCase()}: ${classOf(userid)}`;
+  }
+  if (upper.includes('NAMES')) {
+    // Mainframe 205 (200 series capstone) vignette: TCPIP has sat in this
+    // roster since Book 1 as pure decoration, never individually examined.
+    // Its connect time here is the real "smoking gun" screen for the
+    // z/VM leg of the capstone incident -- CYC-0826 is the same run label
+    // independently hardcoded into mock-lpar.js (z/OS), mock-tpf.js
+    // (z/TPF), and mock-as400.js's seedMessages() (IBM i, the actual
+    // origin). No shared state between mocks, same discipline as the
+    // Book 5 token chain.
+    // Mainframe 403: rendered from LOGGED_ON_USERS now, not a fixed
+    // string, so a successful FORCE (forceUser() above) actually removes
+    // a name from this roster on the next QUERY NAMES.
+    const present = LOGGED_ON_USERS.filter(u => !FORCED_USERS.has(u.id));
+    const roster = present.map(u => u.id.padEnd(8)).join(' ');
+    const rows = present.map(u => `${u.id.padEnd(9)} ${u.time.padEnd(13)} ${u.note}`).join('\n');
+    return `USERS:  ${SYSNAME.padEnd(8)} ${roster}\nTOTAL USERS LOGGED ON = ${present.length + 1}\nUSERID    CONNECT-TIME  NOTE\n${rows}`;
+  }
+  if (upper.includes('STORAGE') || upper.includes('STOR')) {
+    return `STORAGE = 1G`;
+  }
+  if (upper.includes('VIRTUAL') || upper.includes('V ')) {
+    // Mainframe 204 vignette: this is the one query that's actually caller-
+    // aware, since it lists the requester's OWN virtual device
+    // configuration, not system-wide state the way Q DASD is. Every user
+    // already has 294 defined as their own scratch work disk here, which
+    // is the real reason LINK ... 294 (see simulateLink) fails, nothing to
+    // do with PRODUSR's disk at all.
+    return `VIRTUAL STORAGE = 256M\nCORE 0 SIZE = 512M\nEXPANDED STORAGE = 1G\nDASD 190 3390 CMS190   R/O  CYL 400  BLK 0    EXT 1  LABEL CMS\nDASD 191 3390 ${userid.padEnd(8)}R/W  CYL 200  BLK 0    EXT 1  LABEL A-DISK\nDASD 294 3390 ${userid.padEnd(8)}R/W  CYL 50   BLK 0    EXT 1  LABEL SCRATCH`;
+  }
+  if (upper.includes('DASD') || upper.includes('DISK')) {
+    return `DASD 191 3390 MFT191  R/W  CYL 3339  BLK 555  EXT 1  LABEL SPOOL\nDASD 192 3390 MFT192  R/O  CYL 1669  BLK 0    EXT 1  LABEL WORK\nDASD 193 3390 MFT193  R/W  CYL 2210  BLK 0    EXT 1  LINKED TO OPERATOR\nDASD 294 3390 PRDWK294 R/W CYL 1000 BLK 0    EXT 1  LABEL PRODWK`;
+  }
+  const operand = cmd.trim().split(/\s+/).slice(1).join(' ');
+  if (!operand) {
+    return `HCPCQU001E QUERY needs an operand. Try one of:\n  QUERY TIME | NAMES | DASD | PRIVCLASS | STORAGE\nReady(00001); T=0.01/0.01`;
+  }
+  return `HCPCQV003E Invalid option - ${operand}\nReady(00003); T=0.01/0.01`;
+}
+
+// ── Connection handler ────────────────────────────────────────────
+let connCount = 0;
+
+function handleConnection(socket) {
+  const id = ++connCount;
+  log(`[${id}] New connection from ${socket.remoteAddress}:${socket.remotePort}`);
+
+  // Per-connection state
+  let buf         = Buffer.alloc(0);
+  let tn3270eMode = false;
+  let negotiated  = false;
+  let cols        = 80;
+
+  // Telnet option tracking
+  let binaryUs = false, binaryThem = false;
+  let eorUs    = false, eorThem    = false;
+  let ttype    = false;
+  let tn3270eUs = false, tn3270eThem = false;
+
+  // Application state
+  let currentScreen = 'logon';
+  let userid        = 'DEMO';
+  let lastLogonMsg  = '';
+  let lastCPMsg     = '';
+  let queryReturn   = 'cp';   // screen the CP query result returns to
+
+  let lastCMSMsg    = '';
+  let cpQueryResult = '';
+  // Linux guest console state (zvm-linux.js). linuxMode: this logon landed at a
+  // Linux console, so plain input is a login attempt and CP needs #CP.
+  let linuxMode  = false;
+  const guestState = zl.newGuestState();
+  // Mainframe 404 (400 series): XEDIT session state, kept per connection
+  // rather than reusing lastCMSMsg as the filename hack did before this.
+  // xeditBuffer is the in-progress copy of whatever file is open; nothing
+  // touches CMS_EXECS until PF3 (save) writes it back.
+  let xeditFilename = '';
+  let xeditBuffer   = [];
+
+  socket.on('close', () => log(`[${id}] Disconnected`));
+  socket.on('error', err => log(`[${id}] Socket error: ${err.message}`));
+
+  // ── Send opening Telnet negotiation ─────────────────────────────
+  // Offer TN3270E, then fall back path for BINARY + EOR + TTYPE
+  socket.write(Buffer.from([
+    IAC, DO,   OPT_TN3270E,     // "please use TN3270E"
+    IAC, WILL, OPT_TN3270E,
+    IAC, DO,   OPT_BINARY,
+    IAC, WILL, OPT_BINARY,
+    IAC, DO,   OPT_EOR,
+    IAC, WILL, OPT_EOR,
+    IAC, DO,   OPT_TTYPE,
+  ]));
+
+  socket.on('data', chunk => {
+    buf = Buffer.concat([buf, chunk]);
+    debug(`[${id}] ← raw: ${[...chunk].map(b => b.toString(16).padStart(2,'0')).join(' ')}`);
+    processBuffer();
+  });
+
+  function processBuffer() {
+    while (buf.length > 0) {
+      if (buf[0] === IAC) {
+        if (buf.length < 2) return;                   // wait for more
+        const cmd = buf[1];
+
+        if (cmd === SE || cmd === NOP) { buf = buf.slice(2); continue; }
+        if (cmd === EOR) {
+          // End of record — shouldn't reach here as a standalone IAC EOR
+          buf = buf.slice(2); continue;
+        }
+
+        if ((cmd === DO || cmd === DONT || cmd === WILL || cmd === WONT) && buf.length >= 3) {
+          handleTelnetOption(cmd, buf[2]);
+          buf = buf.slice(3);
+          continue;
+        }
+
+        if (cmd === SB) {
+          const seIdx = buf.indexOf(Buffer.from([IAC, SE]), 2);
+          if (seIdx === -1) return;                   // incomplete SB
+          handleSB(buf.slice(2, seIdx));
+          buf = buf.slice(seIdx + 2);
+          continue;
+        }
+
+        // Unknown IAC — skip
+        buf = buf.slice(2);
+        continue;
+      }
+
+      // Look for IAC EOR to delimit a 3270 data record
+      let eorPos = -1;
+      for (let i = 0; i < buf.length - 1; i++) {
+        if (buf[i] === IAC && buf[i + 1] === EOR) { eorPos = i; break; }
+      }
+      if (eorPos === -1) return;   // incomplete record, wait
+
+      const rawRecord = buf.slice(0, eorPos);
+      buf = buf.slice(eorPos + 2);
+
+      // Unescape doubled IAC
+      const record = [];
+      for (let i = 0; i < rawRecord.length; i++) {
+        if (rawRecord[i] === IAC && i + 1 < rawRecord.length && rawRecord[i + 1] === IAC) {
+          record.push(IAC); i++;
+        } else {
+          record.push(rawRecord[i]);
+        }
+      }
+      handle3270Record(Buffer.from(record));
+    }
+  }
+
+  function handleTelnetOption(cmd, opt) {
+    debug(`[${id}] Telnet ${['DO','DONT','WILL','WONT'][cmd-0xFD]} OPT=0x${opt.toString(16)}`);
+    if (cmd === WILL && opt === OPT_TN3270E) {
+      tn3270eThem = true;
+      // Nothing more — wait for SB TN3270E SEND DEVICE-TYPE to proceed
+    } else if (cmd === DO && opt === OPT_TN3270E) {
+      tn3270eUs = true;
+    } else if (cmd === WILL && opt === OPT_BINARY) { binaryThem = true; checkReady(); }
+    else if (cmd === DO   && opt === OPT_BINARY)   { binaryUs   = true; checkReady(); }
+    else if (cmd === WILL && opt === OPT_EOR)       { eorThem    = true; checkReady(); }
+    else if (cmd === DO   && opt === OPT_EOR)       { eorUs      = true; checkReady(); }
+    else if (cmd === DO   && opt === OPT_TTYPE)     { ttype      = true; checkReady(); }
+    else if (cmd === WILL && opt === OPT_TTYPE)     { /* send TTYPE request */ }
+    else if (cmd === DONT || cmd === WONT) { /* ignore */ }
+  }
+
+  function sendScreen() {
+   mockCols = cols;
+   let ds;
+   switch (currentScreen) {
+    case 'logon': ds = screenLogon(lastLogonMsg); break;
+    case 'cp': ds = screenCPReady(userid, lastCPMsg, linuxMode); break;
+    case 'cms': ds = screenCMSReady(userid, lastCMSMsg); break;
+    case 'filelist': ds = screenFilelist(userid); break;
+    case 'rdrlist': ds = screenRdrlist(userid); break;
+    case 'xedit': ds = screenXedit(userid); break;
+    case 'cpquery': ds = screenCPQuery(userid, cpQueryResult); break;
+    default: ds = screenLogon(); break;
+   }
+
+   if (tn3270eMode) {
+     // TN3270E header: data-type=0x00, request=0x00, response=0x00, seq=0x00 0x00
+     ds = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00]), ds]);
+   }
+
+   socket.write(wrapEOR(ds));
+   log(`[${id}] → Screen: ${currentScreen} (tn3270e=${tn3270eMode})`);
+  }
+
+  function handleSB(payload) {
+   if (payload.length === 0) return;
+   debug(`[${id}] SB opt=0x${payload[0].toString(16)} len=${payload.length}`);
+
+   // ── TN3270E sub-negotiation ──────────────────────────────────────
+   if (payload[0] === OPT_TN3270E) {
+    const subCmd = payload[1];
+
+    //if (subCmd === TN3E_SEND && payload[2] === TN3E_DEVICE_TYPE) {
+    if (subCmd === TN3E_DEVICE_TYPE && payload[2] === TN3E_REQUEST) {
+      // Client wants to negotiate device type — accept whatever model it
+      // asked for by echoing it back, and adopt that model's screen width.
+      // Replying with a different type than requested desyncs clients
+      // (like x3270) that honor the server's IS.
+      const reqStr = payload.slice(3).toString('ascii');
+      const match  = reqStr.match(/IBM-(3278|3279)-(\d)(-E)?/);
+      let accepted = 'IBM-3278-2-E';
+      if (match) {
+        const model = `${match[1]}-${match[2]}${match[3] || ''}`;
+        const dims  = MODEL_DIMS[model];
+        if (dims) { accepted = `IBM-${model}`; cols = dims.cols; }
+      }
+      const response = Buffer.from([
+        IAC, SB, OPT_TN3270E,
+        TN3E_DEVICE_TYPE, TN3E_IS,
+        ...Buffer.from(accepted),
+        0x01, // CONNECT
+        ...Buffer.from(LU_NAME),
+        IAC, SE,
+      ]);
+      socket.write(response);
+      debug(`[${id}] → TN3270E DEVICE-TYPE IS ${accepted} (cols=${cols})`);
+      return;
+    }
+
+    if (subCmd === TN3E_DEVICE_TYPE && payload[2] === TN3E_IS) {
+      // Client acknowledged device type — pick up the real model it asked for
+      // so screen addressing (sba) matches the width the client will render at.
+      const deviceStr = payload.slice(3).toString('ascii');
+      const match = deviceStr.match(/IBM-(3278|3279)-(\d)(-E)?/);
+      if (match) {
+        const model = `${match[1]}-${match[2]}${match[3] || ''}`;
+        const dims  = MODEL_DIMS[model];
+        if (dims) { cols = dims.cols; debug(`[${id}] Client device-type ${model} → cols=${cols}`); }
+      }
+      // Now send FUNCTIONS REQUEST
+      socket.write(Buffer.from([
+        IAC, SB, OPT_TN3270E,
+        TN3E_FUNCTIONS, TN3E_REQUEST,
+        IAC, SE,
+      ]));
+      return;
+    }
+
+    if (subCmd === TN3E_FUNCTIONS && payload[2] === TN3E_IS) {
+      // Client confirmed functions — TN3270E negotiation complete
+      debug(`[${id}] TN3270E negotiation complete`);
+      tn3270eMode = true;
+      negotiated = true;
+      sendScreen();
+      return;
+    }
+
+    if (subCmd === TN3E_FUNCTIONS && payload[2] === TN3E_REQUEST) {
+      // Client is requesting functions — respond with FUNCTIONS IS (empty = basic)
+      socket.write(Buffer.from([
+        IAC, SB, OPT_TN3270E,
+        TN3E_FUNCTIONS, TN3E_IS,
+        IAC, SE,
+      ]));
+      tn3270eMode = true;
+      negotiated = true;
+      sendScreen();
+      return;
+    }
+
+    return;
+   }
+
+   // ── Classic TN3270: TTYPE IS response ───────────────────────────
+   if (payload[0] === OPT_TTYPE) {
+    // payload[1] === 0x00 means IS
+    if (payload[1] === 0x00) {
+      const ttypeStr = payload.slice(2).toString('ascii');
+      debug(`[${id}] TTYPE IS: ${ttypeStr}`);
+      const match = ttypeStr.match(/IBM-(3278|3279)-(\d)(-E)?/);
+      if (match) {
+        const model = `${match[1]}-${match[2]}${match[3] || ''}`;
+        const dims  = MODEL_DIMS[model];
+        if (dims) { cols = dims.cols; debug(`[${id}] Client TTYPE ${model} → cols=${cols}`); }
+      }
+      negotiated = true;
+      sendScreen();
+    }
+    return;
+   } 
+  }
+
+  function checkReady() {
+    // Classic TN3270 path: BINARY both ways + EOR + TTYPE
+    if (!negotiated && binaryUs && binaryThem && eorUs && eorThem && ttype) {
+      if (!ttypeRequested) {
+	 ttypeRequested = true;
+      // Request TTYPE from client
+      socket.write(Buffer.from([IAC, SB, OPT_TTYPE, 0x01, IAC, SE]));
+      }
+    }
+  }
+
+  function handle3270Record(data) {
+    if (!negotiated) return;
+
+    // Strip TN3270E 5-byte header if present — Tn3270Session._sendDataRecord()
+    // always prepends it on outbound client->host records once negotiated
+    // (see tn3270/session.js), symmetric with mock-lpar.js's handle3270Record.
+    const payload = tn3270eMode ? data.slice(5) : data;
+    if (payload.length === 0) return;
+    const aid = payload[0];
+    debug(`[${id}] ← AID 0x${aid.toString(16).padStart(2,'0')} screen='${currentScreen}'`);
+
+    // Extract typed text from field write data
+    // Extract fields keyed by buffer address
+    const fieldMap = {};
+    let j = 1;
+    // Skip cursor SBA
+    if (payload[j] === 0x11 && j + 2 < payload.length) {
+      j += 3;
+    }
+    while (j < payload.length) {
+      if (payload[j] === 0x11 && j + 2 < payload.length) {
+      // Decode SBA address
+      const b1 = payload[j+1], b2 = payload[j+2];
+      const addr = ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+      j += 3;
+      // Read data for this field
+      let fieldText = '';
+      while (j < payload.length && payload[j] !== 0x11 && payload[j] !== 0xFF) {
+       const b = payload[j];
+       if (b >= 0x40) fieldText += String.fromCharCode(EBCDIC_TO_ASCII[b] || 0x20);
+       j++;
+      }
+      fieldMap[addr] = fieldText.trim();
+    } else if (payload[j] === 0x1D) {
+      j += 2;
+    } else {
+      j++;
+    }
+  }
+  const inputText = Object.values(fieldMap).join(' ').trim();
+  debug(`[${id}] Input: '${inputText}'`);
+
+    switch (currentScreen) {
+      case 'logon':
+        if (aid === AID_ENTER) {
+          // USERID field data starts at row 9 col 14 (734), PASSWORD at
+          // row 10 col 14 (814). Fall back to splitting the concatenated
+          // field text if a client addresses the fields slightly off.
+          const parts = inputText.split(/\s+/).filter(Boolean);
+          const enteredUser = (fieldMap[734] || parts[0] || 'DEMO').slice(0, 8).toUpperCase().trim();
+          const enteredPass = (fieldMap[814] || parts[1] || '').toUpperCase().trim();
+          userid = enteredUser || 'DEMO';
+          const dirPass = ZVM_DIRECTORY[userid];
+          if (dirPass === undefined) {
+            lastLogonMsg = `HCPLGA054E ${userid} not in CP directory`;
+            log(`[${id}] Logon rejected — ${userid} not in CP directory`);
+            sendCurrentScreen();
+          } else if (enteredPass !== '' && enteredPass !== dirPass.toUpperCase()) {
+            lastLogonMsg = 'HCPLGA050E LOGON unsuccessful--incorrect password';
+            log(`[${id}] Logon rejected — incorrect password for ${userid}`);
+            sendCurrentScreen();
+          } else {
+            // Correct password, or the blank-password walkthrough carve-out.
+            lastLogonMsg  = '';
+            log(`[${id}] Logon: userid='${userid}'`);
+            currentScreen = 'cp';
+            linuxMode     = zl.isLinuxGuest(userid);
+            lastCPMsg     = '';
+            sendCurrentScreen();
+          }
+        } else if (aid === AID_PF3) {
+          socket.end();
+        }
+        break;
+
+      case 'cp': {
+        // On a Linux guest's console, plain input goes to the guest (a login
+        // attempt); only #CP reaches CP. cpText is what CP actually sees.
+        let cpText = inputText.trim();
+        let escapedToCp = false;
+        if (linuxMode && aid === AID_ENTER && cpText) {
+          const esc = /^#CP\s+(.*)$/i.exec(cpText);
+          if (esc) { cpText = esc[1].trim(); escapedToCp = true; }
+          else {
+            _cpConsoleLog.push({ ts: new Date().toISOString(), userid, raw: cpText, linux: true });
+            lastCPMsg = zl.linuxLoginResponse(userid, cpText);
+            sendCurrentScreen();
+            break;
+          }
+        }
+        // Already in CP mode, so a CMS-style "CP Q NAMES" means "Q NAMES".
+        cpText = cpText.replace(/^CP\s+/i, '');
+        const cmd = cpText.toUpperCase();
+        if (aid === AID_ENTER) {
+          if (!cmd) { sendCurrentScreen(); break; }
+          _cpConsoleLog.push({ ts: new Date().toISOString(), userid, raw: cpText, escapedToCp });
+          const guestOut = zl.handleGuestCommand(cpText, userid, classOf(userid), guestState,
+            LOGGED_ON_USERS.filter(u => !FORCED_USERS.has(u.id)).map(u => u.id));
+
+          if (/^(IPL|I)(\s+(CMS|190))?(\s+CLEAR)?$/.test(cmd) || cmd === 'CMS') {
+            currentScreen = 'cms';
+            // Mainframe 404 (400 series): real CMS auto-runs a PROFILE
+            // EXEC, if one exists, on every logon, before the Ready
+            // prompt ever appears. CMS_EXECS is shared, global state
+            // (same simplification LOGGED_ON_USERS already makes), so
+            // whatever the most recent XEDIT save left in PROFILE fires
+            // here for the next logon that reaches this line, whoever
+            // that is, with no session of the editor's own still open.
+            const profileLines = CMS_EXECS['PROFILE'];
+            const profileOutput = profileLines
+              ? runRexx(profileLines, '').output.join('\n') + '\n'
+              : '';
+            lastCMSMsg = `IPL CMS\n${profileOutput}z/VM CMS is loaded.\nReady; T=0.01/0.01`;
+            sendCurrentScreen();
+          } else if (guestOut !== null) {
+            lastCPMsg = guestOut;
+            sendCurrentScreen();
+          } else if (cmd.startsWith('LINK ')) {
+            const result = simulateLink(userid, cpText);
+            lastCPMsg = result || `HCPLNM119E Invalid LINK operand\nReady(00119); T=0.01/0.01`;
+            sendCurrentScreen();
+          } else if (cmd.startsWith('FORCE ')) {
+            // Mainframe 403 (400 series): the first command this mock
+            // actually gates on privilege class. classOf(userid) === 'G'
+            // for everyone except OPERATOR (see PRIV_CLASS above), so a
+            // normal logon is correctly denied here — OPUTIL (case 'cms'
+            // below) is where the exploit actually lives.
+            const target = cpText.slice(6).trim().split(/\s+/)[0];
+            lastCPMsg = !zl.hasAnyClass(classOf(userid), 'AB')
+              ? `HCPCQF040E FORCE not available -- privilege class B or higher required\nReady(00040); T=0.01/0.01`
+              : forceUser(target);
+            sendCurrentScreen();
+          } else if (cmd.startsWith('XAUTOLOG ')) {
+            const target = cpText.slice(9).trim().split(/\s+/)[0];
+            lastCPMsg = xautologUser(userid, target);
+            sendCurrentScreen();
+          } else if (cmd.startsWith('Q ') || cmd.startsWith('QUERY ') || cmd === 'QUERY' || cmd === 'Q') {
+            cpQueryResult = simulateCPQuery(cpText, userid);
+            currentScreen = 'cpquery';
+            sendCurrentScreen();
+          } else if (cmd === 'LOGOFF' || cmd === 'LOG' || cmd === '#CP LOGOFF') {
+            // Real z/VM: LOGOFF ends the session and redisplays the CP logon
+            // screen on the same terminal connection — it does NOT drop TCP.
+            // (DISC below is the genuine disconnect.) Lets the RACF PROBE's
+            // "keep going after a match" sweep carry on to the next credential.
+            log(`[${id}] LOGOFF — returning to CP logon screen`);
+            userid       = 'DEMO';
+            linuxMode    = false;
+            lastLogonMsg = '';
+            lastCPMsg    = '';
+            lastCMSMsg   = '';
+            currentScreen = 'logon';
+            sendCurrentScreen();
+          } else if (cmd === 'DISC' || cmd === 'DISCONNECT') {
+            log(`[${id}] DISCONNECT requested`);
+            socket.end();
+          } else if (cmd === 'HELP') {
+            cpQueryResult = `CP COMMANDS:\n  IPL CMS       - Load CMS\n  QUERY TIME    - Display time\n  QUERY NAMES   - List logged-on users\n  QUERY STORAGE - Display storage\n  QUERY DASD    - Display DASD\n  LOGOFF        - Logoff\nReady; T=0.01/0.01`;
+            currentScreen = 'cpquery';
+            sendCurrentScreen();
+          } else {
+            lastCPMsg = `HCPCMD003E Unknown CP command: ${cpText}\nReady(00003); T=0.01/0.01`;
+            sendCurrentScreen();
+          }
+        } else if (aid === AID_PF3) {
+          // PF3 on CP = logoff in real z/VM; simulate disconnect
+          socket.end();
+        }
+        break;
+      }
+
+      case 'cpquery':
+        if (aid === AID_ENTER || aid === AID_PF3) {
+          currentScreen = queryReturn;
+          queryReturn   = 'cp';
+          lastCPMsg     = cpQueryResult.split('\n').pop() || '';
+          sendCurrentScreen();
+        }
+        break;
+
+      case 'cms': {
+        const cmd = inputText.toUpperCase().trim();
+        if (aid === AID_ENTER) {
+          if (!cmd) { sendCurrentScreen(); break; }
+
+          if (cmd === 'FILELIST' || cmd === 'FL') {
+            currentScreen = 'filelist';
+            sendCurrentScreen();
+          } else if (cmd === 'RDRLIST' || cmd === 'RL') {
+            currentScreen = 'rdrlist';
+            sendCurrentScreen();
+          } else if (cmd.startsWith('XEDIT ') || cmd.startsWith('X ')) {
+            const parts    = inputText.trim().split(/\s+/);
+            const filename = parts.slice(1).join(' ') || 'DEMO REXX A';
+            const execName = filename.trim().split(/\s+/)[0].toUpperCase();
+            currentScreen  = 'xedit';
+            xeditFilename  = filename;
+            // Mainframe 404 (400 series): copy, not a reference -- editing
+            // xeditBuffer must never mutate CMS_EXECS until PF3 says so.
+            xeditBuffer    = CMS_EXECS[execName] ? [...CMS_EXECS[execName]] : [];
+            sendCurrentScreen();
+          } else if (cmd === 'CP') {
+            // Drop back to CP mode
+            currentScreen = 'cp';
+            lastCPMsg     = 'CP entered.';
+            sendCurrentScreen();
+          } else if (/^(#CP|CP)\s+(Q|QUERY)(\s|$)/.test(cmd)) {
+            // "#CP Q NAMES" / "CP Q NAMES" from CMS runs the CP command and
+            // comes back to CMS, same as the real escape.
+            cpQueryResult = simulateCPQuery(cmd.replace(/^(#CP|CP)\s+/, ''), userid);
+            queryReturn   = 'cms';
+            currentScreen = 'cpquery';
+            sendCurrentScreen();
+          } else if (cmd === '#CP LOGOFF' || cmd === 'LOGOFF') {
+            // Same as LOGOFF from CP — back to the logon screen, TCP stays up.
+            log(`[${id}] LOGOFF from CMS — returning to CP logon screen`);
+            userid       = 'DEMO';
+            lastLogonMsg = '';
+            lastCPMsg    = '';
+            lastCMSMsg   = '';
+            currentScreen = 'logon';
+            sendCurrentScreen();
+          } else if (cmd === 'CMS') {
+            lastCMSMsg = 'Already in CMS.  Ready; T=0.01/0.01';
+            sendCurrentScreen();
+          } else if (CMS_EXECS[cmd.split(/\s+/)[0]]) {
+            // Bare filename (real CMS auto-execs EXEC/REXX filetypes) --
+            // run it through the interpreter and show the SAY transcript.
+            const [execName, ...argTokens] = inputText.trim().split(/\s+/);
+            const { output, rc } = runRexx(CMS_EXECS[execName.toUpperCase()], argTokens.join(' '));
+            // Mainframe 403 (400 series): OPUTIL is a real, working exec,
+            // its own REXX source (execs.js) is exactly what XEDIT shows,
+            // same discipline every shipped exec in this mock holds. Its
+            // privileged behavior lives here, not in the REXX itself —
+            // runRexx() stays scoped exactly as documented (no ADDRESS
+            // support), this is a special case in the exec-dispatch path,
+            // the same pattern VERIFY (Book 105) already uses. The bypass
+            // is real: forceUser() runs unconditionally, the caller's own
+            // classOf(userid) is never checked, unlike the direct FORCE
+            // command above. An old operational-utility exec left in the
+            // CMS environment, trusted to act with more authority than
+            // whoever happens to run it actually holds.
+            if (execName.toUpperCase() === 'OPUTIL' && argTokens[0]) {
+              const forceResult = forceUser(argTokens[0]);
+              lastCMSMsg = [...output, forceResult.split('\n')[0], `Ready(${rc}); T=0.01/0.01`].join('\n');
+            } else {
+              lastCMSMsg = [...output, `Ready(${rc}); T=0.01/0.01`].join('\n');
+            }
+            sendCurrentScreen();
+          } else {
+            lastCMSMsg = `DMSEXT002S Command not found: ${inputText}\nReady(00002); T=0.01/0.01`;
+            sendCurrentScreen();
+          }
+        } else if (aid === AID_PF3) {
+          // PF3 from CMS → back to CP
+          currentScreen = 'cp';
+          lastCPMsg     = 'Returned to CP from CMS.';
+          sendCurrentScreen();
+        }
+        break;
+      }
+
+      case 'filelist':
+      case 'rdrlist':
+        if (aid === AID_PF3 || aid === AID_ENTER) {
+          currentScreen = 'cms';
+          lastCMSMsg    = 'Ready; T=0.01/0.01';
+          sendCurrentScreen();
+        }
+        break;
+
+      case 'xedit': {
+        if (aid === AID_PF3) {
+          // Mainframe 404 (400 series): PF3 now actually writes the
+          // buffer back into CMS_EXECS -- real XEDIT persists on quit,
+          // and this mock's own exec-dispatch (the CMS_EXECS[cmd] lookup
+          // and the future PROFILE EXEC auto-run) reads from that same
+          // shared object, so a save here is visible to any later logon
+          // on this mock, not just the session that made it.
+          const execName = xeditFilename.trim().split(/\s+/)[0].toUpperCase();
+          CMS_EXECS[execName] = [...xeditBuffer];
+          currentScreen = 'cms';
+          lastCMSMsg    = `File saved: ${xeditFilename}\nReady; T=0.01/0.01`;
+          sendCurrentScreen();
+        } else if (aid === AID_ENTER) {
+          // Real XEDIT's command line takes subcommands; this mock models
+          // just enough of one (INPUT) to make a save mean something.
+          const line = inputText.trim();
+          const m = line.match(/^INPUT\s+(.*)$/i);
+          if (m) xeditBuffer.push(m[1]);
+          sendCurrentScreen();
+        }
+        break;
+      }
+    }
+  }
+  function sendCurrentScreen() {
+    let ds;
+    switch (currentScreen) {
+      case 'logon':    ds = screenLogon(lastLogonMsg);              break;
+      case 'cp':       ds = screenCPReady(userid, lastCPMsg, linuxMode); break;
+      case 'cpquery':  ds = screenCPQuery(userid, cpQueryResult);   break;
+      case 'cms':      ds = screenCMSReady(userid, lastCMSMsg);     break;
+      case 'filelist': ds = screenFilelist(userid);                 break;
+      case 'rdrlist':  ds = screenRdrlist(userid);                  break;
+      case 'xedit':    ds = screenXedit(userid, xeditFilename, xeditBuffer); break;
+      default:         ds = screenLogon();
+    }
+
+    if (tn3270eMode) {
+      // TN3270E 5-byte header: data-type=0x00, request=0x00, response=0x00, seq=0x00 0x00
+      ds = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00]), ds]);
+    }
+
+    socket.write(wrapEOR(ds));
+    log(`[${id}] → Screen: ${currentScreen} (tn3270e=${tn3270eMode})`);
+  }
+}
+// ── Logging ───────────────────────────────────────────────────────
+function log(msg)   { console.log(`${new Date().toISOString()} [INFO ] ${msg}`); }
+function debug(msg) { if (LOG) console.log(`${new Date().toISOString()} [DEBUG] ${msg}`); }
+
+// ── Start server ──────────────────────────────────────────────────
+const server = net.createServer(handleConnection);
+server.listen(PORT, '0.0.0.0', () => {
+  log('─────────────────────────────────────────────────────');
+  log('  WebTerm/3270 Mock z/VM Daemon');
+  log(`  Listening on  tcp://0.0.0.0:${PORT}`);
+  log(`  System ID     ${SYSNAME}`);
+  log(`  VM ID         ${VMID}`);
+  log(`  LU Name       ${LU_NAME}`);
+  log('  Protocol      TN3270E + classic TN3270 fallback');
+  log('  Screens       Logon → CP → CMS → FILELIST / RDRLIST / XEDIT');
+  log('  Try           LINK MAINT 191 191 MR mysecretpw   (at the CP Ready prompt)');
+  log('─────────────────────────────────────────────────────');
+});
+
+server.on('error', err => {
+  if (err.code === 'EADDRINUSE') log(`ERROR: Port ${PORT} already in use`);
+  else log(`ERROR: ${err.message}`);
+  process.exit(1);
+});
+
+process.on('SIGINT',  () => { log('Shutting down...'); server.close(() => process.exit(0)); });
+process.on('SIGTERM', () => { log('Shutting down...'); server.close(() => process.exit(0)); });
