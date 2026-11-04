@@ -14,7 +14,7 @@ import {
   JOURNAL_GROUPS, JOURNAL_CONFIG, parseJournalDays, journalStatement, parseJournalRows, evaluateJournal,
   EXIT_STATEMENTS, EXIT_JOURNAL_DAYS, EXIT_JOURNAL_TYPES, parseExitPrograms, parseLibPublic, evaluateExitPrograms,
   SERVICE_GROUPS, svcStatement, splitSqlStatement, parseNetstatRows, evaluateServiceGroup,
-  parseObjectGrants,
+  parseObjectGrants, parseActjobs,
   parseDisplayDataTable, findSqlErrorMessage, mockStatement, parseSqlResultTable, parseCveInfo, evaluateCveRow, parsePtfCurrency, evaluatePtfGroupRow,
 } from './as400sec-parse.js';
 
@@ -868,5 +868,26 @@ test('parseObjectGrants still reads the older two column layout', () => {
   assert.deepEqual(parseObjectGrants(lines), [
     { user: 'APPADMIN', auth: '*ALL' },
     { user: '*PUBLIC', auth: '*ALL' },
+  ]);
+});
+
+// Rows copied from the PUB400 capture of WRKACTJOB (IBM i 7.5). Subsystems are
+// rows of type SBS and their jobs are indented under them.
+test('parseActjobs reads the real layout, jobs under their subsystem row', () => {
+  const lines = Array.from({ length: 24 }, () => '');
+  const row = (name, user, type, func, status) =>
+    ' '.repeat(6) + name.padEnd(15) + user.padEnd(12) + type.padEnd(6) + '0,0'.padEnd(7) + func.padEnd(16) + status;
+  lines[8]  = ' Opt  Subsystem/Job   User        Type  CPU %  Function        Status';
+  lines[9]  = row('QBATCH', 'QSYS', 'SBS', '', 'DEQW');
+  lines[10] = row('  ACTIONPROC', 'DINIW', 'BCH', 'DLY-10', 'DLYW');
+  lines[11] = row('  MAPEPIRE', 'QSECOFR', 'BCH', 'CMD-STRQSH', 'TIMW');
+  lines[12] = row('QSYSWRK', 'QSYS', 'SBS', '', 'DEQW');
+  lines[13] = row('  QZDASOINIT', 'QUSER', 'PJ', 'PGM-QZDASO', 'SELW');
+  lines[18] = ' '.repeat(67) + '     More...';
+  lines[19] = ' Parameters or command';
+  assert.deepEqual(parseActjobs(lines), [
+    { job: 'ACTIONPROC', sbs: 'QBATCH',  user: 'DINIW',   type: 'BCH', func: 'DLY-10' },
+    { job: 'MAPEPIRE',   sbs: 'QBATCH',  user: 'QSECOFR', type: 'BCH', func: 'CMD-STRQSH' },
+    { job: 'QZDASOINIT', sbs: 'QSYSWRK', user: 'QUSER',   type: 'PJ',  func: 'PGM-QZDASO' },
   ]);
 });

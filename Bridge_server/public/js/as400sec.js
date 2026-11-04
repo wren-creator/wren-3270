@@ -178,13 +178,14 @@ const TOOLS = {
   },
   ACTJOB: {
     cmd: 'WRKACTJOB', title: 'Work with Active Jobs', ids: 'Actjob',
+    paged: true,   // the real display rolls, and a page is parsed on its own
     // Cross-references profiles the User-Profile Enumerator already rated
     // CRITICAL/HIGH, so running that scan first sharpens this one.
     single: lines => {
       const priv = new Set(RESULTS.USRPRF.filter(r => r.risk === 'CRITICAL' || r.risk === 'HIGH').map(r => r.name));
       return parseActjobs(lines).map(j => {
         const { risk, finding } = evaluateActjob(j, priv);
-        return { name: j.job, value: j.user, risk, detail: `${j.sbs} · ${j.func} · ${finding}` };
+        return { name: j.job, value: j.user, risk, detail: [j.sbs, j.func, finding].filter(Boolean).join(' · ') };
       });
     },
   },

@@ -493,6 +493,26 @@ export function evaluateAutl({ publicAuth, secured = [] }) {
 // Columns: Job 6–15, Subsystem 17–26, User 28–38, Type 40–44, Function 46–58.
 export function parseActjobs(lines) {
   const out = [];
+  // The real IBM i 7.5 display (captured on PUB400) heads its columns
+  // "Subsystem/Job  User  Type  CPU %  Function  Status", lists each subsystem
+  // as a row of type SBS and indents its jobs under it. A row rolled onto a
+  // new page has no subsystem row above it, so its sbs is empty.
+  const hdr = lines.findIndex(l => /\bSubsystem\/Job\b/.test(l));
+  if (hdr !== -1) {
+    let sbs = '';
+    for (let r = hdr + 1; r < lines.length; r++) {
+      const line = lines[r] || '';
+      if (/Parameters or command|More\.\.\.|Bottom/.test(line)) break;
+      const name = line.slice(6, 21).trim();
+      const user = line.slice(21, 33).trim();
+      const type = line.slice(33, 39).trim();
+      if (!name || !user) continue;
+      if (type === 'SBS') { sbs = name; continue; }
+      out.push({ job: name, sbs, user, type, func: line.slice(46, 62).trim() });
+    }
+    return out;
+  }
+  // Older mock layout: Job, Subsystem, User, Type, Function as flat columns.
   for (let r = LIST_START_ROW; r < lines.length; r++) {
     const line = lines[r] || '';
     const job = line.slice(6, 17).trim();

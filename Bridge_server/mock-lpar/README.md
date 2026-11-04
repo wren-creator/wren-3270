@@ -506,7 +506,9 @@ for the full four-hop design.
 
 ## Where the mock matches a real IBM i, and where it does not
 
-Screens redrawn from read-only captures of a real IBM i 7.5 (PUB400) match the real host cell for cell, colors included: `DSPLIBL` and `DSPOBJAUT`. The rest of the screens are still our own layout. Two differences to know about:
+Screens redrawn from read-only captures of a real IBM i 7.5 (PUB400) match the real host cell for cell, colors included: `DSPLIBL`, `DSPOBJAUT` and `WRKACTJOB`. `WRKACTJOB` lists each subsystem as a row with its jobs indented under it and rolls onto a second page, the way the real one does. The menus use the real geometry and colors (menu name top left, `System:` top right, the command line after `===>` on row 19) but keep the mock's own titles and options. The sign-on screen is still ours, because PUB400's is customized and we have no stock capture to copy. The rest of the screens are our own layout. Differences to know about:
+
+- A job on a rolled page has no subsystem row above it, so the scanner shows its subsystem as blank, as it would against a real host.
 
 - The audit panels with no real equivalent (`WRKSYSVAL`, `WRKUSRPRF` detail and the like) still paint weak values red as a teaching aid. A real host never colors a finding.
 - The mock lets every profile run every command. A basic profile on a real system is refused with `Not authorized to command X in library *LIBL.`

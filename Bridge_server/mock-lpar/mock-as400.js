@@ -680,10 +680,10 @@ const AUTLS = [
 // interesting finding — an *ALLOBJ batch job or a broadly-reachable host server.
 const ACTJOBS = [
   { sbs: 'QINTER',  job: 'DSP01',      user: 'JSMITH',   type: 'INT', func: 'CMD-WRKACTJOB', status: 'RUN' },
-  { sbs: 'QBATCH',  job: 'NIGHTLYRUN', user: 'APPADMIN', type: 'BCH', func: 'PGM-PAYRPT',    status: 'ACTIVE' },
-  { sbs: 'QSYSWRK', job: 'QZDASOINIT', user: 'QUSER',    type: 'PJ',  func: 'PGM-QZDASO',    status: 'ACTIVE' },
-  { sbs: 'QCMN',    job: 'QRWTSRVR',   user: 'QUSER',    type: 'PJ',  func: '*',             status: 'ACTIVE' },
-  { sbs: 'QSYSWRK', job: 'MAINTJOB',   user: 'QSECOFR',  type: 'BCH', func: 'PGM-MAINT',     status: 'ACTIVE' },
+  { sbs: 'QBATCH',  job: 'NIGHTLYRUN', user: 'APPADMIN', type: 'BCH', func: 'PGM-PAYRPT',    status: 'RUN' },
+  { sbs: 'QSYSWRK', job: 'QZDASOINIT', user: 'QUSER',    type: 'PJ',  func: 'PGM-QZDASO',    status: 'SELW' },
+  { sbs: 'QCMN',    job: 'QRWTSRVR',   user: 'QUSER',    type: 'PJ',  func: '',              status: 'SELW' },
+  { sbs: 'QSYSWRK', job: 'MAINTJOB',   user: 'QSECOFR',  type: 'BCH', func: 'PGM-MAINT',     status: 'TIMW' },
   // Mainframe 202 (200 series) Differential-Diagnosis vignette: MSGW is
   // a real, distinct IBM i job status, waiting on a reply to an inquiry
   // message the program itself sent, not stuck and not crashed. The
@@ -794,6 +794,8 @@ const LIBL = [
 // DSPLIBL list rows start on row 9 of the real display (not row 6 like the
 // mock's own Work with panels).
 const LIBL_START_ROW = 9;
+// Work with Active Jobs, from the PUB400 capture: rows 9 to 17, command line on row 20.
+const ACTJOB_START_ROW = 9, ACTJOB_PAGE_SIZE = 9, ACTJOB_CMD_ROW = 20;
 
 // Objects browsed with PDM (WRKOBJPDM LIB(x)), keyed by library name.
 const PDM_OBJECTS = {
@@ -1339,38 +1341,46 @@ const AID_F12  = 0x3C;
 const AID_PGUP = 0xF4;   // 5250 Roll Down
 const AID_PGDN = 0xF5;   // 5250 Roll Up
 
+// Menu geometry and colors from the PUB400 capture of the IBM i MAIN menu: the
+// menu name top left, the title, System: top right, options from row 4, the
+// "Selection or command" label on row 18 and the input after ===> on row 19
+// (the real field is 153 long and wraps, ours stops at the screen edge). The
+// titles and options are still the mock's own teaching tree.
+const MENU_CMD_ROW = 19;
 function screenMenu(menuId, ctx) {
   const menu = MENUS[menuId];
+  const G = ATTR_GREEN, W = ATTR_WHITE, B = ATTR_BLUE;
   const fields = [
-    { row: 0, col: Math.max(0, 40 - Math.floor(menu.title.length / 2)), text: menu.title, input: false },
-    { row: 0, col: 65, text: 'MOCKMENU', input: false },
-    { row: 2, col: 2, text: `System:   ${SYSNAME}`, input: false },
-    { row: 4, col: 2, text: 'Select one of the following:', input: false },
+    { row: 0, col: 0, text: menuId, input: false, attr: B },
+    { row: 0, col: Math.max(10, 40 - Math.floor(menu.title.length / 2)), text: menu.title, input: false, attr: W },
+    { row: 1, col: 60, text: 'System:', input: false, attr: G },
+    { row: 1, col: 70, text: SYSNAME, input: false, attr: G },
+    { row: 2, col: 0, text: 'Select one of the following:', input: false, attr: B },
   ];
   menu.options.forEach((opt, idx) => {
-    fields.push({ row: 6 + idx, col: 5, text: `${opt.num}. ${opt.label}`, input: false });
+    fields.push({ row: 4 + idx, col: opt.num.length > 1 ? 4 : 5, text: `${opt.num}. ${opt.label}`, input: false, attr: G });
   });
-  fields.push({ row: 6 + menu.options.length, col: 5, text: '90. Sign off', input: false });
+  fields.push({ row: 5 + menu.options.length, col: 4, text: '90. Sign off', input: false, attr: G });
 
-  if (menu.parent) {
-    fields.push({ row: 16, col: 2, text: 'F3=Exit   F12=Cancel', input: false });
-  }
-  fields.push({ row: 18, col: 2, text: `Signed on as: ${ctx.user || 'UNKNOWN'}`, input: false });
+  fields.push({ row: 15, col: 0, text: `Signed on as: ${ctx.user || 'UNKNOWN'}`, input: false, attr: G });
   if (ctx.unreadCount > 0) {
     fields.push({
-      row: 19, col: 2,
-      text: `*** You have ${ctx.unreadCount} new message${ctx.unreadCount === 1 ? '' : 's'} — option 9 to view ***`,
+      row: 16, col: 0,
+      text: `*** You have ${ctx.unreadCount} new message${ctx.unreadCount === 1 ? '' : 's'}: option 9 to view ***`,
       input: false, attr: ATTR_RED,
     });
   }
   if (ctx.message) {
-    fields.push({ row: 20, col: 2, text: ctx.message, input: false, attr: ATTR_RED });
+    fields.push({ row: 17, col: 0, text: ctx.message.slice(0, 79), input: false, attr: ATTR_RED });
   }
-  fields.push({ row: 22, col: 2, text: 'Selection or command', input: false });
-  fields.push({ row: 22, col: 25, text: '', input: true, length: 40 });
+  fields.push({ row: 18, col: 0, text: 'Selection or command', input: false, attr: G });
+  fields.push({ row: MENU_CMD_ROW, col: 0, text: '===>', input: false, attr: G });
+  fields.push({ row: MENU_CMD_ROW, col: 5, text: '', input: true, length: 74, attr: ATTR_GREEN_UL });
+  fields.push({ row: 21, col: 0, text: 'F3=Exit', input: false, attr: B });
+  if (menu.parent) fields.push({ row: 21, col: 10, text: 'F12=Cancel', input: false, attr: B });
 
   const clearUnit = Buffer.from([ESC, CMD_CLEAR_UNIT]);
-  const wtd = wrapEsc(CMD_WRITE_TO_DISPLAY, buildScreen(80, fields, { row: 22, col: 25 }));
+  const wtd = wrapEsc(CMD_WRITE_TO_DISPLAY, buildScreen(80, fields, { row: MENU_CMD_ROW, col: 6 }));
   const readCmd = Buffer.from([ESC, CMD_READ_INPUT_FIELDS]);
   return Buffer.concat([clearUnit, wtd, readCmd]);
 }
@@ -1891,26 +1901,78 @@ function screenAutlDetail(name) {
   return wrapPanel(fields, { row: 22, col: 44 });
 }
 
+// The real display lists each subsystem as a row (type SBS, user QSYS) with its
+// jobs indented under it, so a screen is a flat run of those rows.
+function actjobRows() {
+  const rows = [];
+  const order = [...new Set(ACTJOBS.map(j => j.sbs))];
+  for (const sbs of order) {
+    rows.push({ name: sbs, user: 'QSYS', type: 'SBS', func: '', status: 'DEQW' });
+    ACTJOBS.filter(j => j.sbs === sbs).forEach(j =>
+      rows.push({ name: '  ' + j.job, user: j.user, type: j.type, func: j.func, status: j.status }));
+  }
+  return rows;
+}
+
+// Drawn from a PUB400 capture (IBM i 7.5). Column numbers are the capture's
+// minus one, an attribute byte takes the cell in front of each run of text.
 function screenActjobList(ctx) {
+  const all = actjobRows();
+  const pageCount = Math.max(1, Math.ceil(all.length / ACTJOB_PAGE_SIZE));
+  const page = Math.min(Math.max(ctx.page || 0, 0), pageCount - 1);
+  const rows = all.slice(page * ACTJOB_PAGE_SIZE, (page + 1) * ACTJOB_PAGE_SIZE);
+  const G = ATTR_GREEN, W = ATTR_WHITE, B = ATTR_BLUE;
+  const now = new Date();
+  const p2 = n => String(n).padStart(2, '0');
   const fields = [
-    { row: 0, col: 30, text: 'Work with Active Jobs', input: false },
-    { row: 0, col: 68, text: SYSNAME, input: false },
-    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
-    { row: 5, col: 2,  text: 'Opt  Job         Subsystem   User         Type  Function      Status', input: false },
+    { row: 0, col: 28, text: 'Work with Active Jobs', input: false, attr: W },
+    { row: 0, col: 70, text: SYSNAME, input: false, attr: G },
+    { row: 1, col: 56, text: `${p2(now.getFullYear() % 100)}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`, input: false, attr: G },
+    { row: 1, col: 66, text: `${p2(now.getHours())}:${p2(now.getMinutes())}:${p2(now.getSeconds())} UTC`, input: false, attr: G },
+    { row: 2, col: 0,  text: 'CPU %:', input: false, attr: G },
+    { row: 2, col: 9,  text: '  0,0', input: false, attr: G },
+    { row: 2, col: 19, text: 'Elapsed time:', input: false, attr: G },
+    { row: 2, col: 35, text: '00:00:00', input: false, attr: G },
+    { row: 2, col: 48, text: 'Active jobs:', input: false, attr: G },
+    { row: 2, col: 63, text: String(ACTJOBS.length), input: false, attr: G },
+    { row: 4, col: 0,  text: 'Type options, press Enter.', input: false, attr: B },
+    { row: 5, col: 2,  text: '2=Change', input: false, attr: B },
+    { row: 5, col: 13, text: '3=Hold', input: false, attr: B },
+    { row: 5, col: 22, text: '4=End', input: false, attr: B },
+    { row: 5, col: 30, text: '5=Work with', input: false, attr: B },
+    { row: 5, col: 44, text: '6=Release', input: false, attr: B },
+    { row: 5, col: 56, text: '7=Display message', input: false, attr: B },
+    { row: 6, col: 2,  text: '8=Work with spooled files', input: false, attr: B },
+    { row: 6, col: 30, text: '13=Disconnect ...', input: false, attr: B },
+    { row: 7, col: 20, text: 'Current', input: false, attr: W },
+    { row: 8, col: 0,  text: 'Opt', input: false, attr: W },
+    { row: 8, col: 5,  text: 'Subsystem/Job', input: false, attr: W },
+    { row: 8, col: 20, text: 'User', input: false, attr: W },
+    { row: 8, col: 32, text: 'Type', input: false, attr: W },
+    { row: 8, col: 38, text: 'CPU %', input: false, attr: W },
+    { row: 8, col: 45, text: 'Function', input: false, attr: W },
+    { row: 8, col: 61, text: 'Status', input: false, attr: W },
   ];
-  ACTJOBS.forEach((j, idx) => {
-    const row = LIST_START_ROW + idx;
-    const priv = PRIV_USERS.has(j.user);
-    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
-    fields.push({ row, col: 6,  text: j.job.slice(0, 10).padEnd(10, ' '), input: false });
-    fields.push({ row, col: 17, text: j.sbs.padEnd(10, ' '), input: false });
-    fields.push({ row, col: 28, text: j.user.padEnd(11, ' '), input: false, attr: authAttr(priv) });
-    fields.push({ row, col: 40, text: j.type.padEnd(5, ' '), input: false });
-    fields.push({ row, col: 46, text: j.func.padEnd(13, ' '), input: false });
-    fields.push({ row, col: 60, text: j.status, input: false });
+  rows.forEach((j, idx) => {
+    const row = ACTJOB_START_ROW + idx;
+    fields.push({ row, col: 1,  text: '', input: true, length: 2, attr: ATTR_GREEN_UL });
+    fields.push({ row, col: 5,  text: j.name, input: false, attr: G });
+    fields.push({ row, col: 20, text: j.user, input: false, attr: G });
+    fields.push({ row, col: 32, text: j.type, input: false, attr: G });
+    fields.push({ row, col: 40, text: '0,0', input: false, attr: G });
+    if (j.func) fields.push({ row, col: 45, text: j.func, input: false, attr: G });
+    fields.push({ row, col: 62, text: j.status, input: false, attr: G });
   });
-  listTrailer(fields, ctx.message);
-  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+  fields.push({ row: 18, col: 66, text: page < pageCount - 1 ? '     More...' : '      Bottom', input: false, attr: W });
+  if (ctx.message) fields.push({ row: 18, col: 0, text: ctx.message.slice(0, 60), input: false, attr: ATTR_RED });
+  fields.push({ row: 19, col: 0,  text: 'Parameters or command', input: false, attr: G });
+  fields.push({ row: 20, col: 0,  text: '===>', input: false, attr: G });
+  fields.push({ row: 20, col: 5,  text: '', input: true, length: 70, attr: ATTR_GREEN_UL });
+  [['F3=Exit', 0], ['F5=Refresh', 10], ['F7=Find', 27], ['F10=Restart statistics', 40]]
+    .forEach(([t, c]) => fields.push({ row: 21, col: c, text: t, input: false, attr: B }));
+  [['F11=Display elapsed data', 0], ['F12=Cancel', 27], ['F23=More options', 40], ['F24=More keys', 59]]
+    .forEach(([t, c]) => fields.push({ row: 22, col: c, text: t, input: false, attr: B }));
+  return wrapPanel(fields, { row: ACTJOB_START_ROW, col: 1 });
 }
 
 function screenSbsList(ctx) {
@@ -2542,6 +2604,7 @@ function handleConnection(socket) {
   let cmdTarget = null;    // detail target: sysval name / profile name / object index
   let usrprfPage = 0;      // WRKUSRPRF paging (Roll Up/Down); reset on entry
   let sysvalPage = 0;      // WRKSYSVAL paging, same shape
+  let actjobPage = 0;      // WRKACTJOB paging (Roll Up/Down); reset on entry
   let dsplibPage = 0;      // DSPJOB → library list → Display Library object paging
   let navStack = [];       // back-navigation stack for the WRK/DSP security panels
   let sqlResult = null;    // last STRSQL result: { cols, rows } or null
@@ -2556,7 +2619,7 @@ function handleConnection(socket) {
   // few Wave 3 panels (e.g. MBRPDM_LIST) are themselves scoped by cmdTarget
   // and also drill into a detail screen that overwrites it — plain screen-id
   // stacking would lose the scope on the way back out.
-  function goTo(next, target = null) { navStack.push({ screen, cmdTarget }); screen = next; cmdTarget = target; menuMessage = ''; if (next === 'USRPRF_LIST') usrprfPage = 0; if (next === 'SYSVAL_LIST') sysvalPage = 0; if (next === 'DSPLIB_OBJS') dsplibPage = 0; }
+  function goTo(next, target = null) { navStack.push({ screen, cmdTarget }); screen = next; cmdTarget = target; menuMessage = ''; if (next === 'USRPRF_LIST') usrprfPage = 0; if (next === 'SYSVAL_LIST') sysvalPage = 0; if (next === 'DSPLIB_OBJS') dsplibPage = 0; if (next === 'ACTJOB_LIST') actjobPage = 0; }
   function goBack() {
     const prev = navStack.pop();
     screen = prev ? prev.screen : 'MAIN';
@@ -2737,7 +2800,7 @@ function handleConnection(socket) {
     } else if (screen === 'AUTL_DETAIL') {
       ds = screenAutlDetail(cmdTarget);
     } else if (screen === 'ACTJOB_LIST') {
-      ds = screenActjobList({ message: menuMessage });
+      ds = screenActjobList({ message: menuMessage, page: actjobPage });
     } else if (screen === 'SBS_LIST') {
       ds = screenSbsList({ message: menuMessage });
     } else if (screen === 'SPLF_LIST') {
@@ -2933,6 +2996,20 @@ function handleConnection(socket) {
           if (name) goTo('SYSVAL_DETAIL', name);
         }
       }
+    } else if (screen === 'ACTJOB_LIST') {
+      // Roll Up and Down page through the subsystem and job rows. Options are
+      // not acted on (the mock has no job control), a command runs as usual.
+      const cmdLine = fieldAt(runs, ACTJOB_CMD_ROW);
+      const pageCount = Math.max(1, Math.ceil(actjobRows().length / ACTJOB_PAGE_SIZE));
+      if (aid === AID_F3 || aid === AID_F12) {
+        goBack();
+      } else if (cmdLine) {
+        applyCommand(runCommand(cmdLine, user));
+      } else if (aid === AID_PGDN) {
+        if (actjobPage < pageCount - 1) actjobPage++;
+      } else if (aid === AID_PGUP) {
+        if (actjobPage > 0) actjobPage--;
+      }
     } else if (screen === 'USRPRF_LIST') {
       // Paged list — own handler so Roll Up/Down work and a picked Opt maps
       // through the page offset to the absolute USRPRFS index.
@@ -3019,7 +3096,7 @@ function handleConnection(socket) {
       goBack();
     } else if (MENUS[screen]) {
       const menu = MENUS[screen];
-      const sel = fieldAt(runs, 22);
+      const sel = fieldAt(runs, MENU_CMD_ROW);
 
       if ((aid === AID_F3 || aid === AID_F12) && menu.parent) {
         screen = menu.parent;
