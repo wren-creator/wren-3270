@@ -134,8 +134,14 @@ const TOOLS = {
       })),
       detailTitle: 'Display Object Authority',
       parse: (lines, text, item) => {
-        const publicAuth = parseLabelValue(lines, '*PUBLIC authority');
         const grants     = parseObjectGrants(lines);
+        // The older mock drew a "*PUBLIC authority :" line. A real IBM i does
+        // not, *PUBLIC is a row in the authority table, so read it from there.
+        let publicAuth = parseLabelValue(lines, '*PUBLIC authority');
+        if (publicAuth === '*UNKNOWN') {
+          const row = grants.find(g => g.user === '*PUBLIC');
+          if (row && row.auth) publicAuth = row.auth;
+        }
         const { risk, finding } = evaluateObjectDetail({ name: item.name, lib: item.lib, publicAuth, grants });
         return { name: item.key, value: publicAuth, risk, detail: finding };
       },

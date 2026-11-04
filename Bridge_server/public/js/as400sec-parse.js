@@ -158,18 +158,23 @@ export function evaluateObject(o) {
   return { risk, finding: findings.join(', ') };
 }
 
-// Private authority grants from a DSPOBJAUT detail screen. The grant list is
-// under a "User        Authority" header — user at cols 2–13, authority col 16.
+// Authority rows from a DSPOBJAUT detail screen, which comes in two shapes.
+// The real IBM i 7.5 display (captured on PUB400) heads the table
+// "User  Group  Authority" with user at col 1, group at col 13 and authority
+// at col 25, and *PUBLIC is simply one of the rows. The older mock drew
+// "User  Authority" with user at col 2 and authority at col 16. Both are read,
+// and the shape is picked from whether the header has a Group column.
 export function parseObjectGrants(lines) {
   const hdr = lines.findIndex(l => /\bUser\b/.test(l) && /\bAuthority\b/.test(l));
   if (hdr === -1) return [];
+  const real = /\bGroup\b/.test(lines[hdr]);
   const grants = [];
   for (let r = hdr + 1; r < lines.length; r++) {
     const line = lines[r] || '';
-    const user = line.slice(2, 15).trim();
+    const user = (real ? line.slice(1, 12) : line.slice(2, 15)).trim();
     if (!user) { if (grants.length) break; else continue; }
     if (!/^\*?[A-Z][A-Z0-9$#@]*$/.test(user)) break;   // stop at "Press Enter" / "F3=Exit"
-    const auth = (line.slice(16).trim().split(/\s+/)[0]) || '';
+    const auth = ((real ? line.slice(25) : line.slice(16)).trim().split(/\s+/)[0]) || '';
     grants.push({ user, auth });
   }
   return grants;

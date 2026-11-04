@@ -270,7 +270,7 @@ tasks*, MAIN option 3, options 5/6/7):
 |---------|-------|------------------------|
 | `WRKSYSVAL` / `DSPSYSVAL SYSVAL(x)` | System values | `QSECURITY 30`, `QMAXSIGN *NOMAX`, `QPWDEXPITV *NOMAX`, `QAUDCTL *NONE`, weak `QPWD*` |
 | `WRKUSRPRF` / `DSPUSRPRF USRPRF(x)` | User profiles | `QSECOFR` with all 8 special authorities + **default password**, over-privileged `APPADMIN` (`*ALLOBJ`), `LMTCPB *NO`, `QSRVBAS` shipping its **default password** (= profile name) while holding `*ALLOBJ`, and `QYSPJ` — a `Q`-named `*ALLOBJ *SECADM` **blend-in backdoor** IBM never ships |
-| `WRKOBJ` / `DSPOBJAUT OBJ(lib/obj)` | Object authority | `PAYROLL/EMPMAST` at `*PUBLIC *ALL`, libraries at `*PUBLIC *CHANGE` |
+| `WRKOBJ` / `DSPOBJAUT OBJ(lib/obj)` | Object authority | `PAYROLL/EMPMAST` at `*PUBLIC *ALL`, libraries at `*PUBLIC *CHANGE`. `DSPOBJAUT` is drawn like a real IBM i 7.5: `*PUBLIC` is a row in the User / Group / Authority table, there is no "*PUBLIC authority" line |
 
 **Wave 2 — extended surfaces** (options 1 and 4 of *General system tasks* run
 `WRKACTJOB` / `WRKSBS`; the rest are command-line reachable):
@@ -331,7 +331,7 @@ green-screen navigation before touching a real box. Reachable by command
 | `WRKBCHJOB` | Work with batch jobs | User tasks (1) → 4 | System-wide submitted jobs, several users/statuses |
 | `SNDMSG` | Send a Message | User tasks (1) → 1 | Compose screen (To user + text); appears in your own `DSPMSG` queue on send |
 | `WRKLIB` | Work with libraries | Files… (4) → 1 | Opt `5` shows a library description |
-| `DSPLIBL` | Display library list | Files… (4) → 2 | Direct detail, no list |
+| `DSPLIBL` | Display library list | Files… (4) → 2 | Drawn from a real IBM i 7.5 capture: Opt, Library, Type, ASP Device, Text, and opt `5` lists the library's objects |
 | `STRPDM` | (aliases `WRKLIB`) | Programming (5) → 1 | PDM's real entry point is the library list |
 | `WRKOBJPDM LIB(x)` | Work with Objects Using PDM | — | `LIB` param required (e.g. `WRKOBJPDM LIB(APPLIB)`) |
 | `WRKMBRPDM FILE(lib/file)` | Work with Members Using PDM | — | `FILE` param required (e.g. `WRKMBRPDM FILE(APPLIB/QRPGLESRC)`); opt `5` previews canned RPGLE/CLLE source |
@@ -495,3 +495,11 @@ for the full four-hop design.
 > `mock-zvm`/`mock-tpf` siblings, and are out of date. Worth a full pass
 > at some point — flagging rather than rewriting it as part of this
 > change.
+
+## Where the mock matches a real IBM i, and where it does not
+
+Screens redrawn from read-only captures of a real IBM i 7.5 (PUB400) match the real host cell for cell, colors included: `DSPLIBL` and `DSPOBJAUT`. The rest of the screens are still our own layout. Two differences to know about:
+
+- The audit panels with no real equivalent (`WRKSYSVAL`, `WRKUSRPRF` detail and the like) still paint weak values red as a teaching aid. A real host never colors a finding.
+- The mock lets every profile run every command. A basic profile on a real system is refused with `Not authorized to command X in library *LIBL.`
+

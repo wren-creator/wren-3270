@@ -14,6 +14,7 @@ import {
   JOURNAL_GROUPS, JOURNAL_CONFIG, parseJournalDays, journalStatement, parseJournalRows, evaluateJournal,
   EXIT_STATEMENTS, EXIT_JOURNAL_DAYS, EXIT_JOURNAL_TYPES, parseExitPrograms, parseLibPublic, evaluateExitPrograms,
   SERVICE_GROUPS, svcStatement, splitSqlStatement, parseNetstatRows, evaluateServiceGroup,
+  parseObjectGrants,
   parseDisplayDataTable, findSqlErrorMessage, mockStatement, parseSqlResultTable, parseCveInfo, evaluateCveRow, parsePtfCurrency, evaluatePtfGroupRow,
 } from './as400sec-parse.js';
 
@@ -839,4 +840,33 @@ test('real statements: every select item is narrowed and named, and each fits th
     assert.ok(!/(^|, )[A-Z_]+(,|$| [A-Z]+$)/.test(list.replace(/\([^)]*\)/g, '()')) || /SUBSTR|CAST/.test(list), s);
     assert.ok(splitSqlStatement(s, 68).length <= 5, `${s.length}: ${s}`);
   }
+});
+
+// Rows copied from the PUB400 capture of DSPOBJAUT on QGPL (IBM i 7.5), column
+// for column. The real display draws *PUBLIC as a table row, there is no
+// "*PUBLIC authority :" line, and the table has a Group column.
+test('parseObjectGrants reads the real IBM i layout, *PUBLIC as a table row', () => {
+  const lines = Array.from({ length: 24 }, () => '');
+  lines[8]  = ' '.repeat(25) + 'Object';
+  lines[9]  = ' User        Group       Authority';
+  lines[10] = ' *PUBLIC                 *CHANGE';
+  lines[11] = ' QSYS                    *ALL';
+  lines[18] = ' '.repeat(66) + '      Bottom';
+  lines[19] = ' Press Enter to continue.';
+  assert.deepEqual(parseObjectGrants(lines), [
+    { user: '*PUBLIC', auth: '*CHANGE' },
+    { user: 'QSYS', auth: '*ALL' },
+  ]);
+});
+
+test('parseObjectGrants still reads the older two column layout', () => {
+  const lines = Array.from({ length: 24 }, () => '');
+  lines[7] = '  User          Authority';
+  lines[8] = '  APPADMIN      *ALL';
+  lines[9] = '  *PUBLIC       *ALL';
+  lines[22] = '  Press Enter to continue';
+  assert.deepEqual(parseObjectGrants(lines), [
+    { user: 'APPADMIN', auth: '*ALL' },
+    { user: '*PUBLIC', auth: '*ALL' },
+  ]);
 });

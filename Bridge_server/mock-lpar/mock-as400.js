@@ -54,6 +54,11 @@ const ATTR_GREEN      = 0x20;
 const ATTR_WHITE       = 0x22;
 const ATTR_NONDISPLAY  = 0x27;
 const ATTR_RED         = 0x28;
+// Seen on a real IBM i 7.5 (PUB400 captures): key lines and "Press Enter" are
+// blue, labels and values green, titles and column headings white, and an
+// option field is green underlined.
+const ATTR_BLUE        = 0x3A;
+const ATTR_GREEN_UL    = 0x24;
 
 // Field Format Word bits — input field, MDT not set, alpha-shift.
 const FFW_INPUT_ALPHA = 0x0000;
@@ -107,7 +112,7 @@ function buildScreen(cols, fields, insertCursor) {
 
     if (f.input) {
       const ffw = f.nondisplay ? FFW_INPUT_NONDISPLAY_ALPHA : FFW_INPUT_ALPHA;
-      const attr = f.nondisplay ? ATTR_NONDISPLAY : ATTR_GREEN;
+      const attr = f.nondisplay ? ATTR_NONDISPLAY : (f.attr || ATTR_GREEN);
       const length = f.length || 20;
       parts.push(ORDER_SF, (ffw >> 8) & 0xFF, ffw & 0xFF, attr, (length >> 8) & 0xFF, length & 0xFF);
       if (f.text) parts.push(...toEbcdic(f.text.padEnd(length, ' ').slice(0, length)));
@@ -777,15 +782,18 @@ const LIBRARIES = [
 
 // Current library list (DSPLIBL) -- fixed order: system, product, current, user.
 const LIBL = [
-  { name: 'QSYS',    type: 'SYS' },
-  { name: 'QSYS2',   type: 'SYS' },
-  { name: 'QHLPSYS', type: 'SYS' },
-  { name: 'QUSRSYS', type: 'SYS' },
-  { name: 'APPLIB',  type: 'PRD' },
-  { name: 'MYLIB',   type: 'CUR' },
-  { name: 'QGPL',    type: 'USR' },
-  { name: 'QTEMP',   type: 'USR' },
+  { name: 'QSYS',    type: 'SYS', text: 'System Library' },
+  { name: 'QSYS2',   type: 'SYS', text: "System Library for CPI's" },
+  { name: 'QHLPSYS', type: 'SYS', text: '' },
+  { name: 'QUSRSYS', type: 'SYS', text: 'System Library for Users' },
+  { name: 'APPLIB',  type: 'PRD', text: 'Application program library' },
+  { name: 'MYLIB',   type: 'CUR', text: 'Personal development library' },
+  { name: 'QGPL',    type: 'USR', text: 'General Purpose Library' },
+  { name: 'QTEMP',   type: 'USR', text: '' },
 ];
+// DSPLIBL list rows start on row 9 of the real display (not row 6 like the
+// mock's own Work with panels).
+const LIBL_START_ROW = 9;
 
 // Objects browsed with PDM (WRKOBJPDM LIB(x)), keyed by library name.
 const PDM_OBJECTS = {
@@ -1217,7 +1225,7 @@ function runCommand(raw) {
       if (!LIBRARIES.find(l => l.name === name)) return { type: 'error', message: `CPF2110 - Library ${name} not found.` };
       return { type: 'detail', screen: 'LIB_DETAIL', target: name };
     }
-    case 'DSPLIBL': return { type: 'detail', screen: 'LIBL_DETAIL', target: null };
+    case 'DSPLIBL': return { type: 'detail', screen: 'DSPJOB_LIBL', target: null };
     case 'STRPDM':  return { type: 'screen', screen: 'LIB_LIST' };
     case 'WRKOBJPDM': {
       const lib = params.LIB;
@@ -1281,7 +1289,7 @@ const USRPRF_PAGE_SIZE = 14;
 // are scoped to a library/file picked via the CL command that opened them).
 const LIST_META = {
   // SYSVAL_LIST / USRPRF_LIST / DSPLIB_OBJS are handled by their own paged branches, not here.
-  DSPJOB_LIBL: { count: () => LIBL.length,          detail: i => ['DSPLIB_OBJS', LIBL[i].name] },
+  DSPJOB_LIBL: { count: () => LIBL.length,          detail: i => ['DSPLIB_OBJS', LIBL[i].name], startRow: LIBL_START_ROW },
   OBJ_LIST:    { count: () => OBJECTS.length,      detail: i => ['OBJ_DETAIL', i] },
   JOBD_LIST:   { count: () => JOBDS.length,        detail: i => ['JOBD_DETAIL', JOBDS[i].name] },
   AUTL_LIST:   { count: () => AUTLS.length,        detail: i => ['AUTL_DETAIL', AUTLS[i].name] },
@@ -1300,7 +1308,7 @@ const LIST_META = {
 // Detail/display screens where Enter/F3/F12 all navigate back one level.
 const DETAIL_SCREENS = new Set([
   'SYSVAL_DETAIL', 'USRPRF_DETAIL', 'OBJ_DETAIL', 'NETA', 'REGINF', 'NETSVR', 'PGMSTK_LIST', 'PGM_DETAIL', 'JOBD_DETAIL', 'AUTL_DETAIL',
-  'SPLF_DETAIL', 'JOB_DETAIL', 'LIB_DETAIL', 'LIBL_DETAIL', 'MBR_DETAIL',
+  'SPLF_DETAIL', 'JOB_DETAIL', 'LIB_DETAIL', 'MBR_DETAIL',
   'SST_DETAIL', 'ANZDFTPWD_DETAIL',
 ]);
 
@@ -1604,29 +1612,50 @@ function screenObjList(ctx) {
   return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
 }
 
+// Display Object Authority, drawn from the PUB400 capture (IBM i 7.5). The
+// real display has no "*PUBLIC authority :" line: *PUBLIC is a row in the
+// User / Group / Authority table like anyone else, and the scanner reads it
+// from there. Weak *PUBLIC rows are not drawn red, the real host does not do
+// that, the Object Authority Scanner is what rates them.
 function screenObjDetail(idx) {
   const o = OBJECTS[idx];
   if (!o) return screenStub('OBJECT NOT FOUND', { user: '' });
-  const weak = o.publicAuth === '*ALL' || o.publicAuth === '*CHANGE';
+  const G = ATTR_GREEN, W = ATTR_WHITE;
   const fields = [
-    { row: 0, col: 28, text: 'Display Object Authority', input: false },
-    { row: 2, col: 2,  text: `Object . . . . . . :   ${o.lib}/${o.name}`, input: false },
-    { row: 2, col: 48, text: `Type . :   ${o.type}`, input: false },
-    { row: 3, col: 2,  text: `Owner  . . . . . . :   ${o.owner}`, input: false },
-    { row: 4, col: 2,  text: `Authorization list :   ${o.authList}`, input: false },
-    { row: 5, col: 2,  text: '*PUBLIC authority  :', input: false },
-    { row: 5, col: 24, text: o.publicAuth, input: false, attr: authAttr(weak) },
-    { row: 7, col: 2,  text: 'User          Authority', input: false },
+    { row: 0, col: 27, text: 'Display Object Authority', input: false, attr: W },
+    { row: 2, col: 0,  text: 'Object . . . . . . . :', input: false, attr: G },
+    { row: 2, col: 25, text: o.name, input: false, attr: G },
+    { row: 2, col: 41, text: 'Owner  . . . . . . . :', input: false, attr: G },
+    { row: 2, col: 66, text: o.owner, input: false, attr: G },
+    { row: 3, col: 2,  text: 'Library  . . . . . :', input: false, attr: G },
+    { row: 3, col: 27, text: o.lib, input: false, attr: G },
+    { row: 3, col: 41, text: 'Primary group  . . . :', input: false, attr: G },
+    { row: 3, col: 66, text: '*NONE', input: false, attr: G },
+    { row: 4, col: 0,  text: 'Object type  . . . . :', input: false, attr: G },
+    { row: 4, col: 25, text: o.type, input: false, attr: G },
+    { row: 4, col: 41, text: 'ASP device . . . . . :', input: false, attr: G },
+    { row: 4, col: 66, text: '*SYSBAS', input: false, attr: G },
+    { row: 6, col: 0,  text: 'Object secured by authorization list  . . . . . . . . . . . . :', input: false, attr: G },
+    { row: 6, col: 66, text: o.authList, input: false, attr: G },
+    { row: 8, col: 25, text: 'Object', input: false, attr: W },
+    { row: 9, col: 0,  text: 'User', input: false, attr: W },
+    { row: 9, col: 12, text: 'Group', input: false, attr: W },
+    { row: 9, col: 24, text: 'Authority', input: false, attr: W },
   ];
   o.priv.forEach((a, i) => {
-    const w = a.user === '*PUBLIC' && (a.auth === '*ALL' || a.auth === '*CHANGE');
-    fields.push({ row: 8 + i, col: 2,  text: a.user.padEnd(12, ' '), input: false });
-    fields.push({ row: 8 + i, col: 16, text: a.auth, input: false, attr: w ? ATTR_RED : ATTR_GREEN });
+    fields.push({ row: 10 + i, col: 0,  text: a.user, input: false, attr: G });
+    if (a.group) fields.push({ row: 10 + i, col: 12, text: a.group, input: false, attr: G });
+    fields.push({ row: 10 + i, col: 24, text: a.auth, input: false, attr: G });
   });
-  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
-  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
-  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
-  return wrapPanel(fields, { row: 22, col: 44 });
+  fields.push({ row: 18, col: 66, text: '      Bottom', input: false, attr: W });
+  fields.push({ row: 19, col: 0,  text: 'Press Enter to continue.', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 21, col: 0,  text: 'F3=Exit', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 21, col: 10, text: 'F11=Display detail object authorities', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 21, col: 50, text: 'F12=Cancel', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 21, col: 63, text: 'F17=Top', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 22, col: 0,  text: 'F18=Bottom', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 23, col: 0,  text: '(C) COPYRIGHT IBM CORP. 1980, 2021.', input: false, attr: W });
+  return wrapPanel(fields, null);
 }
 
 // ── Wave 2 panels ────────────────────────────────────────────────────
@@ -2094,22 +2123,6 @@ function screenLibDetail(name) {
   return wrapPanel(fields, { row: 22, col: 44 });
 }
 
-function screenLiblDetail() {
-  const fields = [
-    { row: 0, col: 28, text: 'Display Library List', input: false },
-    { row: 0, col: 68, text: SYSNAME, input: false },
-    { row: 2, col: 2,  text: 'Library     Type', input: false },
-  ];
-  LIBL.forEach((l, idx) => {
-    fields.push({ row: 3 + idx, col: 2, text: l.name.padEnd(12, ' '), input: false });
-    fields.push({ row: 3 + idx, col: 14, text: l.type, input: false });
-  });
-  fields.push({ row: 22, col: 2,  text: 'Press Enter to continue', input: false });
-  fields.push({ row: 23, col: 2,  text: 'F3=Exit   F12=Cancel', input: false });
-  fields.push({ row: 22, col: 44, text: '', input: true, length: 1 });
-  return wrapPanel(fields, { row: 22, col: 44 });
-}
-
 // ── DSPJOB → library list → Display Library object enumeration ──────────
 // Carmel Ch.2.3, "no command line necessary": a restricted user reaches the
 // full user-profile list via System Request -> 3 (Display current job) -> 13
@@ -2163,22 +2176,41 @@ function screenDspjobOpts(ctx) {
   return wrapPanel(fields, { row: 20, col: 14 });
 }
 
+// Display Library List, drawn cell for cell from a PUB400 capture (IBM i 7.5):
+// system name top right, Opt / Library / Type / ASP Device / Text from row 8,
+// rows from row 9, no command line, F17 and F18 on the key line. Column
+// numbers here are the capture's minus one, because an attribute byte takes
+// the cell in front of each run of text.
 function screenDspjobLibl(ctx) {
   const fields = [
-    { row: 0, col: 26, text: 'Display Job Library List', input: false },
-    { row: 0, col: 68, text: SYSNAME, input: false },
-    { row: 2, col: 2,  text: 'Type options, press Enter.', input: false },
-    { row: 3, col: 4,  text: '5=Display objects in library', input: false },
-    { row: 5, col: 2,  text: 'Opt  Library     Type', input: false },
+    { row: 0, col: 11, text: '                  Display Library List', input: false, attr: ATTR_WHITE },
+    { row: 1, col: 60, text: 'System:', input: false, attr: ATTR_GREEN },
+    { row: 1, col: 70, text: SYSNAME, input: false, attr: ATTR_GREEN },
+    { row: 4, col: 0,  text: 'Type options, press Enter.', input: false, attr: ATTR_BLUE },
+    { row: 5, col: 2,  text: '5=Display objects in library', input: false, attr: ATTR_BLUE },
+    { row: 7, col: 27, text: 'ASP', input: false, attr: ATTR_WHITE },
+    { row: 8, col: 0,  text: 'Opt', input: false, attr: ATTR_WHITE },
+    { row: 8, col: 5,  text: 'Library', input: false, attr: ATTR_WHITE },
+    { row: 8, col: 17, text: 'Type', input: false, attr: ATTR_WHITE },
+    { row: 8, col: 27, text: 'Device', input: false, attr: ATTR_WHITE },
+    { row: 8, col: 39, text: 'Text', input: false, attr: ATTR_WHITE },
   ];
   LIBL.forEach((l, idx) => {
-    const row = LIST_START_ROW + idx;
-    fields.push({ row, col: 2,  text: '', input: true, length: 2 });
-    fields.push({ row, col: 6,  text: l.name.padEnd(11, ' '), input: false });
-    fields.push({ row, col: 18, text: l.type, input: false });
+    const row = LIBL_START_ROW + idx;
+    fields.push({ row, col: 1,  text: '', input: true, length: 1, attr: ATTR_GREEN_UL });
+    fields.push({ row, col: 5,  text: l.name, input: false, attr: ATTR_GREEN });
+    fields.push({ row, col: 17, text: l.type, input: false, attr: ATTR_GREEN });
+    if (l.text) fields.push({ row, col: 39, text: l.text, input: false, attr: ATTR_GREEN });
   });
-  listTrailer(fields, ctx.message);
-  return wrapPanel(fields, { row: LIST_START_ROW, col: 2 });
+  const bottom = LIBL_START_ROW + LIBL.length + 1;
+  fields.push({ row: bottom, col: 66, text: '      Bottom', input: false, attr: ATTR_WHITE });
+  if (ctx.message) fields.push({ row: bottom, col: 0, text: ctx.message.slice(0, 60), input: false, attr: ATTR_RED });
+  fields.push({ row: 22, col: 0,  text: 'F3=Exit', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 22, col: 10, text: 'F12=Cancel', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 22, col: 23, text: 'F17=Top', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 22, col: 33, text: 'F18=Bottom', input: false, attr: ATTR_BLUE });
+  fields.push({ row: 23, col: 0,  text: '(C) COPYRIGHT IBM CORP. 1980, 2021.', input: false, attr: ATTR_WHITE });
+  return wrapPanel(fields, { row: LIBL_START_ROW, col: 1 });
 }
 
 function screenDsplibObjs(ctx) {
@@ -2702,8 +2734,6 @@ function handleConnection(socket) {
       ds = screenLibList({ message: menuMessage });
     } else if (screen === 'LIB_DETAIL') {
       ds = screenLibDetail(cmdTarget);
-    } else if (screen === 'LIBL_DETAIL') {
-      ds = screenLiblDetail();
     } else if (screen === 'DSPJOB_OPTS') {
       ds = screenDspjobOpts({ user, message: menuMessage });
     } else if (screen === 'DSPJOB_LIBL') {
@@ -2949,7 +2979,7 @@ function handleConnection(socket) {
         // WRKMBRPDM: 4=Run actually CALLs the member's backing program
         // (if it has one -- runCommand's CPF9801 covers the rest, same
         // as PAYRPT/LEAVCALC which are still source-preview-only).
-        const pick = pickOption(runs, LIST_START_ROW, meta.count(cmdTarget));
+        const pick = pickOption(runs, meta.startRow || LIST_START_ROW, meta.count(cmdTarget));
         if (pick && screen === 'MBRPDM_LIST' && pick.opt === '4') {
           const mbrs = SRCMEMBERS[cmdTarget] || [];
           const mbr = mbrs[pick.index];
