@@ -501,6 +501,19 @@ function _bypassStep() {
   if (!cand) { _bypassFinish(); return; }
   _status('BYPASS', `[${bypass.idx + 1}/${BYPASS_CANDIDATES.length}] Testing ${cand.cmd}…`);
   bypass.stage = 'NAV';
+  // Echo screens are skipped now, so a host that never answers would stall the
+  // run. Give each candidate a few seconds, then record it as no live command
+  // line and move on.
+  const at = bypass.idx;
+  clearTimeout(bypass.timer);
+  bypass.timer = setTimeout(() => {
+    if (!bypass.running || bypass.idx !== at || bypass.stage === 'BACK') return;
+    RESULTS.BYPASS.push({ name: cand.label, value: cand.cmd, risk: 'OK',
+      detail: `no answer from the host within 6 seconds, ${cand.cmd} may have been refused` });
+    _render('BYPASS');
+    bypass.stage = 'BACK';
+    _send({ type: 'key', aid: 'F12', fields: [] });
+  }, 6000);
   _fillCommandLine(cand.cmd);
   _pressEnter();
 }
@@ -512,6 +525,12 @@ function _bypassOnScreen(msg) {
   const cand  = BYPASS_CANDIDATES[bypass.idx];
 
   if (bypass.stage === 'NAV') {
+    // fillField echoes a screen before the host answers, and that echo is still
+    // the menu with the command typed in. Acting on it sent the test command
+    // before the candidate screen had arrived, so wait for a screen that is not
+    // the menu. (A candidate the host refuses leaves the menu up with a message
+    // and never gets here, which the timeout below turns into an OK row.)
+    if (text.includes('Selection or command')) return;
     // Arrived at the candidate's own screen — now try the test command from
     // here, whatever "here" turns out to expose as an input field.
     bypass.stage = 'PROBE';
@@ -521,7 +540,10 @@ function _bypassOnScreen(msg) {
   }
 
   if (bypass.stage === 'PROBE') {
+    // Same echo problem: the screen that arrives first is the candidate with the
+    // test command typed on its command line. Only the host's answer counts.
     const executed = text.includes(cand.testLabel);
+    if (!executed && lines.some(l => l.includes(cand.test) && !l.includes(cand.label))) return;
     const risk     = executed ? 'CRITICAL' : 'OK';
     const finding  = executed
       ? `command entry succeeded from this screen (ran ${cand.test} and landed on its output) — LMTCPB(*YES) does not reach this screen`
@@ -544,6 +566,7 @@ function _bypassOnScreen(msg) {
 }
 
 function _bypassFinish() {
+  clearTimeout(bypass.timer);
   bypass.running = false;
   const btn = document.getElementById('as400BypassBtn');
   if (btn) btn.disabled = false;
