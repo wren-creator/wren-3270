@@ -348,7 +348,15 @@ It's wired into `docker-compose.yml` as the `mock-as400` service (port
 `../lpars.shipped.txt` (id `mock-as400`, protocol `5250`).
 
 Config env vars: `MOCK_AS400_PORT` (default `3272`), `MOCK_AS400_SYSID`
-(default `AS400MOCK`), `LOG_LEVEL`.
+(default `AS400MOCK`), `MOCK_AS400_BASELINE` (`open`, the default, or
+`restricted`), `LOG_LEVEL`.
+
+`MOCK_AS400_BASELINE=restricted` closes `CRTLIB`, `CRTUSRPRF`, `CHGUSRPRF` and
+`DLTUSRPRF` to any profile without `*ALLOBJ`. They answer
+`Not authorized to command X in library *LIBL.` before any parameter is read.
+Only `CRTLIB` is confirmed on a real host (PUB400 refused a basic profile). The
+three user profile commands are IBM's shipped `*PUBLIC *EXCLUDE`, not seen on
+PUB400. In `open` mode `CRTLIB` is simply not a command the mock knows.
 
 ### HTTP Server Administration GUI (ports 2001 and 2010)
 

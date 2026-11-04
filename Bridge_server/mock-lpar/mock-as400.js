@@ -1110,10 +1110,32 @@ function parseParams(str) {
   return params;
 }
 
-function runCommand(raw) {
+// ── Command authority baseline ───────────────────────────────────────
+// MOCK_AS400_BASELINE=open (default) lets every profile run every command, the
+// teaching setup the book walks through. =restricted closes the commands a
+// real site closes to a basic profile: the command is refused before any
+// parameter is read, with the wording a real IBM i 7.5 gave.
+//   Seen on PUB400:  CRTLIB, refused to a basic profile with
+//                    "Not authorized to command CRTLIB in library *LIBL."
+//   IBM's shipped *PUBLIC *EXCLUDE, not seen on PUB400: the user profile
+//                    commands (CRTUSRPRF, CHGUSRPRF, DLTUSRPRF).
+// *ALLOBJ passes the check, as it does on a real system (it bypasses object
+// authority). *SECADM alone does not.
+const BASELINE = (process.env.MOCK_AS400_BASELINE || 'open').toLowerCase() === 'restricted' ? 'restricted' : 'open';
+const CLOSED_COMMANDS = new Set(['CRTLIB', 'CRTUSRPRF', 'CHGUSRPRF', 'DLTUSRPRF']);
+function commandRefusal(verb, userName) {
+  if (BASELINE !== 'restricted' || !CLOSED_COMMANDS.has(verb)) return null;
+  const p = USRPRFS.find(u => u.name === userName);
+  if (p && p.specialAuth.includes('*ALLOBJ')) return null;
+  return `Not authorized to command ${verb} in library *LIBL.`;   // no message ID on the captured line
+}
+
+function runCommand(raw, userName) {
   const cmd = raw.trim().toUpperCase();
   if (!cmd) return { type: 'none' };
-  const verb = cmd.split(/[\s(]/)[0];
+  const verb = cmd.split(/[\s(]/)[0].split('/').pop();
+  const refused = commandRefusal(verb, userName);
+  if (refused) return { type: 'error', message: refused };
   const params = parseParams(cmd);
 
   switch (verb) {
@@ -2899,7 +2921,7 @@ function handleConnection(socket) {
       if (aid === AID_F3 || aid === AID_F12) {
         goBack();
       } else if (cmdLine) {
-        applyCommand(runCommand(cmdLine));
+        applyCommand(runCommand(cmdLine, user));
       } else if (aid === AID_PGDN) {
         if (sysvalPage < pageCount - 1) sysvalPage++;
       } else if (aid === AID_PGUP) {
@@ -2919,7 +2941,7 @@ function handleConnection(socket) {
       if (aid === AID_F3 || aid === AID_F12) {
         goBack();
       } else if (cmdLine) {
-        applyCommand(runCommand(cmdLine));
+        applyCommand(runCommand(cmdLine, user));
       } else if (aid === AID_PGDN) {
         if (usrprfPage < pageCount - 1) usrprfPage++;
       } else if (aid === AID_PGUP) {
@@ -2953,7 +2975,7 @@ function handleConnection(socket) {
       if (aid === AID_F3 || aid === AID_F12) {
         goBack();
       } else if (cmdLine) {
-        applyCommand(runCommand(cmdLine));
+        applyCommand(runCommand(cmdLine, user));
       } else if (aid === AID_PGDN) {
         if (dsplibPage < pageCount - 1) dsplibPage++;
       } else if (aid === AID_PGUP) {
@@ -2973,7 +2995,7 @@ function handleConnection(socket) {
       if (aid === AID_F3 || aid === AID_F12) {
         goBack();
       } else if (cmdLine) {
-        applyCommand(runCommand(cmdLine));
+        applyCommand(runCommand(cmdLine, user));
       } else if (meta.detail) {
         // Any non-blank Opt acts as 5=Display in the mock, except on
         // WRKMBRPDM: 4=Run actually CALLs the member's backing program
@@ -2984,7 +3006,7 @@ function handleConnection(socket) {
           const mbrs = SRCMEMBERS[cmdTarget] || [];
           const mbr = mbrs[pick.index];
           const pgmKey = `${cmdTarget.split('/')[0]}/${mbr ? mbr.name : ''}`;
-          applyCommand(runCommand(`CALL PGM(${pgmKey})`));
+          applyCommand(runCommand(`CALL PGM(${pgmKey})`, user));
         } else if (pick) {
           const [scr, tgt] = meta.detail(pick.index, cmdTarget);
           goTo(scr, tgt);
@@ -3018,7 +3040,7 @@ function handleConnection(socket) {
           returnTo = screen;
           screen = 'MESSAGES';
         } else if (opt.run) {
-          applyCommand(runCommand(opt.run));
+          applyCommand(runCommand(opt.run, user));
         } else if (opt.goto) {
           screen = opt.goto;
           menuMessage = '';
@@ -3029,7 +3051,7 @@ function handleConnection(socket) {
         }
       } else {
         // Non-numeric input on the command line — run it as a CL command.
-        applyCommand(runCommand(sel));
+        applyCommand(runCommand(sel, user));
       }
     }
     sendScreen();

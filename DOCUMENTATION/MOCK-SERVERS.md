@@ -562,6 +562,7 @@ The mock ships as an **unhardened factory box** so the security tools have real 
 |---------------------|---------|-------------|
 | `MOCK_AS400_PORT` | `3272` | TCP port to listen on |
 | `MOCK_AS400_SYSID` | `AS400MOCK` | System name shown on the Sign On screen and panel headers |
+| `MOCK_AS400_BASELINE` | `open` | `restricted` refuses `CRTLIB`, `CRTUSRPRF`, `CHGUSRPRF` and `DLTUSRPRF` to profiles without `*ALLOBJ`, the way a real site's baseline does |
 | `LOG_LEVEL` | `info` | Set to `debug` for full byte-level Telnet / 5250 logging |
 
 ```bash
