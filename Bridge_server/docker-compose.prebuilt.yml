@@ -1,14 +1,14 @@
-# WebTerm/3270 — run from prebuilt images (no clone, no build, no Node).
-name: web3270
+# Wren/3270 — run from prebuilt images (no clone, no build, no Node).
+name: wren3270
 #
 #   docker compose -f docker-compose.prebuilt.yml up -d
 #   open http://localhost:8081
 #
-# Images come from ghcr.io/wren-creator/web3270-*. Pin a release instead of
-# tracking latest:   WEB3270_TAG=1.0.0 docker compose -f docker-compose.prebuilt.yml up -d
+# Images come from ghcr.io/wren-creator/wren3270-*. Pin a release instead of
+# tracking latest:   WREN3270_TAG=1.0.0 docker compose -f docker-compose.prebuilt.yml up -d
 # Different host port:  BRIDGE_HOST_PORT=9000 docker compose -f ... up -d
 #
-# Offline? `docker load < web3270-images-<version>-<arch>.tar.gz` first. Compose
+# Offline? `docker load < wren3270-images-<version>-<arch>.tar.gz` first. Compose
 # uses the loaded images and only pulls what is missing.
 #
 # Your own LPARs added in the UI are saved inside the bridge container. They
@@ -19,7 +19,7 @@ name: web3270
 
 services:
   tn3270-bridge:
-    image: ${REGISTRY:-ghcr.io/wren-creator}/web3270-bridge:${WEB3270_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/wren-creator}/wren3270-bridge:${WREN3270_TAG:-latest}
     container_name: tn3270-bridge
     restart: unless-stopped
     ports:
@@ -48,28 +48,28 @@ services:
     networks: [tn3270-net]
 
   mock-lpar:
-    image: ${REGISTRY:-ghcr.io/wren-creator}/web3270-mock-lpar:${WEB3270_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/wren-creator}/wren3270-mock-lpar:${WREN3270_TAG:-latest}
     container_name: mock-lpar
     restart: unless-stopped
     environment: { MOCK_PORT: "3270", MOCK_SYSID: "DEMOSYS", MOCK_LU: "MOCKLU01", LOG_LEVEL: "info" }
     networks: [tn3270-net]
 
   mock-zvm:
-    image: ${REGISTRY:-ghcr.io/wren-creator}/web3270-mock-zvm:${WEB3270_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/wren-creator}/wren3270-mock-zvm:${WREN3270_TAG:-latest}
     container_name: mock-zvm
     restart: unless-stopped
     environment: { MOCK_ZVM_PORT: "3271", MOCK_ZVM_SYSID: "ZVMPROD", MOCK_ZVM_VMID: "ZVMSYS1", MOCK_ZVM_LU: "ZVMLU01", LOG_LEVEL: "info" }
     networks: [tn3270-net]
 
   mock-tpf:
-    image: ${REGISTRY:-ghcr.io/wren-creator}/web3270-mock-tpf:${WEB3270_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/wren-creator}/wren3270-mock-tpf:${WREN3270_TAG:-latest}
     container_name: mock-tpf
     restart: unless-stopped
     environment: { MOCK_PORT: "3274", MOCK_SYSID: "TPFSYS1", MOCK_LU: "TPFLU01", LOG_LEVEL: "info" }
     networks: [tn3270-net]
 
   mock-as400:
-    image: ${REGISTRY:-ghcr.io/wren-creator}/web3270-mock-as400:${WEB3270_TAG:-latest}
+    image: ${REGISTRY:-ghcr.io/wren-creator}/wren3270-mock-as400:${WREN3270_TAG:-latest}
     container_name: mock-as400
     restart: unless-stopped
     environment: { MOCK_AS400_PORT: "3272", MOCK_AS400_SYSID: "AS400MOCK", LOG_LEVEL: "info" }

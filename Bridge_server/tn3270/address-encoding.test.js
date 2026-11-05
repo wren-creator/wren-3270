@@ -4,7 +4,7 @@ import Tn3270Session from './session.js';
 
 // PUB400's IBM i gateway read no fields from a record that used 14-bit
 // binary addresses and answered CPF1296. x3270/c3270 send 12-bit coded
-// addresses on any screen that fits in 4096 cells, so web3270 does too.
+// addresses on any screen that fits in 4096 cells, so wren3270 does too.
 const make = model => new Tn3270Session({ wsId: 'enc', host: '127.0.0.1', port: 1, useTls: false, model });
 
 test('a 24x80 screen sends 12-bit coded addresses', () => {

@@ -215,7 +215,7 @@ async function fakeTelnet(record) {
   return { port: srv.address().port, fromClient, stop: () => closed(srv) };
 }
 
-test('banner: a captured live sign-on record reads through web3270\'s own 5250 parser', async () => {
+test('banner: a captured live sign-on record reads through wren3270\'s own 5250 parser', async () => {
   const t = await fakeTelnet(hexRecord('ibmi-pub400-23-signon-record.hex'));
   try {
     const r = await reconIbmi({ host: '127.0.0.1', mapperPort: 1, timeoutMs: 3000, banner: true, telnetPort: t.port, telnetTlsPort: 1 });
@@ -231,7 +231,7 @@ test('banner: a captured live sign-on record reads through web3270\'s own 5250 p
 });
 
 test('banner: a stock-layout sign-on reads the same way', async () => {
-  const t = await fakeTelnet(hexRecord('ibmi-web3270-mock-as400-signon-record.hex'));
+  const t = await fakeTelnet(hexRecord('ibmi-wren3270-mock-as400-signon-record.hex'));
   try {
     const r = await reconIbmi({ host: '127.0.0.1', mapperPort: 1, timeoutMs: 3000, banner: true, telnetPort: t.port, telnetTlsPort: 1 });
     const b = r.facts.banner.plain;

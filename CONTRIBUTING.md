@@ -1,6 +1,6 @@
 # Contributing
 
-This repo (`web3270`) is the open-source WebTerm/3270 client and TN3270(E)/TN5250
+This repo (`wren-3270`) is the open-source Wren/3270 client and TN3270(E)/TN5250
 bridge. It has no accounts, billing, or admin layer, that's a separate paid-tier
 product built on top of this code, living in a private repo
 (`webterm-3270-saas`) that isn't part of this project.

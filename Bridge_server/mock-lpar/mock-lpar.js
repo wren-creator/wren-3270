@@ -2085,7 +2085,7 @@ function debug(msg) { if (LOG) console.log(`${new Date().toISOString()} [DEBUG] 
 const server = net.createServer(handleConnection);
 server.listen(PORT, '0.0.0.0', () => {
   log('─────────────────────────────────────────────────────');
-  log(`  WebTerm/3270 Mock LPAR Daemon`);
+  log(`  Wren/3270 Mock LPAR Daemon`);
   log(`  Listening on  tcp://0.0.0.0:${PORT}`);
   log(`  System ID     ${SYSNAME}`);
   log(`  LU Name       ${LU_NAME}`);

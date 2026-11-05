@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>WebTerm/3270 — Wire Inspector</title>
+<title>Wren/3270 — Wire Inspector</title>
 <style>
 :root{
   --bg-void:#030508; --bg-panel:#05090f; --bg-hover:rgba(255,255,255,0.025);
@@ -420,7 +420,7 @@ function highlightRange(range) {
 }
 
 function replayRecord(r) {
-  if (!window.opener || window.opener.closed) { alert('Main WebTerm window is not open — cannot replay.'); return; }
+  if (!window.opener || window.opener.closed) { alert('Main Wren window is not open — cannot replay.'); return; }
   const ok = window.opener.wireReplaySend?.(r.wsId, r.raw, r.no);
   if (!ok) alert(`Session #${r.wsId} is not currently connected — cannot replay.`);
 }

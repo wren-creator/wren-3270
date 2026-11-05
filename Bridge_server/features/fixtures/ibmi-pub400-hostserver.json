@@ -1,5 +1,5 @@
 {
-  "_note": "Canonical copy lives in mainframe-nse/ibmi/test/fixtures. web3270 keeps a copy at Bridge_server/features/fixtures/ibmi-pub400-hostserver.json. Change the bytes in mainframe-nse first, then copy.",
+  "_note": "Canonical copy lives in mainframe-nse/ibmi/test/fixtures. wren3270 keeps a copy at Bridge_server/features/fixtures/ibmi-pub400-hostserver.json. Change the bytes in mainframe-nse first, then copy.",
   "source": "A public hosted IBM i 7.5, captured 2026-10-18 with the ibmi-svrmap-info and ibmi-signon-info scripts (dump option).",
   "mapper": {
     "as-central": "2b00002116",

@@ -19,7 +19,7 @@ wss.on('connection', createWsHandler({ config, logger, sessions, Ebcdic }));
 
 httpServer.listen(config.bridge.port, '0.0.0.0', () => {
   logger.info('─────────────────────────────────────────────────────');
-  logger.info(`  WebTerm/3270 bridge ready`);
+  logger.info(`  Wren/3270 bridge ready`);
   logger.info(`  Client (production) → http://localhost:${config.bridge.port}`);
   logger.info(`  Client (demo)       → http://localhost:${config.bridge.port}/demo`);
   logger.info(`  API profiles        → http://localhost:${config.bridge.port}/api/profiles`);

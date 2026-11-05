@@ -41,7 +41,7 @@ test('PUB400 sign-on: the user ID goes back alone, not with the next label', asy
 });
 
 test('stock sign-on layout (fields end at the next attribute) is unchanged', async () => {
-  const { ses, stop } = await replay('ibmi-web3270-mock-as400-signon-record.hex');
+  const { ses, stop } = await replay('ibmi-wren3270-mock-as400-signon-record.hex');
   try {
     ses.typeAt(7, 54, 'JSMITH', false);
     const sent = collectModifiedFields(live(ses));

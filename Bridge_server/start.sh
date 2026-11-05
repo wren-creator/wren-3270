@@ -1,5 +1,5 @@
 #!/bin/bash
-# WebTerm/3270 Bridge — start
+# Wren/3270 Bridge — start
 # First run: prompts to configure port, then starts.
 # Subsequent runs: starts immediately using saved config.
 # Reconfigure:  ./start.sh --setup

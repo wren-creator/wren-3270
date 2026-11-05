@@ -1436,7 +1436,7 @@ const server = net.createServer(socket => createSession(socket));
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log('─────────────────────────────────────────────────────');
-  console.log('  WebTerm/3270 Mock z/TPF Daemon');
+  console.log('  Wren/3270 Mock z/TPF Daemon');
   console.log(`  Listening on  tcp://0.0.0.0:${PORT}`);
   console.log(`  System ID     ${SYSNAME}`);
   console.log(`  LU Name       ${LU_NAME}`);

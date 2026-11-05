@@ -1,7 +1,7 @@
 /* Self-hosted (public/fonts/) instead of a Google Fonts CDN @import — a
    blocked/unreachable CDN request used to silently fall back to the bare
    `monospace`/`sans-serif` keyword below, with no visual indication that
-   IBM Plex Mono wasn't actually loaded. See web3270 issue tracking the
+   IBM Plex Mono wasn't actually loaded. See wren3270 issue tracking the
    vertical pipe `|` character not rendering for a user on a network-
    restricted host. */
 @font-face {

@@ -1,6 +1,6 @@
 # Software Bill of Materials (SBOM)
 
-**Project:** WebTerm/3270  
+**Project:** Wren/3270  
 **Component:** `webterm-3270-bridge`  
 **Version:** 1.0.0  
 **Generated:** 2026-06-10  
@@ -11,7 +11,7 @@
 
 ## Project Overview
 
-WebTerm/3270 is a browser-based IBM mainframe terminal emulator providing plugin-free, Java-free access to IBM z/OS (TSO/ISPF) and z/VM (CP/CMS) LPARs via a WebSocket-to-TN3270(E) bridge server.
+Wren/3270 is a browser-based IBM mainframe terminal emulator providing plugin-free, Java-free access to IBM z/OS (TSO/ISPF) and z/VM (CP/CMS) LPARs via a WebSocket-to-TN3270(E) bridge server.
 
 **Repository:** `wren-creator/webterm-3270` (GitHub)  
 **Runtime Environment:** Node.js ≥ 18.0.0  

@@ -1,7 +1,7 @@
 {
-  "name": "webterm-3270-bridge",
+  "name": "wren3270-bridge",
   "version": "1.0.0",
-  "description": "WebSocket ↔ TN3270(E) bridge for WebTerm/3270",
+  "description": "WebSocket ↔ TN3270(E) bridge for Wren/3270",
   "type": "module",
   "main": "server.js",
   "scripts": {

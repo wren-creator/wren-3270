@@ -1,4 +1,4 @@
-// Thin client for the WebTerm/3270 bridge. Holds one WebSocket terminal
+// Thin client for the Wren/3270 bridge. Holds one WebSocket terminal
 // session and talks to the bridge's HTTP routes for everything else. The MCP
 // server (server.js) wraps this; nothing here is MCP-specific.
 

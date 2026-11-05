@@ -170,7 +170,7 @@ export function menuOpenPanel(name) {
 export function menuOpenCopilot()  { menuOpenPanel('Copilot'); document.getElementById('copilot-input')?.focus(); }
 export function menuOpenTransfer() { menuOpenPanel('Xfer'); }
 export function menuShowShortcuts(){ menuOpenPanel('Keys'); }
-export function menuAbout() { closeAllMenus(); window.showBridgeError?.('WebTerm/3270\nModern web-based IBM mainframe terminal emulator.\n\nProtocol: TN3270 / TN3270E  (RFC 1576 / RFC 2355)\nBridge: Node.js WebSocket · Client: HTML5'); }
+export function menuAbout() { closeAllMenus(); window.showBridgeError?.('Wren/3270\nModern web-based IBM mainframe terminal emulator.\n\nProtocol: TN3270 / TN3270E  (RFC 1576 / RFC 2355)\nBridge: Node.js WebSocket · Client: HTML5'); }
 export function menuImportMacro() { closeAllMenus(); window.showAddMacroModal?.(); setTimeout(() => window.importMacroFromFile?.(), 150); }
 
 // The toolbar scrollbar is hidden (it painted over the buttons), so let a

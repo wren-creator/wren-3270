@@ -1,7 +1,7 @@
 /**
  * macros/engine.js
  * ─────────────────────────────────────────────────────────────────
- * Macro record and replay engine for WebTerm/3270.
+ * Macro record and replay engine for Wren/3270.
  *
  * A macro is a JSON array of steps.  Each step is one of:
  *

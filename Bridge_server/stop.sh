@@ -30,7 +30,7 @@ ok()    { echo -e "${GREEN}[ok]${RESET}    $*"; }
 bad()   { echo -e "${RED}[fail]${RESET}  $*"; }
 
 echo ""
-info "Stopping web3270 services…  (runtime: $RUNTIME)"
+info "Stopping wren3270 services…  (runtime: $RUNTIME)"
 
 # ── 1. Graceful compose down ────────────────────────────────────────────────
 if $COMPOSE ps -q 2>/dev/null | grep -q .; then

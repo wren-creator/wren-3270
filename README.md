@@ -1,4 +1,4 @@
-# WebTerm/3270
+# Wren/3270
 
 A Node.js WebSocket bridge that connects a browser-based 3270 terminal emulator to mainframe LPARs over TN3270(E). No plugins, no Java — just a browser and a small Node server (or Docker container).
 
@@ -51,7 +51,7 @@ server.js  (HTTP + WebSocket on the same port)
 
 ## Quick Start (Docker)
 
-WebTerm/3270 ships as a container. You don't need Node, npm, or WSL on your machine, just Docker Desktop (or Podman) and network access to your LPAR on port 23 or 992.
+Wren/3270 ships as a container. You don't need Node, npm, or WSL on your machine, just Docker Desktop (or Podman) and network access to your LPAR on port 23 or 992.
 
 ### Option 1: Prebuilt images (fastest, no clone, no build)
 
@@ -59,7 +59,7 @@ Prebuilt multi-arch images (Intel/AMD and Apple Silicon/ARM) are published to Gi
 
 ```bash
 # Download one file, then start everything
-curl -LO https://raw.githubusercontent.com/wren-creator/web3270/main/Bridge_server/docker-compose.prebuilt.yml
+curl -LO https://raw.githubusercontent.com/wren-creator/wren-3270/main/Bridge_server/docker-compose.prebuilt.yml
 docker compose -f docker-compose.prebuilt.yml up -d
 
 # Open in browser
@@ -70,19 +70,19 @@ On Windows PowerShell, use `curl.exe -LO ...` (plain `curl` is an alias for some
 
 That pulls the bridge plus the four mock mainframes (z/OS, z/VM, z/TPF, AS/400) so you can click around before you point it at a real LPAR.
 
-**No internet on the Docker machine?** Download `web3270-images-<version>-<amd64|arm64>.tar.gz` and `docker-compose.prebuilt.yml` from the [Releases page](https://github.com/wren-creator/web3270/releases), then:
+**No internet on the Docker machine?** Download `wren3270-images-<version>-<amd64|arm64>.tar.gz` and `docker-compose.prebuilt.yml` from the [Releases page](https://github.com/wren-creator/wren-3270/releases), then:
 
 ```bash
-docker load < web3270-images-<version>-amd64.tar.gz     # PowerShell: docker load -i <file>
+docker load < wren3270-images-<version>-amd64.tar.gz     # PowerShell: docker load -i <file>
 docker compose -f docker-compose.prebuilt.yml up -d
 ```
 
-**Just the bridge, from the Docker Desktop UI:** search for `ghcr.io/wren-creator/web3270-bridge`, pull it, click Run, and set the host port to 8081. You lose the mock mainframes (they need the shared network the compose file creates), but it's enough to reach a real LPAR.
+**Just the bridge, from the Docker Desktop UI:** search for `ghcr.io/wren-creator/wren3270-bridge`, pull it, click Run, and set the host port to 8081. You lose the mock mainframes (they need the shared network the compose file creates), but it's enough to reach a real LPAR.
 
 Pin a version instead of tracking `latest`, or change the port:
 
 ```bash
-WEB3270_TAG=1.0.0 BRIDGE_HOST_PORT=9000 docker compose -f docker-compose.prebuilt.yml up -d
+WREN3270_TAG=1.0.0 BRIDGE_HOST_PORT=9000 docker compose -f docker-compose.prebuilt.yml up -d
 ```
 
 Upgrade: `docker compose -f docker-compose.prebuilt.yml pull && docker compose -f docker-compose.prebuilt.yml up -d`
@@ -90,8 +90,8 @@ Upgrade: `docker compose -f docker-compose.prebuilt.yml pull && docker compose -
 ### Option 2: Build from source (contributors)
 
 ```bash
-git clone https://github.com/wren-creator/web3270.git
-cd web3270/Bridge_server
+git clone https://github.com/wren-creator/wren-3270.git
+cd wren-3270/Bridge_server
 
 ./start.sh          # Mac / Linux
 # start.ps1         # Windows PowerShell
@@ -308,7 +308,7 @@ cd /path/to/GIBSON/gibson-mainframe
 docker compose up -d
 
 # 2 · Start the bridge — it joins gibson-net automatically
-cd /path/to/web3270/Bridge_server
+cd /path/to/wren-3270/Bridge_server
 docker compose up -d
 ```
 
@@ -446,4 +446,4 @@ Send the zip via Slack DM at **britleydev.slack.com** or email **britleyhoff@gma
 
 ## License
 
-WebTerm/3270 is licensed under the **GNU General Public License v3.0** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full text.
+Wren/3270 is licensed under the **GNU General Public License v3.0** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the full text.

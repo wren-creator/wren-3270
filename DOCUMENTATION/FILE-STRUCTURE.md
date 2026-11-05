@@ -1,4 +1,4 @@
-# WebTerm/3270 — File Structure
+# Wren/3270 — File Structure
 
 ```
 Bridge_server/

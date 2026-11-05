@@ -4,7 +4,7 @@
 
 A feature comparison against `hack3270` (github.com/gglessner/hack3270), the mainframe
 penetration-testing tool a prospective employer uses, surfaced two capabilities it has
-that WebTerm/3270 didn't:
+that Wren/3270 didn't:
 
 1. **Passive ESM fingerprinting** — identify the external security manager (IBM RACF,
    Broadcom ACF2, Broadcom Top Secret) from traffic already on screen, no probing.
@@ -12,7 +12,7 @@ that WebTerm/3270 didn't:
    drive the tool programmatically. hack3270 ships a 52-tool MCP server plus
    `.claude` / `.cursor` skills.
 
-Both fit WebTerm/3270's direction: a browser-delivered platform for mainframe access and
+Both fit Wren/3270's direction: a browser-delivered platform for mainframe access and
 sanctioned security testing / teaching, with a password-gated Security Tools tab, shipped
 mock LPAR targets, and a hosted tier.
 

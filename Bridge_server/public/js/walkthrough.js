@@ -803,7 +803,7 @@ const _WALKTHROUGHS = [
     steps: [
       {
         title: 'What fingerprinting does',
-        body:  'On every screen update, WebTerm/3270 scans the screen text against a rule set and identifies the active application: ISPF, SDSF, CICS, IMS, RACF, TSO READY, z/VM, or LOGON screen. The result appears in the APP field of the OIA status bar.',
+        body:  'On every screen update, Wren/3270 scans the screen text against a rule set and identifies the active application: ISPF, SDSF, CICS, IMS, RACF, TSO READY, z/VM, or LOGON screen. The result appears in the APP field of the OIA status bar.',
         highlight: 'oiaApp',
         autoFn: null,
       },

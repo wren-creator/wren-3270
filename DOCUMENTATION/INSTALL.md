@@ -1,6 +1,6 @@
-# WebTerm/3270: Installation Guide
+# Wren/3270: Installation Guide
 
-WebTerm/3270 runs as a set of containers. That is the only supported way to run it, on Windows, Mac, and Linux. You don't install Node.js, you don't set up WSL, and you don't build anything unless you want to.
+Wren/3270 runs as a set of containers. That is the only supported way to run it, on Windows, Mac, and Linux. You don't install Node.js, you don't set up WSL, and you don't build anything unless you want to.
 
 Pick one path:
 
@@ -29,7 +29,7 @@ Test-NetConnection -ComputerName 10.x.x.x -Port 23
 nc -zv 10.x.x.x 23
 ```
 
-If that fails, stop here. It's a network or VPN problem, not a WebTerm problem. See [VPN users](#vpn-users).
+If that fails, stop here. It's a network or VPN problem, not a Wren problem. See [VPN users](#vpn-users).
 
 Verify Docker is ready:
 
@@ -46,16 +46,16 @@ Images are published to GitHub Container Registry for Intel/AMD and ARM (Apple S
 
 | Image | What it is |
 |---|---|
-| `ghcr.io/wren-creator/web3270-bridge` | The bridge and web client |
-| `ghcr.io/wren-creator/web3270-mock-lpar` | Mock z/OS (TSO, ISPF, SDSF), port 3270 |
-| `ghcr.io/wren-creator/web3270-mock-zvm` | Mock z/VM, port 3271 |
-| `ghcr.io/wren-creator/web3270-mock-as400` | Mock AS/400 (5250), port 3272 |
-| `ghcr.io/wren-creator/web3270-mock-tpf` | Mock z/TPF console, port 3274 |
+| `ghcr.io/wren-creator/wren3270-bridge` | The bridge and web client |
+| `ghcr.io/wren-creator/wren3270-mock-lpar` | Mock z/OS (TSO, ISPF, SDSF), port 3270 |
+| `ghcr.io/wren-creator/wren3270-mock-zvm` | Mock z/VM, port 3271 |
+| `ghcr.io/wren-creator/wren3270-mock-as400` | Mock AS/400 (5250), port 3272 |
+| `ghcr.io/wren-creator/wren3270-mock-tpf` | Mock z/TPF console, port 3274 |
 
 ### 1 · Get the compose file
 
 ```bash
-curl -LO https://raw.githubusercontent.com/wren-creator/web3270/main/Bridge_server/docker-compose.prebuilt.yml
+curl -LO https://raw.githubusercontent.com/wren-creator/wren-3270/main/Bridge_server/docker-compose.prebuilt.yml
 ```
 
 On Windows PowerShell use `curl.exe -LO ...` (plain `curl` is a PowerShell alias for something else), or just download the file from the repo in your browser.
@@ -86,7 +86,7 @@ Click **⊕ Connect to LPAR**. The five `MOCK-*` entries work immediately, so yo
 
 ```bash
 # Pin a release instead of tracking latest
-WEB3270_TAG=1.0.0 docker compose -f docker-compose.prebuilt.yml up -d
+WREN3270_TAG=1.0.0 docker compose -f docker-compose.prebuilt.yml up -d
 
 # Use a different host port (8081 already taken)
 BRIDGE_HOST_PORT=9000 docker compose -f docker-compose.prebuilt.yml up -d
@@ -108,33 +108,33 @@ docker compose -f docker-compose.prebuilt.yml up -d
 
 ### Just the bridge, from the Docker Desktop UI
 
-If you'd rather click than type: in Docker Desktop, search for `ghcr.io/wren-creator/web3270-bridge`, pull it, hit **Run**, expand **Optional settings**, and set the host port to `8081`. You get the bridge only, no mock mainframes, because those need the shared network the compose file creates. That's fine if you only want to reach a real LPAR.
+If you'd rather click than type: in Docker Desktop, search for `ghcr.io/wren-creator/wren3270-bridge`, pull it, hit **Run**, expand **Optional settings**, and set the host port to `8081`. You get the bridge only, no mock mainframes, because those need the shared network the compose file creates. That's fine if you only want to reach a real LPAR.
 
 ---
 
 ## Path 2: Offline bundle (no internet on the Docker machine)
 
-Each release on the [Releases page](https://github.com/wren-creator/web3270/releases) has:
+Each release on the [Releases page](https://github.com/wren-creator/wren-3270/releases) has:
 
-- `web3270-images-<version>-amd64.tar.gz` for Intel/AMD machines (most Windows PCs)
-- `web3270-images-<version>-arm64.tar.gz` for Apple Silicon and ARM
+- `wren3270-images-<version>-amd64.tar.gz` for Intel/AMD machines (most Windows PCs)
+- `wren3270-images-<version>-arm64.tar.gz` for Apple Silicon and ARM
 - `docker-compose.prebuilt.yml`
 
 Copy those two files to the target machine (USB, file share, whatever your shop allows), then:
 
 ```bash
-docker load < web3270-images-<version>-amd64.tar.gz
+docker load < wren3270-images-<version>-amd64.tar.gz
 ```
 
 ```powershell
 # PowerShell has no < redirect for this, use -i
-docker load -i web3270-images-<version>-amd64.tar.gz
+docker load -i wren3270-images-<version>-amd64.tar.gz
 ```
 
 Then start it, telling compose which version you loaded. The tarball name has a leading `v` (`v1.0.1`) but the image tag does not (`1.0.1`):
 
 ```bash
-WEB3270_TAG=1.0.1 docker compose -f docker-compose.prebuilt.yml up -d
+WREN3270_TAG=1.0.1 docker compose -f docker-compose.prebuilt.yml up -d
 ```
 
 Compose uses the loaded images and only tries to pull what's missing, so nothing goes out to the internet. The loaded images also show up in Docker Desktop under **Images**.
@@ -144,8 +144,8 @@ Compose uses the loaded images and only tries to pull what's missing, so nothing
 ## Path 3: Build from source
 
 ```bash
-git clone https://github.com/wren-creator/web3270.git
-cd web3270/Bridge_server
+git clone https://github.com/wren-creator/wren-3270.git
+cd wren-3270/Bridge_server
 
 ./start.sh          # Mac / Linux
 .\start.ps1         # Windows PowerShell
@@ -237,7 +237,7 @@ cd /path/to/GIBSON/gibson-mainframe
 docker compose up -d
 
 # 2 · Start the bridge, it joins gibson-net automatically
-cd /path/to/web3270/Bridge_server
+cd /path/to/wren-3270/Bridge_server
 docker compose up -d
 ```
 

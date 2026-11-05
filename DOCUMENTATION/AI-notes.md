@@ -1,6 +1,6 @@
 # AI-notes.md — Copilot Integration Options
 
-Notes on AI provider options for the WebTerm/3270 AI Assist panel,
+Notes on AI provider options for the Wren/3270 AI Assist panel,
 written in the context of corporate policy that currently restricts
 external AI APIs to limited cases.
 
@@ -24,7 +24,7 @@ What the browser exposes to web pages:
 ❌ Edge AI features  — no web API surface
 ```
 
-The AI Assist panel in WebTerm/3270 makes a direct HTTPS call to an
+The AI Assist panel in Wren/3270 makes a direct HTTPS call to an
 AI provider's REST API from the bridge server. The provider is
 configurable — see options below.
 

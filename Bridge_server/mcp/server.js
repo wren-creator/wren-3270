@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server for the WebTerm/3270 bridge.
+// MCP server for the Wren/3270 bridge.
 //
 // Exposes the bridge to AI coding assistants (Claude Code, Cursor, VS Code +
 // Copilot) as a set of tools. It is a *client* of the bridge — it opens one

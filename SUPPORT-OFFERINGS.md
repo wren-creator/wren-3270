@@ -1,8 +1,8 @@
-# WebTerm/3270 — Support & Services Offerings
+# Wren/3270 — Support & Services Offerings
 
-WebTerm/3270 is used by organizations to provide browser-based access to production z/OS and z/VM systems, and increasingly for security education against live mainframe environments. When a tool sits between your team and production LPARs, support responsiveness matters as much as the software itself. These plans exist for organizations that need a committed point of contact, a defined response window, and direct assistance when something goes wrong — rather than relying on best-effort community support.
+Wren/3270 is used by organizations to provide browser-based access to production z/OS and z/VM systems, and increasingly for security education against live mainframe environments. When a tool sits between your team and production LPARs, support responsiveness matters as much as the software itself. These plans exist for organizations that need a committed point of contact, a defined response window, and direct assistance when something goes wrong — rather than relying on best-effort community support.
 
-All tiers are annual subscriptions and include full access to WebTerm/3270 releases and security updates.
+All tiers are annual subscriptions and include full access to Wren/3270 releases and security updates.
 
 ---
 
@@ -38,7 +38,7 @@ Support hours: Monday–Friday, standard business hours (time zone confirmed at 
 - New feature development outside the existing roadmap (available as separate paid custom development)
 - Support for forks or heavily modified deployments diverging from the published codebase
 - On-call/24-7 coverage or after-hours emergency response
-- Migration of unrelated legacy TN3270 tooling to WebTerm/3270
+- Migration of unrelated legacy TN3270 tooling to Wren/3270
 - Training sessions beyond what's covered in an on-site engagement (available separately)
 
 ---

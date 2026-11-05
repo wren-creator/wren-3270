@@ -13,7 +13,7 @@
 // any other host server, it only reports the port the mapper names for them.
 //
 // With banner:true it also reads the 5250 sign-on screen on 23 and 992 through
-// web3270's own Tn5250Session. That one opens a real telnet session, so a
+// wren3270's own Tn5250Session. That one opens a real telnet session, so a
 // virtual device (QPADEVxxxx) is allocated for a moment and released when the
 // probe hangs up. No DEVNAME is asked for and no USER is sent, so nothing is
 // created and nothing is typed. It is off unless asked for.

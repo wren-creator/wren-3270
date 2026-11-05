@@ -397,7 +397,7 @@ export async function sendCopilotMessage(override) {
 }
 
 function buildSystemPrompt() {
-  let sys = `You are a helpful assistant embedded in WebTerm/3270, a web-based IBM mainframe terminal emulator.
+  let sys = `You are a helpful assistant embedded in Wren/3270, a web-based IBM mainframe terminal emulator.
 You help users navigate TSO, ISPF, SDSF, JES2, CICS, and other z/OS subsystems.
 You can help with: JCL, REXX, CLIST, ISPF panels, error messages, dataset management, job submission, and macro generation.
 

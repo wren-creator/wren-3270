@@ -1,4 +1,4 @@
-# WebTerm/3270 Bridge — shipped default profiles
+# Wren/3270 Bridge — shipped default profiles
 # These entries are built-in and loaded automatically for everyone.
 # They appear in the UI as read-only "built-in" connections.
 #

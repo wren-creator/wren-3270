@@ -1,7 +1,7 @@
 /**
  * copilot/router.js
  * ─────────────────────────────────────────────────────────────────
- * AI provider router for the WebTerm/3270 Copilot panel.
+ * AI provider router for the Wren/3270 Copilot panel.
  *
  * Supports both static startup configuration (COPILOT_PROVIDER env)
  * and runtime hot-swap via setProvider() — no bridge restart needed

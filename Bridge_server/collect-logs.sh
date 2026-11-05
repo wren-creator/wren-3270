@@ -1,5 +1,5 @@
 #!/bin/bash
-# collect-logs.sh — collect and sanitize diagnostic logs for WebTerm/3270 Bridge
+# collect-logs.sh — collect and sanitize diagnostic logs for Wren/3270 Bridge
 # Produces: webterm-diag-TIMESTAMP.zip  (safe to send — no real hosts, IPs, or userids)
 # Usage: ./collect-logs.sh
 
@@ -34,7 +34,7 @@ WORKDIR="webterm-diag-${TIMESTAMP}"
 ZIPFILE="webterm-diag-${TIMESTAMP}.zip"
 
 echo ""
-echo "WebTerm/3270 Bridge — Diagnostic Log Collector"
+echo "Wren/3270 Bridge — Diagnostic Log Collector"
 echo "================================================"
 echo ""
 

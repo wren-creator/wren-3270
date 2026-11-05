@@ -1,4 +1,4 @@
-# SSH host profiles for WebTerm/3270
+# SSH host profiles for Wren/3270
 # Format: id, name, host/IP, port, user
 # Password is prompted at connect time — never stored here.
 #

@@ -1,6 +1,6 @@
 /**
  * mock-lpar/mock-zvm.js
- * WebTerm/3270 — Mock z/VM CP/CMS Daemon
+ * Wren/3270 — Mock z/VM CP/CMS Daemon
  *
  * Simulates a z/VM system over real TN3270(E) protocol.
  * Screen flow:
@@ -1195,7 +1195,7 @@ function debug(msg) { if (LOG) console.log(`${new Date().toISOString()} [DEBUG] 
 const server = net.createServer(handleConnection);
 server.listen(PORT, '0.0.0.0', () => {
   log('─────────────────────────────────────────────────────');
-  log('  WebTerm/3270 Mock z/VM Daemon');
+  log('  Wren/3270 Mock z/VM Daemon');
   log(`  Listening on  tcp://0.0.0.0:${PORT}`);
   log(`  System ID     ${SYSNAME}`);
   log(`  VM ID         ${VMID}`);

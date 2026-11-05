@@ -1,6 +1,6 @@
 # webterm-3270 MCP server
 
-An MCP server that drives the WebTerm/3270 bridge, so an AI coding assistant
+An MCP server that drives the Wren/3270 bridge, so an AI coding assistant
 (Claude Code, Cursor, VS Code + Copilot) can connect to an LPAR, read screens,
 send keys, run macros, and read the bridge's analysis routes.
 

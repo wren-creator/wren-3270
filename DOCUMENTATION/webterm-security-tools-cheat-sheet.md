@@ -1,4 +1,4 @@
-# WebTerm/3270 Security Tools
+# Wren/3270 Security Tools
 
 Every tool below lives in one open source bridge and browser client, no desktop emulator, no separate scanner install. Connect to any TN3270(E) or TN5250 host (z/OS, z/VM, IBM i, z/TPF) through the bridge, unlock the Security panel, and run the tool against the live session. All of it is built FOR AUTHORIZED USE ONLY, on an engagement where you already have permission to test the target.
 
@@ -110,4 +110,4 @@ Storage-protection-key escalation, core/memory-block corruption, and record-poin
 
 ---
 
-Everything above runs from one bridge, one browser client, against real TN3270(E)/TN5250 protocol, real EBCDIC, and either a live mainframe or the project's own mock LPAR fleet for a zero-risk demo. Project, docs, and source: `github.com/wren-creator/web3270`.
+Everything above runs from one bridge, one browser client, against real TN3270(E)/TN5250 protocol, real EBCDIC, and either a live mainframe or the project's own mock LPAR fleet for a zero-risk demo. Project, docs, and source: `github.com/wren-creator/wren-3270`.

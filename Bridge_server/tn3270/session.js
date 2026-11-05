@@ -1272,8 +1272,8 @@ class Tn3270Session extends EventEmitter {
       0x01, 0x01,                  // NSS, DDMSS
     ]));
 
-    // RPQNames — identify as 'web3270'
-    const name = [0xA6, 0x85, 0x82, 0xF3, 0xF2, 0xF7, 0xF0]; // 'web3270' in EBCDIC
+    // RPQNames — identify as 'wren3270'
+    const name = [0xA6, 0x99, 0x85, 0x95, 0xF3, 0xF2, 0xF7, 0xF0]; // 'wren3270' in EBCDIC
     parts.push(...sf([
       0x81, 0xA1,
       0x00, 0x00, 0x00, 0x00,      // device type

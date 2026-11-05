@@ -1,4 +1,4 @@
-# WebTerm/3270 — Mock Server Reference
+# Wren/3270 — Mock Server Reference
 
 Four lightweight mock daemons for local development and demos, no mainframe required.
 
@@ -212,7 +212,7 @@ Startup output:
 
 ```
 ─────────────────────────────────────────────────────
-  WebTerm/3270 Mock LPAR Daemon
+  Wren/3270 Mock LPAR Daemon
   Listening on  tcp://0.0.0.0:3270
   System ID     MOCKPROD
   LU Name       MOCKLU01
@@ -429,7 +429,7 @@ Startup output:
 
 ```
 ─────────────────────────────────────────────────────
-  WebTerm/3270 Mock z/VM Daemon
+  Wren/3270 Mock z/VM Daemon
   Listening on  tcp://0.0.0.0:3271
   System ID     ZVMPROD
   VM ID         ZVMSYS1
@@ -728,7 +728,7 @@ Startup output:
 
 ```
 ─────────────────────────────────────────────────────
-  WebTerm/3270 Mock z/TPF Daemon
+  Wren/3270 Mock z/TPF Daemon
   Listening on  tcp://0.0.0.0:3274
   System ID     TPFSYS1
   LU Name       TPFLU01

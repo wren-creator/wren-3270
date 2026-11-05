@@ -1,4 +1,4 @@
-# collect-logs.ps1 — collect and sanitize diagnostic logs for WebTerm/3270 Bridge
+# collect-logs.ps1 — collect and sanitize diagnostic logs for Wren/3270 Bridge
 # Produces: webterm-diag-TIMESTAMP.zip  (safe to send — no real hosts, IPs, or userids)
 # Usage: .\collect-logs.ps1
 #
@@ -33,7 +33,7 @@ $ZipFile    = "webterm-diag-$Timestamp.zip"
 $MapFile    = "redaction-map-$Timestamp.txt"
 
 Write-Host ""
-Write-Host "WebTerm/3270 Bridge -- Diagnostic Log Collector" -ForegroundColor Cyan
+Write-Host "Wren/3270 Bridge -- Diagnostic Log Collector" -ForegroundColor Cyan
 Write-Host "================================================"
 Write-Host ""
 

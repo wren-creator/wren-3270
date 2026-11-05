@@ -70,7 +70,7 @@ node mock-lpar/mock-lpar.js
 Output:
 ```
 ─────────────────────────────────────────────────────
-  WebTerm/3270 Mock LPAR Daemon
+  Wren/3270 Mock LPAR Daemon
   Listening on  tcp://0.0.0.0:3270
   System ID     MOCKPROD
   LU Name       MOCKLU01

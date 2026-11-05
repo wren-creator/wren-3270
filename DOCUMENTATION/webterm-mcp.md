@@ -1,4 +1,4 @@
-# WebTerm/3270 — MCP Tool Surface
+# Wren/3270 — MCP Tool Surface
 
 An MCP (Model Context Protocol) server that lets an AI coding assistant drive the
 bridge: connect to an LPAR, read the screen and its field attributes, send
@@ -77,7 +77,7 @@ Streamable-HTTP transport for the hosted tier.
 ## Comparison note
 
 This mirrors what `hack3270` (the mainframe pentest tool this was benchmarked
-against) ships as its MCP server. The difference in posture: WebTerm/3270's
+against) ships as its MCP server. The difference in posture: Wren/3270's
 surface is built around the same product it already is, an emulator with a
 sanctioned security-tools mode, and the skill leads with authorization and
 scope. See `DOCUMENTATION/esm-fingerprint-and-mcp-plan.md`.

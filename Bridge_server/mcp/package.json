@@ -1,7 +1,7 @@
 {
   "name": "webterm-3270-mcp",
   "version": "1.0.0",
-  "description": "MCP server that drives the WebTerm/3270 bridge for AI coding assistants",
+  "description": "MCP server that drives the Wren/3270 bridge for AI coding assistants",
   "type": "module",
   "private": true,
   "license": "GPL-3.0-only",

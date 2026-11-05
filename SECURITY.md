@@ -2,7 +2,7 @@
 
 ## Scope
 
-WebTerm/3270 is an open-source internal tooling project. It is a WebSocket-to-TN3270(E) bridge — it does not store credentials, does not process customer data, and does not expose a public-facing service by default. All TN3270 sessions run between the bridge server and a mainframe LPAR on your own network.
+Wren/3270 is an open-source internal tooling project. It is a WebSocket-to-TN3270(E) bridge — it does not store credentials, does not process customer data, and does not expose a public-facing service by default. All TN3270 sessions run between the bridge server and a mainframe LPAR on your own network.
 
 ---
 

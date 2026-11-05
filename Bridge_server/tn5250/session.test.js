@@ -65,7 +65,7 @@ test('PUB400 sign-on: typed user ID goes back alone, without the label after the
 });
 
 test('stock sign-on layout still lands the cursor where the host put it', async () => {
-  const { screen, stop } = await replay('ibmi-web3270-mock-as400-signon-record.hex');
+  const { screen, stop } = await replay('ibmi-wren3270-mock-as400-signon-record.hex');
   try {
     assert.deepEqual([screen.cursorRow, screen.cursorCol], [7, 53]);
     assert.equal(screen.fields.filter(f => !f.protected).length, 5);

@@ -1,7 +1,7 @@
-# WebTerm/3270 — Security Tools Tutorial
+# Wren/3270 — Security Tools Tutorial
 ## Field analysis · Traffic capture · Live intercept · Protocol fuzzing · Host recon · z/OS · IBM i · z/TPF
 
-**Prerequisites:** WebTerm/3270 running at `http://localhost:8081`
+**Prerequisites:** Wren/3270 running at `http://localhost:8081`
 
 ### Accessing the Security Tools
 
@@ -87,7 +87,7 @@ Data cells are tinted to match their containing field type.
 
 ### How to use it
 
-1. Open WebTerm/3270 at **http://localhost:8081** and connect to an LPAR
+1. Open Wren/3270 at **http://localhost:8081** and connect to an LPAR
 2. Click **`🔒`** in the OIA bar, enter the password to unlock the Security panel
 3. Click **`FMO`** — the button turns amber and the screen re-renders with field boundaries visible:
    - Every `▸` marker is a field attribute byte at that exact screen position
@@ -178,7 +178,7 @@ The **FUNC KEY** dropdown and **INJECT** button let you fire any 3270 AID key di
 
 ### Why this matters
 
-A standard PC keyboard only has F1–F12. A real IBM 3270 terminal has PF1–PF24 plus PA1–PA3, CLEAR, and SYSREQ — 30 AID keys total. PF13–PF24 (Shift+F1–F12) are mapped in WebTerm but many lab keyboards don't register them. This control also lets you fire AID keys programmatically without interacting with the terminal at all, which is the basis of automated 3270 scripting.
+A standard PC keyboard only has F1–F12. A real IBM 3270 terminal has PF1–PF24 plus PA1–PA3, CLEAR, and SYSREQ — 30 AID keys total. PF13–PF24 (Shift+F1–F12) are mapped in Wren but many lab keyboards don't register them. This control also lets you fire AID keys programmatically without interacting with the terminal at all, which is the basis of automated 3270 scripting.
 
 ### How to use it
 
@@ -273,7 +273,7 @@ Click **≡ PROXY Viewer** in the Security panel. A popup opens bottom-right (76
 
 ## Part 7 — Extended Field Attribute Rendering (SFE / SA Colors)
 
-Wave 3 adds full rendering support for **ORDER_SFE** (Start Field Extended) and **ORDER_SA** (Set Attribute) — the 3270 orders that carry color and highlight metadata alongside field definitions. Real mainframe applications (ISPF, SDSF, TSO, vendor panels) use these orders extensively. Before Wave 3, WebTerm rendered all fields in the default terminal green regardless of what the host sent.
+Wave 3 adds full rendering support for **ORDER_SFE** (Start Field Extended) and **ORDER_SA** (Set Attribute) — the 3270 orders that carry color and highlight metadata alongside field definitions. Real mainframe applications (ISPF, SDSF, TSO, vendor panels) use these orders extensively. Before Wave 3, Wren rendered all fields in the default terminal green regardless of what the host sent.
 
 ### What changed in the protocol engine
 
@@ -1595,7 +1595,7 @@ Security panel → TN3270E NEGOTIATION ANALYZER → LU fixation row
 
 During TN3270E DEVICE-TYPE REQUEST, the client can include a `CONNECT lu-name` field asking for a specific LU. The host responds with DEVICE-TYPE IS — if the IS response includes `CONNECT lu-name` with the same name, fixation was accepted. If the IS response contains a different LU (pool assignment), fixation was rejected.
 
-WebTerm stores `session.luName` (what was requested at connect time) and `session.negotiatedLu` (what the host granted). The `/api/negotiate` route returns both and computes `luFixation`:
+Wren stores `session.luName` (what was requested at connect time) and `session.negotiatedLu` (what the host granted). The `/api/negotiate` route returns both and computes `luFixation`:
 
 | Value | Meaning |
 |---|---|

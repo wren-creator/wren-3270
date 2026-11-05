@@ -1,7 +1,7 @@
 /**
  * config.js
  * ─────────────────────────────────────────────────────────────────
- * All runtime configuration for the WebTerm/3270 bridge.
+ * All runtime configuration for the Wren/3270 bridge.
  * Values can be overridden via environment variables.
  */
 

@@ -1,16 +1,16 @@
 ---
 name: webterm-mcp
 description: >
-  Drive a mainframe 3270/5250 terminal through the WebTerm/3270 bridge, connect
+  Drive a mainframe 3270/5250 terminal through the Wren/3270 bridge, connect
   to an LPAR, read the screen and its field attributes, send keystrokes and AID
   keys, run macros, and read the bridge's analysis (negotiation report, wire
   decode, passive ESM fingerprint). Use for sanctioned mainframe access,
   security testing, and teaching against systems you are authorized to touch.
 ---
 
-# WebTerm/3270 MCP
+# Wren/3270 MCP
 
-The `webterm-3270` MCP server drives the WebTerm/3270 bridge. Start the bridge
+The `webterm-3270` MCP server drives the Wren/3270 bridge. Start the bridge
 first (`cd Bridge_server && npm start`, or `docker compose up`); the server
 connects to it at `BRIDGE_URL` (default `ws://127.0.0.1:8081`).
 
