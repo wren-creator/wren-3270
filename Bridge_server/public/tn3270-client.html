@@ -14,6 +14,33 @@
   .tab-add-ssh:hover { background:#0d2a1a; color:#5acc8a; }
   .session-tab.ssh-tab { border-top-color:#3a9a6a; }
   .session-tab.ssh-tab .tab-dot { }
+
+  .ftp-pane { width:100%; height:100%; background:#060e14; overflow:hidden; display:flex; }
+  .ftp-session-container { width:100%; height:100%; display:flex; flex-direction:column; font-family:'IBM Plex Mono',monospace; }
+  .ftp-toolbar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; padding:6px 8px; border-bottom:1px solid #1e3a5a; background:#081420; }
+  .ftp-btn { background:#0a1f33; border:1px solid #1e3a5a; border-radius:3px; color:#6aa8d8; font-family:inherit; font-size:11px; padding:4px 9px; cursor:pointer; }
+  .ftp-btn:hover { background:#102a44; color:#8ac0ec; }
+  .ftp-pwd { font-size:10px; color:#4a8ac0; white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis; }
+  .ftp-path-input { flex:1; min-width:120px; background:#060e14; border:1px solid #1e3a5a; border-radius:3px; color:#c8d8e8; font-family:inherit; font-size:11px; padding:4px 7px; }
+  .ftp-type-select { background:#0a1f33; border:1px solid #1e3a5a; border-radius:3px; color:#6aa8d8; font-family:inherit; font-size:10px; padding:3px 4px; }
+  .ftp-listing { flex:1; overflow:auto; padding:4px 0; }
+  .ftp-listing-empty { padding:16px; color:var(--text-muted); font-size:11px; }
+  .ftp-row { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:3px 10px; font-size:11px; color:#aec8dc; border-bottom:1px solid #0d1d2c; cursor:default; }
+  .ftp-row:hover { background:#0a1a28; }
+  .ftp-row-text { white-space:pre; overflow:hidden; text-overflow:ellipsis; font-family:'IBM Plex Mono',monospace; }
+  .ftp-row-actions { display:flex; gap:4px; opacity:0; flex-shrink:0; }
+  .ftp-row:hover .ftp-row-actions { opacity:1; }
+  .ftp-row-btn { background:none; border:1px solid #2a4a6a; border-radius:2px; color:#6aa8d8; font-size:10px; padding:1px 5px; cursor:pointer; }
+  .ftp-row-btn:hover { background:#102a44; }
+  .ftp-console { border-top:1px solid #1e3a5a; background:#040a10; flex:0 0 auto; max-height:34%; display:flex; flex-direction:column; }
+  .ftp-console-log { flex:1; overflow:auto; font-size:10px; color:#6a8aa8; padding:4px 8px; min-height:40px; max-height:140px; }
+  .ftp-console-line { white-space:pre-wrap; word-break:break-all; line-height:1.5; }
+  .ftp-console-row { display:flex; align-items:center; gap:6px; padding:4px 8px; border-top:1px solid #0d1d2c; }
+  .ftp-prompt { font-size:10px; color:#4a8ac0; }
+  .ftp-console-input { flex:1; background:#060e14; border:1px solid #1e3a5a; border-radius:3px; color:#c8d8e8; font-family:inherit; font-size:11px; padding:4px 7px; }
+  .tab-add-ftp { font-size:9px; font-weight:700; letter-spacing:.05em; color:#4a8ac0; border-color:#1e3a5a !important; }
+  .tab-add-ftp:hover { background:#0a1f33; color:#6aa8d8; }
+  .session-tab.ftp-tab { border-top-color:#4a8ac0; }
 </style>
 </head>
 <style>
@@ -124,6 +151,7 @@
   3270 sessions
   <div id="tabSplitBtn" class="tab-split" onclick="toggleSplitMode()" title="Split screen — compare two sessions side by side (max 2)">⊞</div>
   <div class="tab-add tab-add-ssh" onclick="openSshConnect()" title="New SSH session">SSH</div>
+  <div class="tab-add tab-add-ftp" onclick="openFtpConnect()" title="New FTP session">FTP</div>
   <div class="tab-add" onclick="showConnectModal()" title="New TN3270 session">＋</div>
 </div>
 
@@ -190,6 +218,7 @@
       <div class="split-pane split-pane-left" id="splitPaneLeft">
         <div class="t3270-screen" id="terminal" onclick="termClick(event)"></div>
         <div class="ssh-terminal-pane" id="sshTerminal" style="display:none"></div>
+        <div class="ftp-pane" id="ftpPane" style="display:none"></div>
       </div>
       <div class="split-pane split-pane-right" id="splitPaneRight" style="display:none">
         <div class="t3270-screen" id="terminal-split" onclick="splitTermClick(event)"></div>
@@ -198,6 +227,8 @@
     </div>
     <!-- Hidden pool for xterm instances not currently displayed -->
     <div id="sshPool" style="position:absolute;left:-9999px;top:-9999px;width:800px;height:600px;overflow:hidden"></div>
+    <!-- Hidden pool for FTP session panes not currently displayed -->
+    <div id="ftpPool" style="position:absolute;left:-9999px;top:-9999px;width:800px;height:600px;overflow:hidden"></div>
     <!-- Anomaly flash bar — shows latest anomalies inline, auto-fades -->
     <div id="anomalyBar" class="anomaly-bar"></div>
     <div class="oia-bar">
@@ -1979,6 +2010,77 @@
             style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:10px;padding:3px 8px;cursor:pointer">Save host</button>
         </div>
         <div id="sshSaveHostStatus" style="font-size:10px;min-height:12px;margin-top:6px"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- FTP connect modal -->
+<div id="ftpConnectModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9300;align-items:center;justify-content:center;">
+  <div style="background:#0a1420;border:1px solid #1e3a5a;border-radius:6px;width:380px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.9);font-family:'IBM Plex Mono',monospace">
+    <div style="background:#0d1f2f;border-bottom:1px solid #1e3a5a;padding:12px 16px;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;font-weight:700;color:#4a8ac0">📁 FTP Connect</div>
+      <button onclick="closeFtpConnect()" style="background:none;border:none;color:var(--text-muted);font-size:16px;cursor:pointer;padding:0 2px">✕</button>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">HOST</label>
+        <div style="display:flex;gap:4px;align-items:center">
+          <select id="ftpHostSelect" onchange="ftpHostChanged()"
+            style="flex:1;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px">
+            <option value="">— Select FTP host —</option>
+          </select>
+          <button onclick="ftpEditHost()" title="Edit host"
+            style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:11px;padding:3px 7px;cursor:pointer;flex-shrink:0">✎</button>
+          <button onclick="ftpDeleteHost()" title="Delete host"
+            style="background:#1a0d0d;border:1px solid #4a1e1e;border-radius:3px;color:#c0392b;font-family:inherit;font-size:11px;padding:3px 7px;cursor:pointer;flex-shrink:0">✕</button>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">USERNAME</label>
+        <input id="ftpUser" type="text" autocomplete="off" spellcheck="false"
+          style="width:100%;box-sizing:border-box;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px"
+          placeholder="userid">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">PASSWORD</label>
+        <input id="ftpPassword" type="password" autocomplete="current-password"
+          style="width:100%;box-sizing:border-box;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px"
+          placeholder="••••••••"
+          onkeydown="if(event.key==='Enter')ftpConnect()">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">TLS</label>
+        <select id="ftpSecure" style="width:100%;box-sizing:border-box;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px">
+          <option value="none">None (plain FTP)</option>
+          <option value="explicit">Explicit (AUTH TLS, port 21)</option>
+          <option value="implicit">Implicit (TLS on connect, port 990 typical)</option>
+        </select>
+      </div>
+      <div id="ftpConnectErr" style="font-size:10px;color:#c0392b;min-height:14px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="closeFtpConnect()"
+          style="background:transparent;border:1px solid #2a3a4a;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:4px 14px;cursor:pointer">Cancel</button>
+        <button onclick="ftpConnect()"
+          style="background:#0d2235;border:1px solid #1e3a5a;border-radius:3px;color:#4a8ac0;font-family:inherit;font-size:11px;padding:4px 16px;cursor:pointer;font-weight:700">Connect</button>
+      </div>
+      <details id="ftpAddHostDetails" style="margin-top:4px">
+        <summary style="font-size:10px;color:var(--text-muted);cursor:pointer;user-select:none">+ Add / edit host</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+          <input id="ftpNewId"   type="text" placeholder="id (no spaces)"  style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="ftpNewName" type="text" placeholder="Display name"    style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="ftpNewHost" type="text" placeholder="hostname or IP"  style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="ftpNewPort" type="number" placeholder="port (21)"     style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px" value="21">
+          <input id="ftpNewUser" type="text" placeholder="default user"    style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <select id="ftpNewSecure" style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+            <option value="none">TLS: none</option>
+            <option value="explicit">TLS: explicit</option>
+            <option value="implicit">TLS: implicit</option>
+          </select>
+          <button type="button" onclick="ftpSaveHost()"
+            style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:10px;padding:3px 8px;cursor:pointer">Save host</button>
+        </div>
+        <div id="ftpSaveHostStatus" style="font-size:10px;min-height:12px;margin-top:6px"></div>
       </details>
     </div>
   </div>

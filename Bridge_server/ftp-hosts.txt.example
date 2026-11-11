@@ -1,0 +1,8 @@
+# FTP host profiles for Wren/3270
+# Format: id, name, host/IP, port, user, secure
+#   secure: none | explicit | implicit  (AUTH TLS / implicit TLS on connect, default none)
+# Password is prompted at connect time — never stored here.
+#
+# Examples:
+# mock-as400, Mock IBM i FTP,          mock-as400, 2121, qsecofr, explicit
+# prod-uss,   z/OS USS Production,     10.0.0.5,   21,   ftpuser, explicit

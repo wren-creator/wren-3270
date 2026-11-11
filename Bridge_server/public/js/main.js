@@ -11,6 +11,7 @@ import './recorder.js';
 import './copilot.js';
 import './xfer.js';
 import './ssh.js';
+import './ftp.js';
 import './terminal.js';
 import './ui.js';
 import './probe.js';

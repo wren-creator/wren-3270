@@ -1,0 +1,8 @@
+# FTP host profiles for Wren/3270
+# Format: id, name, host/IP, port, user, secure
+#   secure: none | explicit | implicit  (AUTH TLS / implicit TLS on connect, default none)
+# Password is prompted at connect time — never stored here.
+#
+# Example (docker-compose network alias — mock-as400's FTP mock listens on
+# 2121; see docker-compose.yml):
+mock-as400, Mock IBM i FTP, mock-as400, 2121, qsecofr, explicit

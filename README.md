@@ -18,6 +18,8 @@ server.js  (HTTP + WebSocket on the same port)
 
 - Full TN3270(E) protocol — Telnet negotiation, LU binding, WSF QueryReply, EBCDIC ↔ ASCII
 - IND$FILE file transfer (z/VM upload + download) and TSO EDIT upload (z/OS)
+- SSH terminal — first-class session tabs (xterm.js) alongside 3270 sessions, saved host list, auto-reconnect
+- FTP client — first-class session tabs for z/OS datasets/USS, IBM i IFS/libraries, or any FTP target: browse, upload/download, rename/delete/mkdir, plain/explicit/implicit TLS, and a raw command console for shop-specific `SITE` parameters (RECFM/LRECL/BLKSIZE, etc.)
 - Multi-session tabs, LPAR profile dropdown (with CRUD), PF1–PF12 / PA1–PA2 toolbar (plus Reset and a ⌂ Home key) with a 1-12 / 13-24 bank toggle, plus a full PF1–PF24 keypad in the Keys panel
 - Split-screen mode — two live sessions side by side for settings comparison (⊞ toggle)
 - Macro recorder/replayer (screen-synchronised, JSON-persisted)
@@ -154,6 +156,25 @@ Hosts can be added, edited, and deleted from the SSH Connect modal — changes a
 
 > **Fresh clone:** because `ssh-hosts.txt` is gitignored, a new checkout must create it before the first `docker compose up`, otherwise Docker creates a *directory* at the bind-mount path. Run `cp ssh-hosts.txt.example ssh-hosts.txt` once. (`start.sh` seeds this automatically.)
 
+### FTP hosts
+
+FTP host profiles follow the same shipped/private split as LPARs and SSH hosts:
+
+| File | Tracked in git | Purpose |
+|---|---|---|
+| `ftp-hosts.shipped.txt` | ✅ Yes | Built-in demo FTP hosts. Ships with the repo. |
+| `ftp-hosts.txt` | ❌ No (gitignored) | Your private FTP hosts. Never committed. Bind-mounted into the container so saves survive rebuilds. |
+
+```
+# id, name, host/IP, port, user, secure
+# secure: none | explicit | implicit  (AUTH TLS / implicit TLS on connect, default none)
+mock-as400, Mock IBM i FTP, mock-as400, 2121, qsecofr, explicit
+```
+
+Hosts can be added, edited, and deleted from the FTP Connect modal — changes are written to `ftp-hosts.txt` immediately (no restart). Passwords are **never** stored; they are prompted at connect time.
+
+> **Fresh clone:** `ftp-hosts.txt` is gitignored the same way `ssh-hosts.txt` is — `cp ftp-hosts.txt.example ftp-hosts.txt` once if you're not using `start.sh` (which seeds it automatically).
+
 ---
 
 ## Project Structure
@@ -171,6 +192,9 @@ Bridge_server/
 ├── ssh-hosts.shipped.txt      ← Built-in demo SSH hosts (tracked in git)
 ├── ssh-hosts.txt              ← Your private SSH hosts (gitignored, bind-mounted)
 ├── ssh-hosts.txt.example      ← Template for fresh clones
+├── ftp-hosts.shipped.txt      ← Built-in demo FTP hosts (tracked in git)
+├── ftp-hosts.txt              ← Your private FTP hosts (gitignored, bind-mounted)
+├── ftp-hosts.txt.example      ← Template for fresh clones
 ├── Dockerfile
 ├── docker-compose.yml
 ├── start.sh / start.ps1       ← Start bridge (prompts for port on first run)

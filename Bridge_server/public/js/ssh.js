@@ -241,8 +241,11 @@ export function sshActivateTab(sid) {
 
   const term3270  = document.getElementById('terminal');
   const sshPane   = document.getElementById('sshTerminal');
+  const ftpPane   = document.getElementById('ftpPane');
   if (term3270) term3270.style.display  = 'none';
+  if (ftpPane)  ftpPane.style.display   = 'none';
   if (sshPane)  sshPane.style.display   = 'flex';
+  state.activeFtpSession = null;
 
   const session = state.sessions.get(sid);
   if (!session) return;

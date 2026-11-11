@@ -90,6 +90,9 @@ export const state = {
   // SSH
   activeSshSession:  null,
 
+  // FTP
+  activeFtpSession:  null,
+
   // Security
   secUnlocked:       false,
 

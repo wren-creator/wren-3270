@@ -47,6 +47,11 @@ export const INTRUSIVE_ACTIVITIES = new Set([
   'xautolog-start',
   'send-cp',
   'ftp-login-probe',
+  // Every write verb on an ftp.* session (STOR/DELE/RNFR/MKD/RMD/raw write
+  // commands) re-checks this on each call, not once at connect, so browsing
+  // never needs it in scope.activities and a scope.json edit takes effect
+  // on the very next write (features/ftp-client.js).
+  'ftp-write',
 ]);
 
 // Returns { active, scope?, error? }. active=false means no guard.

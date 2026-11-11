@@ -14,6 +14,7 @@ import { recordings } from '../features/recording.js';
 import { esmFingerprints } from '../features/esm-store.js';
 import { EsmFingerprint } from '../features/esm-fingerprint.js';
 import { handleSshConnect } from '../features/ssh.js';
+import { handleFtpConnect } from '../features/ftp-client.js';
 import { checkScope, auditAction } from '../features/scope.js';
 import { handleFuzz } from '../features/fuzz.js';
 import * as mitm from '../features/mitm.js';
@@ -76,6 +77,18 @@ export function createWsHandler({ config, logger, sessions, Ebcdic }) {
           ws.close(); return;
         }
         handleSshConnect(ws, wsId, params, send, logger);
+        return;
+      }
+
+      // ── FTP connect ──────────────────────────────────────────────
+      if (params.type === 'ftp.connect') {
+        const scopeOk = await checkScope('host', params.host, { source: origin });
+        if (!scopeOk.allowed) {
+          logger.warn(`[ws:${wsId}] FTP connect refused by scope guard: ${params.host} (${scopeOk.reason})`);
+          send(ws, { type: 'ftp.error', message: `Blocked by RoE scope guard: ${scopeOk.reason}` });
+          ws.close(); return;
+        }
+        handleFtpConnect(ws, wsId, params, send, logger, origin);
         return;
       }
 

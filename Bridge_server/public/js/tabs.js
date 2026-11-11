@@ -56,7 +56,9 @@ export function addSessionTab(name, type, sid) {
 export function activateTabEl(tabEl, sid) {
   document.querySelectorAll('.session-tab').forEach(t => t.classList.remove('active'));
   tabEl.classList.add('active');
-  if (tabEl.dataset.type === 'ssh') { window.sshActivateTab(sid); } else { activateSession(sid); }
+  if (tabEl.dataset.type === 'ssh') { window.sshActivateTab(sid); }
+  else if (tabEl.dataset.type === 'ftp') { window.ftpActivateTab(sid); }
+  else { activateSession(sid); }
 }
 
 export function activateSession(sid) {
@@ -66,6 +68,13 @@ export function activateSession(sid) {
     const sshPane  = document.getElementById('sshTerminal');
     if (term3270) term3270.style.display = '';
     if (sshPane)  sshPane.style.display  = 'none';
+  }
+  if (state.activeFtpSession !== null) {
+    state.activeFtpSession = null;
+    const term3270 = document.getElementById('terminal');
+    const ftpPane  = document.getElementById('ftpPane');
+    if (term3270) term3270.style.display = '';
+    if (ftpPane)  ftpPane.style.display  = 'none';
   }
   state.activeSession = sid;
   const session = state.sessions.get(sid);

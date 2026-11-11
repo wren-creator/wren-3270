@@ -40,6 +40,38 @@ function loadSshHostsFile() {
   return [...shipped.filter(p => !userIds.has(p.id)), ...user];
 }
 
+// ── Parse a single ftp-hosts file into profile objects ────────────
+function parseFtpHostsFile(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs.readFileSync(filePath, 'utf8')
+    .split('\n')
+    .filter(line => line.trim() && !line.trim().startsWith('#'))
+    .map(line => {
+      const parts = line.split(',').map(s => s.trim());
+      const [id, name, host, port, user, secure] = parts;
+      if (!id) return null;
+      return {
+        id, name: name || id, host: host || id,
+        port: parseInt(port || '21', 10), user: user || '',
+        secure: ['explicit', 'implicit'].includes(secure) ? secure : 'none',
+      };
+    })
+    .filter(Boolean);
+}
+
+// ── Load FTP host profiles — merges shipped defaults + user file ──
+// ftp-hosts.shipped.txt: tracked in git, built-in demo hosts
+// ftp-hosts.txt:         gitignored, user's private hosts (bind-mounted in Docker)
+// User entries with the same id override shipped entries.
+function loadFtpHostsFile() {
+  const skipShipped = process.env.BRIDGE_SKIP_SHIPPED_PROFILES === 'true';
+  const shipped = skipShipped ? [] : parseFtpHostsFile(path.join(__dirname, 'ftp-hosts.shipped.txt'));
+  const user    = parseFtpHostsFile(path.join(__dirname, 'ftp-hosts.txt'));
+
+  const userIds = new Set(user.map(p => p.id));
+  return [...shipped.filter(p => !userIds.has(p.id)), ...user];
+}
+
 // ── Parse a single lpars file into profile objects ────────────────
 function parseLparFile(filePath, source) {
   if (!fs.existsSync(filePath)) return [];
@@ -119,6 +151,7 @@ export default {
 
   profiles: loadLparFile(),
   sshHosts: loadSshHostsFile(),
+  ftpHosts: loadFtpHostsFile(),
 
   logging: {
     level: process.env.LOG_LEVEL || 'info',
@@ -126,6 +159,7 @@ export default {
 
   loadLparFile,
   loadSshHostsFile,
+  loadFtpHostsFile,
 
   securityPassword: process.env.SECURITY_TOOLS_PASSWORD || '2970',
 
