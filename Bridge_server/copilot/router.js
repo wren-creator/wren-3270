@@ -128,7 +128,14 @@ function setProvider(name, overrides = {}) {
     if (key === 'anthropic') process.env.ANTHROPIC_MODEL        = overrides.model;
   }
 
-  // Clear require cache for the provider module so overrides take effect
+  // Clear require cache for the provider module so overrides take effect.
+  // Only meaningful under plain `node server.js`/Docker, where each
+  // provider is really its own cached CJS module; once esbuild bundles
+  // everything into one file for the packaged Windows exe (see
+  // build-windows/esbuild.config.mjs), these are inlined closures with no
+  // require.cache entry of their own, so require.resolve() on the original
+  // relative path can't find a file that no longer exists standalone —
+  // harmless to skip in that case, since there's nothing left to invalidate.
   const modulePaths = {
     anthropic: './default/anthropic-default',
     ollama:    './auxiliary/ollama',
@@ -138,8 +145,12 @@ function setProvider(name, overrides = {}) {
     github:    './auxiliary/github-models',
     azure:     './auxiliary/azure-openai',
   };
-  const modPath = require.resolve(modulePaths[key]);
-  if (require.cache[modPath]) delete require.cache[modPath];
+  try {
+    const modPath = require.resolve(modulePaths[key]);
+    if (require.cache[modPath]) delete require.cache[modPath];
+  } catch {
+    // Bundled context (see above) — nothing to invalidate.
+  }
 
   _active = PROVIDER_LOADERS[key]();
   logger.info(`[copilot] Hot-swapped provider → ${_active.name}  model: ${_active.model}`);

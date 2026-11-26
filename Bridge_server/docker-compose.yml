@@ -22,6 +22,9 @@ services:
         source: ./ftp-hosts.txt
         target: /app/ftp-hosts.txt
       - type: bind
+        source: ./telnet-hosts.txt
+        target: /app/telnet-hosts.txt
+      - type: bind
         source: ./default-accounts.txt
         target: /app/default-accounts.txt
       - type: volume
@@ -30,6 +33,10 @@ services:
 
     environment:
       BRIDGE_PORT: "8081"
+      # config.js now defaults BRIDGE_HOST to 127.0.0.1 (correct for a
+      # native/portable build) — the container needs it listening on all
+      # interfaces to be reachable from the host via the mapped port above.
+      BRIDGE_HOST: "0.0.0.0"
       # Optional at build/start time so a fresh clone without .env configured
       # still builds — routes/macro-run.js itself fails closed (503) on an
       # empty key, so this doesn't reopen the auth gap, it just moves where

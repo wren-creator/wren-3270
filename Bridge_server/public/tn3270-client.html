@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wren/3270 — Production</title>
 <link rel="stylesheet" href="css/terminal.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
 <style>
   .ssh-terminal-pane { width:100%; height:100%; background:#020c14; overflow:hidden; }
   .ssh-xterm-container { width:100%; height:100%; }
@@ -41,6 +41,13 @@
   .tab-add-ftp { font-size:9px; font-weight:700; letter-spacing:.05em; color:#4a8ac0; border-color:#1e3a5a !important; }
   .tab-add-ftp:hover { background:#0a1f33; color:#6aa8d8; }
   .session-tab.ftp-tab { border-top-color:#4a8ac0; }
+
+  .telnet-terminal-pane { width:100%; height:100%; background:#140e02; overflow:hidden; }
+  .telnet-xterm-container { width:100%; height:100%; }
+  .telnet-xterm-container .xterm { height:100%; }
+  .tab-add-telnet { font-size:9px; font-weight:700; letter-spacing:.05em; color:#d4a94a; border-color:#4a3a1e !important; }
+  .tab-add-telnet:hover { background:#2a2008; color:#e8c878; }
+  .session-tab.telnet-tab { border-top-color:#d4a94a; }
 </style>
 </head>
 <style>
@@ -152,6 +159,7 @@
   <div id="tabSplitBtn" class="tab-split" onclick="toggleSplitMode()" title="Split screen — compare two sessions side by side (max 2)">⊞</div>
   <div class="tab-add tab-add-ssh" onclick="openSshConnect()" title="New SSH session">SSH</div>
   <div class="tab-add tab-add-ftp" onclick="openFtpConnect()" title="New FTP session">FTP</div>
+  <div class="tab-add tab-add-telnet" onclick="openTelnetConnect()" title="New Telnet session">TELNET</div>
   <div class="tab-add" onclick="showConnectModal()" title="New TN3270 session">＋</div>
 </div>
 
@@ -219,16 +227,20 @@
         <div class="t3270-screen" id="terminal" onclick="termClick(event)"></div>
         <div class="ssh-terminal-pane" id="sshTerminal" style="display:none"></div>
         <div class="ftp-pane" id="ftpPane" style="display:none"></div>
+        <div class="telnet-terminal-pane" id="telnetTerminal" style="display:none"></div>
       </div>
       <div class="split-pane split-pane-right" id="splitPaneRight" style="display:none">
         <div class="t3270-screen" id="terminal-split" onclick="splitTermClick(event)"></div>
         <div class="ssh-terminal-pane" id="sshTerminalSplit" style="display:none"></div>
+        <div class="telnet-terminal-pane" id="telnetTerminalSplit" style="display:none"></div>
       </div>
     </div>
     <!-- Hidden pool for xterm instances not currently displayed -->
     <div id="sshPool" style="position:absolute;left:-9999px;top:-9999px;width:800px;height:600px;overflow:hidden"></div>
     <!-- Hidden pool for FTP session panes not currently displayed -->
     <div id="ftpPool" style="position:absolute;left:-9999px;top:-9999px;width:800px;height:600px;overflow:hidden"></div>
+    <!-- Hidden pool for Telnet xterm instances not currently displayed -->
+    <div id="telnetPool" style="position:absolute;left:-9999px;top:-9999px;width:800px;height:600px;overflow:hidden"></div>
     <!-- Anomaly flash bar — shows latest anomalies inline, auto-fades -->
     <div id="anomalyBar" class="anomaly-bar"></div>
     <div class="oia-bar">
@@ -2086,6 +2098,63 @@
   </div>
 </div>
 
+<!-- Telnet connect modal -->
+<div id="telnetConnectModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9300;align-items:center;justify-content:center;">
+  <div style="background:#140e02;border:1px solid #4a3a1e;border-radius:6px;width:380px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:0 4px 24px rgba(0,0,0,0.9);font-family:'IBM Plex Mono',monospace">
+    <div style="background:#1f1707;border-bottom:1px solid #4a3a1e;padding:12px 16px;border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:12px;font-weight:700;color:#d4a94a">📡 Telnet Connect</div>
+      <button onclick="closeTelnetConnect()" style="background:none;border:none;color:var(--text-muted);font-size:16px;cursor:pointer;padding:0 2px">✕</button>
+    </div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">SAVED HOST</label>
+        <div style="display:flex;gap:4px;align-items:center">
+          <select id="telnetHostSelect" onchange="telnetHostChanged()"
+            style="flex:1;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px">
+            <option value="">— Select Telnet host —</option>
+          </select>
+          <button onclick="telnetEditHost()" title="Edit host"
+            style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:11px;padding:3px 7px;cursor:pointer;flex-shrink:0">✎</button>
+          <button onclick="telnetDeleteHost()" title="Delete host"
+            style="background:#1a0d0d;border:1px solid #4a1e1e;border-radius:3px;color:#c0392b;font-family:inherit;font-size:11px;padding:3px 7px;cursor:pointer;flex-shrink:0">✕</button>
+        </div>
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">HOST</label>
+        <input id="telnetManualHost" type="text" autocomplete="off" spellcheck="false"
+          style="width:100%;box-sizing:border-box;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px"
+          placeholder="hostname or IP">
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px">PORT</label>
+        <input id="telnetManualPort" type="number" value="23"
+          style="width:100%;box-sizing:border-box;background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:11px;padding:4px 6px"
+          onkeydown="if(event.key==='Enter')telnetConnect()">
+      </div>
+      <div style="font-size:9px;color:var(--text-muted);line-height:1.5">Telnet has no protocol-level login — sign in at the prompt once the session opens, same as a physical console. The link itself is plaintext, so only point this at in-scope hosts.</div>
+      <div id="telnetConnectErr" style="font-size:10px;color:#c0392b;min-height:14px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="closeTelnetConnect()"
+          style="background:transparent;border:1px solid #2a3a4a;border-radius:3px;color:var(--text-muted);font-family:inherit;font-size:11px;padding:4px 14px;cursor:pointer">Cancel</button>
+        <button onclick="telnetConnect()"
+          style="background:#2a2008;border:1px solid #4a3a1e;border-radius:3px;color:#d4a94a;font-family:inherit;font-size:11px;padding:4px 16px;cursor:pointer;font-weight:700">Connect</button>
+      </div>
+      <details id="telnetAddHostDetails" style="margin-top:4px">
+        <summary style="font-size:10px;color:var(--text-muted);cursor:pointer;user-select:none">+ Add / edit host</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+          <input id="telnetNewId"   type="text" placeholder="id (no spaces)"  style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="telnetNewName" type="text" placeholder="Display name"    style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="telnetNewHost" type="text" placeholder="hostname or IP"  style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px">
+          <input id="telnetNewPort" type="number" placeholder="port (23)"     style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:3px;color:var(--text-main);font-family:inherit;font-size:10px;padding:3px 5px" value="23">
+          <button type="button" onclick="telnetSaveHost()"
+            style="background:#0d1a2d;border:1px solid #1e3a5f;border-radius:3px;color:#4a9fd4;font-family:inherit;font-size:10px;padding:3px 8px;cursor:pointer;grid-column:span 2">Save host</button>
+        </div>
+        <div id="telnetSaveHostStatus" style="font-size:10px;min-height:12px;margin-top:6px"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
 <!-- Walkthrough picker modal (Help menu → Walkthroughs) -->
 <div id="wtPickerModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9200;align-items:center;justify-content:center;">
   <div style="background:#0a0f14;border:1px solid #1e3a5f;border-radius:6px;width:460px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,0.8);font-family:'IBM Plex Mono',monospace">
@@ -2125,9 +2194,12 @@
   </div>
 </div>
 
-<!-- xterm.js for SSH terminal rendering (must load before ES6 module) -->
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+<!-- xterm.js for SSH/Telnet terminal rendering (must load before ES6 module) —
+     vendored locally (scripts/vendor-xterm.mjs), same self-hosted-instead-
+     of-CDN precedent as public/fonts/, so the packaged Windows portable
+     build works fully offline on a network-isolated box. -->
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/addon-fit.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

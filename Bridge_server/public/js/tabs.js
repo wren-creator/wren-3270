@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { renderLiveScreen, screenToText } from './rendering.js';
+import { renderLiveScreen, screenToText, showBridgeError } from './rendering.js';
 import { fitScreen } from './geometry.js';
 import { renderCmdHistory } from './keyboard.js';
 
@@ -45,8 +45,8 @@ export function addSessionTab(name, type, sid) {
   const existing = [...tabs.querySelectorAll('.session-tab')].find(t => t.dataset.sid === String(sid));
   if (existing) { activateTabEl(existing, sid); return existing; }
   const tab = document.createElement('div');
-  tab.className = 'session-tab'; tab.dataset.sid = sid;
-  tab.innerHTML = `<div class="tab-dot" style="background:#ffaa00;box-shadow:0 0 4px #ffaa00"></div>${esc(name)} · ${esc(type)}<span class="tab-close" onclick="closeSessionTab(event,this)">&times;</span>`;
+  tab.className = 'session-tab'; tab.dataset.sid = sid; tab.dataset.type = '3270';
+  tab.innerHTML = `<div class="tab-dot" style="background:#ffaa00;box-shadow:0 0 4px #ffaa00"></div>${esc(name)} · ${esc(type)}<span class="tab-detach" onclick="detachTab(event,this)" title="Detach into its own window">⧉</span><span class="tab-close" onclick="closeSessionTab(event,this)">&times;</span>`;
   tab.onclick = () => activateTabEl(tab, sid);
   tabs.insertBefore(tab, addBtn);
   activateTabEl(tab, sid);
@@ -58,6 +58,7 @@ export function activateTabEl(tabEl, sid) {
   tabEl.classList.add('active');
   if (tabEl.dataset.type === 'ssh') { window.sshActivateTab(sid); }
   else if (tabEl.dataset.type === 'ftp') { window.ftpActivateTab(sid); }
+  else if (tabEl.dataset.type === 'telnet') { window.telnetActivateTab(sid); }
   else { activateSession(sid); }
 }
 
@@ -75,6 +76,13 @@ export function activateSession(sid) {
     const ftpPane  = document.getElementById('ftpPane');
     if (term3270) term3270.style.display = '';
     if (ftpPane)  ftpPane.style.display  = 'none';
+  }
+  if (state.activeTelnetSession !== null) {
+    state.activeTelnetSession = null;
+    const term3270   = document.getElementById('terminal');
+    const telnetPane  = document.getElementById('telnetTerminal');
+    if (term3270)   term3270.style.display   = '';
+    if (telnetPane) telnetPane.style.display  = 'none';
   }
   state.activeSession = sid;
   const session = state.sessions.get(sid);
@@ -115,6 +123,47 @@ export function closeSessionTab(e, closeBtn) {
   const remaining = [...tabs.querySelectorAll('.session-tab')];
   if (remaining.length) { const next = remaining[Math.max(0, idx-1)]; activateTabEl(next, Number(next.dataset.sid)); }
   else { state.activeSession = null; document.getElementById('terminal').innerHTML = ''; setConnStatus('', 'disconnected'); clearOiaFields(); }
+}
+
+// Tears a tab out of this window into a standalone one. The bridge treats
+// each browser WebSocket as a session (no server-side session persistence —
+// see handlers/ws.js), so there's no live socket to hand off: the popout
+// reconnects fresh with the same host/profile/credentials, and the tab in
+// this window closes once the popout confirms it's ready for them.
+export function detachTab(e, btn) {
+  e.stopPropagation();
+  const tab  = btn.closest('.session-tab');
+  const sid  = Number(tab.dataset.sid);
+  const type = tab.dataset.type || '3270';
+  const session = state.sessions.get(sid);
+  if (!session) return;
+
+  let payload;
+  if (type === 'ssh') {
+    payload = { kind: 'ssh', host: session.host, port: session.port, username: session.username, password: session.password, name: session.name };
+  } else if (type === 'ftp') {
+    payload = { kind: 'ftp', host: session.host, port: session.port, username: session.username, password: session.password, secure: session.secure, name: session.name };
+  } else if (type === 'telnet') {
+    payload = { kind: 'telnet', host: session.host, port: session.port, name: session.name };
+  } else {
+    payload = { kind: '3270', profile: session.profile };
+  }
+
+  const popout = window.open(`${location.pathname}?detached=1`, '_blank', 'width=1180,height=760');
+  if (!popout) { showBridgeError('Could not open a detached window — check your browser\'s popup blocker.'); return; }
+
+  const onMsg = ev => {
+    if (ev.source !== popout || ev.origin !== location.origin || ev.data?.type !== 'detach-ready') return;
+    window.removeEventListener('message', onMsg);
+    popout.postMessage({ type: 'detach-init', payload }, location.origin);
+    const closeBtn = tab.querySelector('.tab-close');
+    const fakeEvent = { stopPropagation: () => {} };
+    if (type === 'ssh')         window.sshCloseTab(fakeEvent, closeBtn);
+    else if (type === 'ftp')    window.ftpCloseTab(fakeEvent, closeBtn);
+    else if (type === 'telnet') window.telnetCloseTab(fakeEvent, closeBtn);
+    else                        window.closeSessionTab(fakeEvent, closeBtn);
+  };
+  window.addEventListener('message', onMsg);
 }
 
 export function _showDisconnectScreen(sessionName, termEl, sid) {
@@ -233,7 +282,7 @@ export function splitTermClick(e) {
 }
 
 Object.assign(window, {
-  addSessionTab, activateTabEl, activateSession, closeSessionTab,
+  addSessionTab, activateTabEl, activateSession, closeSessionTab, detachTab,
   _showDisconnectScreen, setConnStatus, updateSessionDot, clearOiaFields,
   termClick, splitTermClick, applyDemoMode, toggleDemoMode,
   cycleSession, switchTab, toggleSplitMode,

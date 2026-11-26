@@ -84,6 +84,13 @@ export async function ftpConnect() {
   _ftpOpenSession(sid, name, host, port, username, password, secure);
 }
 
+// Reopens an FTP session from a handed-off payload (see detachTab() in
+// tabs.js) instead of the connect modal's form fields.
+export function ftpConnectWith({ host, port, username, password, secure, name }) {
+  const sid = Date.now();
+  _ftpOpenSession(sid, name || host, host, port, username, password, secure);
+}
+
 function _ftpConnectWs(sid) {
   const session = state.sessions.get(sid);
   if (!session) return null;
@@ -341,7 +348,7 @@ function _ftpAddTab(sid, name) {
   tab.className    = 'session-tab ftp-tab';
   tab.dataset.sid  = sid;
   tab.dataset.type = 'ftp';
-  tab.innerHTML    = `<div class="tab-dot" style="background:#ffaa00;box-shadow:0 0 4px #ffaa00"></div>\u{1F4C1} ${esc(name)}<span class="tab-close" onclick="ftpCloseTab(event,this)">&times;</span>`;
+  tab.innerHTML    = `<div class="tab-dot" style="background:#ffaa00;box-shadow:0 0 4px #ffaa00"></div>\u{1F4C1} ${esc(name)}<span class="tab-detach" onclick="detachTab(event,this)" title="Detach into its own window">⧉</span><span class="tab-close" onclick="ftpCloseTab(event,this)">&times;</span>`;
   tab.onclick = () => ftpActivateTab(sid);
   tabs.insertBefore(tab, addBtn);
   ftpActivateTab(sid);
@@ -482,6 +489,6 @@ export async function ftpDeleteHost() {
 }
 
 Object.assign(window, {
-  openFtpConnect, closeFtpConnect, ftpHostChanged, ftpConnect,
+  openFtpConnect, closeFtpConnect, ftpHostChanged, ftpConnect, ftpConnectWith,
   ftpActivateTab, ftpCloseTab, ftpSaveHost, ftpEditHost, ftpDeleteHost,
 });

@@ -12,6 +12,7 @@ import './copilot.js';
 import './xfer.js';
 import './ssh.js';
 import './ftp.js';
+import './telnet.js';
 import './terminal.js';
 import './ui.js';
 import './probe.js';
@@ -38,6 +39,7 @@ import './zlinux.js';
 import './walkthrough.js';
 import './session-manager.js';
 import './panel-resize.js';
+import './detach.js';
 import { initBarbieEgg } from './easteregg.js';
 
 function tick() {

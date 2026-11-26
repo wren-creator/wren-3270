@@ -1,8 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { getAppRoot } from '../app-paths.js';
 
 // accountDir: hosted (multiTenant) deployment only — scopes the two
 // user-writable sources (local macros.json + saved-macro library) to
@@ -13,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // single-tenant behavior of one shared macros/local + macros/library.
 export function loadMacroFile(config, accountDir = null) {
   // shipped.json — default macros tracked in git, never overwritten by saves
-  const shippedPath = path.join(__dirname, '..', 'macros', 'shipped.json');
+  const shippedPath = path.join(getAppRoot(), 'macros', 'shipped.json');
   let shipped = [];
   if (fs.existsSync(shippedPath)) {
     try { shipped = JSON.parse(fs.readFileSync(shippedPath, 'utf8')); } catch { shipped = []; }
@@ -22,7 +20,7 @@ export function loadMacroFile(config, accountDir = null) {
   // macros/local/macros.json — user-created macros, gitignored, survives git pulls
   const macroPath = accountDir
     ? path.join(accountDir, 'macros.json')
-    : path.join(__dirname, '..', 'macros', 'local', 'macros.json');
+    : path.join(getAppRoot(), 'macros', 'local', 'macros.json');
 
   let userMacros = [];
   if (fs.existsSync(macroPath)) {
@@ -37,7 +35,7 @@ export function loadMacroFile(config, accountDir = null) {
 
   const libDir = accountDir
     ? path.join(accountDir, 'library')
-    : path.join(__dirname, '..', 'macros', 'library');
+    : path.join(getAppRoot(), 'macros', 'library');
   if (fs.existsSync(libDir)) {
     try {
       const existingNames = new Set(macros.map(m => m.name));

@@ -76,6 +76,13 @@ export async function sshConnect() {
   _sshOpenSession(sid, name, host, port, username, password);
 }
 
+// Reopens an SSH session from a handed-off payload (see detachTab() in
+// tabs.js) instead of the connect modal's form fields.
+export function sshConnectWith({ host, port, username, password, name }) {
+  const sid = Date.now();
+  _sshOpenSession(sid, name || host, host, port, username, password);
+}
+
 // Opens (or reopens, for reconnect) the WebSocket for an SSH session onto
 // an existing sid, reusing the session's terminal. Split out from
 // _sshOpenSession so a dropped session can be reconnected onto the same
@@ -222,7 +229,7 @@ function _sshAddTab(sid, name) {
   tab.className    = 'session-tab ssh-tab';
   tab.dataset.sid  = sid;
   tab.dataset.type = 'ssh';
-  tab.innerHTML    = `<div class="tab-dot" style="background:#ffaa00;box-shadow:0 0 4px #ffaa00"></div>\u{1F511} ${esc(name)}<span class="tab-close" onclick="sshCloseTab(event,this)">&times;</span>`;
+  tab.innerHTML    = `<div class="tab-dot" style="background:#ffaa00;box-shadow:0 0 4px #ffaa00"></div>\u{1F511} ${esc(name)}<span class="tab-detach" onclick="detachTab(event,this)" title="Detach into its own window">⧉</span><span class="tab-close" onclick="sshCloseTab(event,this)">&times;</span>`;
   tab.onclick = () => sshActivateTab(sid);
   tabs.insertBefore(tab, addBtn);
   sshActivateTab(sid);
@@ -392,7 +399,7 @@ export async function sshDeleteHost() {
 window.addEventListener('resize', sshFitActive);
 
 Object.assign(window, {
-  openSshConnect, closeSshConnect, sshHostChanged, sshConnect,
+  openSshConnect, closeSshConnect, sshHostChanged, sshConnect, sshConnectWith,
   sshActivateTab, sshCloseTab, sshFitActive, sshRenderSplitPane, sshClearSplitPane,
   sshSaveHost, sshEditHost, sshDeleteHost,
 });

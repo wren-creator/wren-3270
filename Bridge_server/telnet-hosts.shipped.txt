@@ -1,0 +1,8 @@
+# Telnet host profiles for Wren/3270
+# Format: id, name, host/IP, port
+# No username/password fields — telnet has no protocol-level auth, login
+# happens inside the terminal session itself, same as a physical console.
+#
+# Examples:
+# mock-zvm,  Mock z/VM Telnet,       mock-zvm,   23
+# netgear,   Network Gear (legacy),  10.0.0.1,   23

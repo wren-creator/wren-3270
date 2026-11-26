@@ -172,22 +172,38 @@ async function handleConfigure(msg, ws, wsId) {
  * can be called with temporary credentials without affecting the active provider.
  */
 function loadProviderModule(name) {
-  // Paths relative to this file
-  const relPaths = {
-    anthropic: './default/anthropic-default',
-    ollama:    './auxiliary/ollama',
-    lmstudio:  './auxiliary/lmstudio',
-    openai:    './auxiliary/openai',
-    gemini:    './auxiliary/gemini',
-    github:    './auxiliary/github-models',
-    azure:     './auxiliary/azure-openai',
-  };
-  const p = relPaths[name];
-  if (!p) throw new Error(`Unknown provider: ${name}`);
-  // Clear cache to pick up temp env var changes
-  const resolved = require.resolve(p);
-  delete require.cache[resolved];
-  return require(p);
+  // Literal require() per branch, not a variable-keyed lookup: esbuild's
+  // bundler only statically traces (and therefore actually inlines) a
+  // require() whose argument is a literal string (see
+  // build-windows/esbuild.config.mjs). The previous single
+  // `require(relPaths[name])` form left a real runtime require() in the
+  // bundled output pointing at a relative path that doesn't exist next to
+  // the bundle — broken under plain `node dist/bundle.cjs`, not just the
+  // packaged exe.
+  //
+  // require.cache invalidation (for picking up temp env var overrides) only
+  // works pre-bundle, where each provider really is its own cached CJS
+  // module — once bundled, these are inlined closures with nothing to
+  // invalidate, so a temp-credential "test connection" falls back to the
+  // already-loaded instance there instead of throwing.
+  function freshOrCached(p) {
+    try {
+      const resolved = require.resolve(p);
+      delete require.cache[resolved];
+    } catch {
+      // Bundled context — nothing to invalidate.
+    }
+  }
+  switch (name) {
+    case 'anthropic': freshOrCached('./default/anthropic-default'); return require('./default/anthropic-default');
+    case 'ollama':    freshOrCached('./auxiliary/ollama');          return require('./auxiliary/ollama');
+    case 'lmstudio':  freshOrCached('./auxiliary/lmstudio');        return require('./auxiliary/lmstudio');
+    case 'openai':    freshOrCached('./auxiliary/openai');          return require('./auxiliary/openai');
+    case 'gemini':    freshOrCached('./auxiliary/gemini');          return require('./auxiliary/gemini');
+    case 'github':    freshOrCached('./auxiliary/github-models');  return require('./auxiliary/github-models');
+    case 'azure':     freshOrCached('./auxiliary/azure-openai');    return require('./auxiliary/azure-openai');
+    default: throw new Error(`Unknown provider: ${name}`);
+  }
 }
 
 /**

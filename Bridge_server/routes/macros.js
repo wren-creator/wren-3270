@@ -1,11 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { loadMacroFile } from '../features/macros.js';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const globalLibDir    = path.join(__dirname, '..', 'macros', 'library');
-const globalMacroPath = path.join(__dirname, '..', 'macros', 'local', 'macros.json');
+const globalLibDir    = path.join(getAppRoot(), 'macros', 'library');
+const globalMacroPath = path.join(getAppRoot(), 'macros', 'local', 'macros.json');
 
 fs.mkdirSync(path.dirname(globalMacroPath), { recursive: true });
 

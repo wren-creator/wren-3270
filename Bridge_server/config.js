@@ -7,9 +7,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from './app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = getAppRoot();
 
 // ── Parse a single ssh-hosts file into profile objects ────────────
 function parseSshHostsFile(filePath) {
@@ -67,6 +67,34 @@ function loadFtpHostsFile() {
   const skipShipped = process.env.BRIDGE_SKIP_SHIPPED_PROFILES === 'true';
   const shipped = skipShipped ? [] : parseFtpHostsFile(path.join(__dirname, 'ftp-hosts.shipped.txt'));
   const user    = parseFtpHostsFile(path.join(__dirname, 'ftp-hosts.txt'));
+
+  const userIds = new Set(user.map(p => p.id));
+  return [...shipped.filter(p => !userIds.has(p.id)), ...user];
+}
+
+// ── Parse a single telnet-hosts file into profile objects ─────────
+function parseTelnetHostsFile(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs.readFileSync(filePath, 'utf8')
+    .split('\n')
+    .filter(line => line.trim() && !line.trim().startsWith('#'))
+    .map(line => {
+      const parts = line.split(',').map(s => s.trim());
+      const [id, name, host, port] = parts;
+      if (!id) return null;
+      return { id, name: name || id, host: host || id, port: parseInt(port || '23', 10) };
+    })
+    .filter(Boolean);
+}
+
+// ── Load Telnet host profiles — merges shipped defaults + user file ──
+// telnet-hosts.shipped.txt: tracked in git, built-in demo hosts
+// telnet-hosts.txt:         gitignored, user's private hosts (bind-mounted in Docker)
+// User entries with the same id override shipped entries.
+function loadTelnetHostsFile() {
+  const skipShipped = process.env.BRIDGE_SKIP_SHIPPED_PROFILES === 'true';
+  const shipped = skipShipped ? [] : parseTelnetHostsFile(path.join(__dirname, 'telnet-hosts.shipped.txt'));
+  const user    = parseTelnetHostsFile(path.join(__dirname, 'telnet-hosts.txt'));
 
   const userIds = new Set(user.map(p => p.id));
   return [...shipped.filter(p => !userIds.has(p.id)), ...user];
@@ -133,6 +161,11 @@ function loadLparFile() {
 export default {
   bridge: {
     port: parseInt(process.env.BRIDGE_PORT || '8081', 10),
+    // Docker/OpenShift need 0.0.0.0 explicitly (see their env blocks) so the
+    // container's mapped port is reachable from the host; a native process
+    // serving only the local user's own browser is more correct bound to
+    // loopback, and it skips an avoidable Windows Firewall prompt.
+    host: process.env.BRIDGE_HOST || '127.0.0.1',
     verifyTls: process.env.BRIDGE_VERIFY_TLS !== 'false',
     socketTimeoutMs: parseInt(process.env.BRIDGE_SOCKET_TIMEOUT_MS || '300000', 10),
     maxSessions: parseInt(process.env.BRIDGE_MAX_SESSIONS || '100', 10),
@@ -152,6 +185,7 @@ export default {
   profiles: loadLparFile(),
   sshHosts: loadSshHostsFile(),
   ftpHosts: loadFtpHostsFile(),
+  telnetHosts: loadTelnetHostsFile(),
 
   logging: {
     level: process.env.LOG_LEVEL || 'info',
@@ -160,9 +194,11 @@ export default {
   loadLparFile,
   loadSshHostsFile,
   loadFtpHostsFile,
+  loadTelnetHostsFile,
 
   securityPassword: process.env.SECURITY_TOOLS_PASSWORD || '2970',
 
   macroSecurityFile: process.env.MACRO_SECURITY_FILE ||
     path.join(__dirname, 'macros-security.json'),
 };
+// @iplxec

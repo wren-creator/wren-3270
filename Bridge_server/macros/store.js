@@ -19,12 +19,11 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import logger from '../logger.cjs';
 import config from '../config.js';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_LIBRARY_DIR = path.join(__dirname, 'library');
+const DEFAULT_LIBRARY_DIR = path.join(getAppRoot(), 'macros', 'library');
 
 class MacroStore {
   constructor(libraryDir = DEFAULT_LIBRARY_DIR) {

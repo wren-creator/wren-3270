@@ -9,6 +9,7 @@ macros/accounts/
 # Private connection profiles — user's own hosts, never commit
 ssh-hosts.txt
 ftp-hosts.txt
+telnet-hosts.txt
 lpars.txt
 
 # VTAM pool-dashboard thresholds — operator/shop-specific, never commit
