@@ -38,6 +38,7 @@ import './zlinux.js';
 import './walkthrough.js';
 import './session-manager.js';
 import './panel-resize.js';
+import './detach.js';
 import { initBarbieEgg } from './easteregg.js';
 
 function tick() {

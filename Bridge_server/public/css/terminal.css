@@ -170,6 +170,9 @@ body {
 .tab-close { font-size:14px;line-height:1;color:var(--text-muted);opacity:0;transition:opacity 0.15s; }
 .session-tab:hover .tab-close { opacity:0.5; }
 .tab-close:hover { opacity:1 !important;color:var(--accent-amber); }
+.tab-detach { font-size:11px;line-height:1;color:var(--text-muted);opacity:0;transition:opacity 0.15s;margin-left:1px; }
+.session-tab:hover .tab-detach { opacity:0.5; }
+.tab-detach:hover { opacity:1 !important;color:var(--accent-cyan); }
 .tab-add { display:flex;align-items:center;justify-content:center;width:34px;min-width:34px;font-size:18px;cursor:pointer;color:var(--text-muted);transition:color 0.15s; }
 .tab-add:hover { color:var(--accent-cyan); }
 .tab-split { display:flex;align-items:center;justify-content:center;padding:0 9px;height:34px;font-size:14px;cursor:pointer;color:var(--text-muted);border-right:1px solid var(--border);user-select:none;flex-shrink:0;transition:color 0.15s; }
