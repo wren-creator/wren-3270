@@ -7,9 +7,9 @@
 
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from './app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = getAppRoot();
 
 // ── Parse a single ssh-hosts file into profile objects ────────────
 function parseSshHostsFile(filePath) {
@@ -161,6 +161,11 @@ function loadLparFile() {
 export default {
   bridge: {
     port: parseInt(process.env.BRIDGE_PORT || '8081', 10),
+    // Docker/OpenShift need 0.0.0.0 explicitly (see their env blocks) so the
+    // container's mapped port is reachable from the host; a native process
+    // serving only the local user's own browser is more correct bound to
+    // loopback, and it skips an avoidable Windows Firewall prompt.
+    host: process.env.BRIDGE_HOST || '127.0.0.1',
     verifyTls: process.env.BRIDGE_VERIFY_TLS !== 'false',
     socketTimeoutMs: parseInt(process.env.BRIDGE_SOCKET_TIMEOUT_MS || '300000', 10),
     maxSessions: parseInt(process.env.BRIDGE_MAX_SESSIONS || '100', 10),

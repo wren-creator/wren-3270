@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const telnetHostsPath = path.join(__dirname, '..', 'telnet-hosts.txt');
+const telnetHostsPath = path.join(getAppRoot(), 'telnet-hosts.txt');
 
 function send(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });

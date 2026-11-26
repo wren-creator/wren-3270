@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const userLparsPath = path.join(__dirname, '..', 'lpars.txt');
+const userLparsPath = path.join(getAppRoot(), 'lpars.txt');
 
 function send(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });

@@ -1,0 +1,9 @@
+{
+  "name": "wren3270-bridge-windows-build",
+  "private": true,
+  "description": "Pruned install manifest for the Windows portable build. Installed into a separate node_modules (npm ci --prefix build-windows/install) before the esbuild bundle step, so kerberos's node-gyp build (needs krb5-dev, unavailable off Alpine/Linux) is never attempted. kerberos and ldapts are only consumed by auth/windows-auth.js, which nothing else in the app imports (see that file's own header comment) — dead code today, excluded here rather than fixed.",
+  "dependencies": {
+    "ssh2": "^1.17.0",
+    "ws": "^8.21.0"
+  }
+}

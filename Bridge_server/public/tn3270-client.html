@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Wren/3270 — Production</title>
 <link rel="stylesheet" href="css/terminal.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
 <style>
   .ssh-terminal-pane { width:100%; height:100%; background:#020c14; overflow:hidden; }
   .ssh-xterm-container { width:100%; height:100%; }
@@ -2194,9 +2194,12 @@
   </div>
 </div>
 
-<!-- xterm.js for SSH terminal rendering (must load before ES6 module) -->
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+<!-- xterm.js for SSH/Telnet terminal rendering (must load before ES6 module) —
+     vendored locally (scripts/vendor-xterm.mjs), same self-hosted-instead-
+     of-CDN precedent as public/fonts/, so the packaged Windows portable
+     build works fully offline on a network-isolated box. -->
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/addon-fit.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

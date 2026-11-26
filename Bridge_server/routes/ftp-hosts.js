@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ftpHostsPath = path.join(__dirname, '..', 'ftp-hosts.txt');
+const ftpHostsPath = path.join(getAppRoot(), 'ftp-hosts.txt');
 
 function send(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });

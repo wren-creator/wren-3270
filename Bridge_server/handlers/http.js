@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from '../app-paths.js';
 
 import * as traffic    from '../routes/traffic.js';
 import * as logs       from '../routes/logs.js';
@@ -25,8 +25,7 @@ import * as ibmiRecon from '../routes/ibmi-recon.js';
 import * as scopeRt    from '../routes/scope.js';
 import * as smapiAudit from '../routes/smapi-audit.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const PUBLIC_DIR = path.join(getAppRoot(), 'public');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

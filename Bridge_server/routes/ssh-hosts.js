@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const sshHostsPath = path.join(__dirname, '..', 'ssh-hosts.txt');
+const sshHostsPath = path.join(getAppRoot(), 'ssh-hosts.txt');
 
 function send(res, code, body) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });

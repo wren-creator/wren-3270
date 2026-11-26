@@ -31,11 +31,10 @@
 import fs from 'fs';
 import dns from 'dns';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const scopePath = () => process.env.BRIDGE_SCOPE_FILE || path.join(__dirname, '..', 'scope.json');
-const auditPath = () => process.env.BRIDGE_SCOPE_AUDIT || path.join(__dirname, '..', 'scope-audit.log');
+const scopePath = () => process.env.BRIDGE_SCOPE_FILE || path.join(getAppRoot(), 'scope.json');
+const auditPath = () => process.env.BRIDGE_SCOPE_AUDIT || path.join(getAppRoot(), 'scope-audit.log');
 
 // Actions that can disturb a shared CEC or a sibling production LPAR. These
 // run only when the RoE names them in "activities", even if "activities" is

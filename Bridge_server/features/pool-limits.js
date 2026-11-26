@@ -15,10 +15,9 @@
 // and macros-security.json already made.
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { getAppRoot } from '../app-paths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.join(__dirname, '..', 'pool-limits.json');
+const CONFIG_PATH = path.join(getAppRoot(), 'pool-limits.json');
 
 // { "<lparId>": { maxSessions?: number, rejectPattern?: string } }
 export function loadPoolLimits() {

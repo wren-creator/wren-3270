@@ -115,6 +115,21 @@ cd wren-3270/Bridge_server
 
 Click **⊕ Connect to LPAR**, select or add an LPAR, and connect. Step-by-step with screenshots-in-text and troubleshooting: [DOCUMENTATION/INSTALL.md](DOCUMENTATION/INSTALL.md).
 
+### Option 3: Windows portable build (no Docker)
+
+For a Windows box with no Docker Desktop/WSL, there's a standalone `.exe` build: download, unzip, double-click, no admin rights needed for normal use. Build it yourself from source:
+
+```bash
+cd Bridge_server
+npm install
+node scripts/vendor-xterm.mjs
+node build-windows/esbuild.config.mjs
+npx @yao-pkg/pkg dist/bundle.cjs --config build-windows/pkg.config.json --output dist/Wren3270.exe
+node build-windows/assemble-portable.mjs
+```
+
+That produces `dist/Wren3270-Portable.zip`. Full details, including the SmartScreen/AV false-positive heads-up and `BRIDGE_APP_ROOT`/`BRIDGE_HOST` env vars: [build-windows/README-WINDOWS.md](Bridge_server/build-windows/README-WINDOWS.md). Built and sanity-checked on macOS; actually running the exe on real Windows hardware is still unverified.
+
 ---
 
 ## LPAR Configuration
