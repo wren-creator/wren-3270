@@ -93,6 +93,9 @@ export const state = {
   // FTP
   activeFtpSession:  null,
 
+  // Telnet
+  activeTelnetSession: null,
+
   // Security
   secUnlocked:       false,
 

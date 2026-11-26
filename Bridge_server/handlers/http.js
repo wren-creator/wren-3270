@@ -20,6 +20,7 @@ import * as sshAudit   from '../routes/ssh-audit.js';
 import * as httpAdminAudit from '../routes/http-admin-audit.js';
 import * as ftpAudit from '../routes/ftp-audit.js';
 import * as ftpHosts from '../routes/ftp-hosts.js';
+import * as telnetHosts from '../routes/telnet-hosts.js';
 import * as ibmiRecon from '../routes/ibmi-recon.js';
 import * as scopeRt    from '../routes/scope.js';
 import * as smapiAudit from '../routes/smapi-audit.js';
@@ -38,7 +39,7 @@ const MIME = {
   '.woff2':'font/woff2',
 };
 
-const ROUTES = [traffic, logs, profiles, sshHosts, ftpHosts, macros, macroRun, recording, security, negotiate, wire, esm, probeWl, sessionsRt, poolLimits, sshAudit, httpAdminAudit, ftpAudit, ibmiRecon, scopeRt, smapiAudit];
+const ROUTES = [traffic, logs, profiles, sshHosts, ftpHosts, telnetHosts, macros, macroRun, recording, security, negotiate, wire, esm, probeWl, sessionsRt, poolLimits, sshAudit, httpAdminAudit, ftpAudit, ibmiRecon, scopeRt, smapiAudit];
 
 export function createRequestHandler({ config, logger, sessions }) {
   const ctx = { config, logger, sessions };

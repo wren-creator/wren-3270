@@ -22,6 +22,7 @@ if (params.get('detached') === '1' && window.opener) {
     if (p.kind === '3270')    window.openSession?.(p.profile);
     else if (p.kind === 'ssh') window.sshConnectWith?.(p);
     else if (p.kind === 'ftp') window.ftpConnectWith?.(p);
+    else if (p.kind === 'telnet') window.telnetConnectWith?.(p);
   }, { once: true });
 
   try { window.opener.postMessage({ type: 'detach-ready' }, location.origin); } catch {}

@@ -20,6 +20,8 @@ server.js  (HTTP + WebSocket on the same port)
 - IND$FILE file transfer (z/VM upload + download) and TSO EDIT upload (z/OS)
 - SSH terminal — first-class session tabs (xterm.js) alongside 3270 sessions, saved host list, auto-reconnect
 - FTP client — first-class session tabs for z/OS datasets/USS, IBM i IFS/libraries, or any FTP target: browse, upload/download, rename/delete/mkdir, plain/explicit/implicit TLS, and a raw command console for shop-specific `SITE` parameters (RECFM/LRECL/BLKSIZE, etc.)
+- Telnet client — first-class session tabs (xterm.js) for any raw Telnet target: no protocol-level auth, login happens inside the terminal stream itself, same as a physical console
+- Detach any session tab (3270, SSH, FTP, or Telnet) into its own browser window — reconnects fresh, no server-side session to hand off
 - Multi-session tabs, LPAR profile dropdown (with CRUD), PF1–PF12 / PA1–PA2 toolbar (plus Reset and a ⌂ Home key) with a 1-12 / 13-24 bank toggle, plus a full PF1–PF24 keypad in the Keys panel
 - Split-screen mode — two live sessions side by side for settings comparison (⊞ toggle)
 - Macro recorder/replayer (screen-synchronised, JSON-persisted)
@@ -175,6 +177,24 @@ Hosts can be added, edited, and deleted from the FTP Connect modal — changes a
 
 > **Fresh clone:** `ftp-hosts.txt` is gitignored the same way `ssh-hosts.txt` is — `cp ftp-hosts.txt.example ftp-hosts.txt` once if you're not using `start.sh` (which seeds it automatically).
 
+### Telnet hosts
+
+Telnet host profiles follow the same shipped/private split as LPARs, SSH, and FTP hosts:
+
+| File | Tracked in git | Purpose |
+|---|---|---|
+| `telnet-hosts.shipped.txt` | ✅ Yes | Built-in demo Telnet hosts. Ships with the repo. |
+| `telnet-hosts.txt` | ❌ No (gitignored) | Your private Telnet hosts. Never committed. Bind-mounted into the container so saves survive rebuilds. |
+
+```
+# id, name, host/IP, port
+# No username/password fields — telnet has no protocol-level auth.
+```
+
+Hosts can be added, edited, and deleted from the Telnet Connect modal — changes are written to `telnet-hosts.txt` immediately (no restart). Telnet itself is plaintext, so only point this at in-scope hosts.
+
+> **Fresh clone:** `telnet-hosts.txt` is gitignored the same way `ssh-hosts.txt`/`ftp-hosts.txt` are — `cp telnet-hosts.txt.example telnet-hosts.txt` once if you're not using `start.sh` (which seeds it automatically).
+
 ---
 
 ## Project Structure
@@ -195,6 +215,9 @@ Bridge_server/
 ├── ftp-hosts.shipped.txt      ← Built-in demo FTP hosts (tracked in git)
 ├── ftp-hosts.txt              ← Your private FTP hosts (gitignored, bind-mounted)
 ├── ftp-hosts.txt.example      ← Template for fresh clones
+├── telnet-hosts.shipped.txt   ← Built-in demo Telnet hosts (tracked in git)
+├── telnet-hosts.txt           ← Your private Telnet hosts (gitignored, bind-mounted)
+├── telnet-hosts.txt.example   ← Template for fresh clones
 ├── Dockerfile
 ├── docker-compose.yml
 ├── start.sh / start.ps1       ← Start bridge (prompts for port on first run)

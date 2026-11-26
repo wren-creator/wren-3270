@@ -12,6 +12,7 @@ import './copilot.js';
 import './xfer.js';
 import './ssh.js';
 import './ftp.js';
+import './telnet.js';
 import './terminal.js';
 import './ui.js';
 import './probe.js';

@@ -22,6 +22,9 @@ services:
         source: ./ftp-hosts.txt
         target: /app/ftp-hosts.txt
       - type: bind
+        source: ./telnet-hosts.txt
+        target: /app/telnet-hosts.txt
+      - type: bind
         source: ./default-accounts.txt
         target: /app/default-accounts.txt
       - type: volume

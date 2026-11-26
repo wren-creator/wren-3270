@@ -73,11 +73,11 @@ export function setSshFontSize(input) {
   state.settings.sshFontSize = n;
   saveSettings();
   for (const session of state.sessions.values()) {
-    if (session.type !== 'ssh') continue;
+    if (session.type !== 'ssh' && session.type !== 'telnet') continue;
     session.term.options.fontSize = n;
     try { session.fitAddon.fit(); } catch {}
     if (session.ws && session.ws.readyState === WebSocket.OPEN) {
-      session.ws.send(JSON.stringify({ type: 'ssh.resize', rows: session.term.rows, cols: session.term.cols }));
+      session.ws.send(JSON.stringify({ type: `${session.type}.resize`, rows: session.term.rows, cols: session.term.cols }));
     }
   }
 }

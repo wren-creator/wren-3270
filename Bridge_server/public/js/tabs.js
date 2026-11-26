@@ -58,6 +58,7 @@ export function activateTabEl(tabEl, sid) {
   tabEl.classList.add('active');
   if (tabEl.dataset.type === 'ssh') { window.sshActivateTab(sid); }
   else if (tabEl.dataset.type === 'ftp') { window.ftpActivateTab(sid); }
+  else if (tabEl.dataset.type === 'telnet') { window.telnetActivateTab(sid); }
   else { activateSession(sid); }
 }
 
@@ -75,6 +76,13 @@ export function activateSession(sid) {
     const ftpPane  = document.getElementById('ftpPane');
     if (term3270) term3270.style.display = '';
     if (ftpPane)  ftpPane.style.display  = 'none';
+  }
+  if (state.activeTelnetSession !== null) {
+    state.activeTelnetSession = null;
+    const term3270   = document.getElementById('terminal');
+    const telnetPane  = document.getElementById('telnetTerminal');
+    if (term3270)   term3270.style.display   = '';
+    if (telnetPane) telnetPane.style.display  = 'none';
   }
   state.activeSession = sid;
   const session = state.sessions.get(sid);
@@ -135,6 +143,8 @@ export function detachTab(e, btn) {
     payload = { kind: 'ssh', host: session.host, port: session.port, username: session.username, password: session.password, name: session.name };
   } else if (type === 'ftp') {
     payload = { kind: 'ftp', host: session.host, port: session.port, username: session.username, password: session.password, secure: session.secure, name: session.name };
+  } else if (type === 'telnet') {
+    payload = { kind: 'telnet', host: session.host, port: session.port, name: session.name };
   } else {
     payload = { kind: '3270', profile: session.profile };
   }
@@ -148,9 +158,10 @@ export function detachTab(e, btn) {
     popout.postMessage({ type: 'detach-init', payload }, location.origin);
     const closeBtn = tab.querySelector('.tab-close');
     const fakeEvent = { stopPropagation: () => {} };
-    if (type === 'ssh')      window.sshCloseTab(fakeEvent, closeBtn);
-    else if (type === 'ftp') window.ftpCloseTab(fakeEvent, closeBtn);
-    else                     window.closeSessionTab(fakeEvent, closeBtn);
+    if (type === 'ssh')         window.sshCloseTab(fakeEvent, closeBtn);
+    else if (type === 'ftp')    window.ftpCloseTab(fakeEvent, closeBtn);
+    else if (type === 'telnet') window.telnetCloseTab(fakeEvent, closeBtn);
+    else                        window.closeSessionTab(fakeEvent, closeBtn);
   };
   window.addEventListener('message', onMsg);
 }
